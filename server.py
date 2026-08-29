@@ -2,9 +2,12 @@
 """Local static server: editor + real unpacked tiles/tables."""
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
+import threading
 import webbrowser
+from collections import OrderedDict
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -14,33 +17,104 @@ from game_paths import GAME, TILE, BDESIGN_RES, BDESIGN_IMGS, MAPDESIGN
 WEB = ROOT / "web"
 DATA = ROOT / "data"
 PROBE_REFERENCE = ROOT / "data" / "probe_reference.jpg"
+PNG_CACHE_DIR = DATA / "ale_png_cache"
 
 sys.path.insert(0, str(ROOT))
 from codec.building import dumps_document as dumps_building_document
 from codec.building import dumps_gbk as dumps_building
 from codec.building import loads_gbk as loads_building
+from codec.building import public_document as public_building_document
 from codec.ale import AleError, dumps_png
 from codec.terrain import dumps_document as dumps_terrain_document
 from codec.terrain import dumps_gbk as dumps_terrain
 from codec.terrain import loads_gbk as loads_terrain
 
-ALE_PNG = {}
-
 PORT = 8765
+ALE_PNG_MAX_BYTES = 80 * 1024 * 1024
+_ALE_PNG = OrderedDict()
+_ALE_PNG_BYTES = 0
+_ALE_PNG_LOCK = threading.Lock()
+_ALE_PNG_INFLIGHT = {}
+
+
+def _png_disk_path(cache_key: str) -> Path:
+    digest = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+    return PNG_CACHE_DIR / f"{digest}.png"
+
+
+def _png_remember(cache_key: str, png: bytes) -> None:
+    global _ALE_PNG_BYTES
+    if cache_key in _ALE_PNG:
+        _ALE_PNG_BYTES -= len(_ALE_PNG[cache_key])
+        _ALE_PNG.pop(cache_key, None)
+    _ALE_PNG[cache_key] = png
+    _ALE_PNG_BYTES += len(png)
+    while _ALE_PNG_BYTES > ALE_PNG_MAX_BYTES and len(_ALE_PNG) > 1:
+        _old_key, old_png = _ALE_PNG.popitem(last=False)
+        _ALE_PNG_BYTES -= len(old_png)
+
+
+def _png_cached(cache_key: str, producer):
+    with _ALE_PNG_LOCK:
+        png = _ALE_PNG.get(cache_key)
+        if png is not None:
+            _ALE_PNG.move_to_end(cache_key)
+            return png
+        waiter = _ALE_PNG_INFLIGHT.get(cache_key)
+        if waiter is None:
+            waiter = threading.Event()
+            _ALE_PNG_INFLIGHT[cache_key] = waiter
+            owner = True
+        else:
+            owner = False
+    if not owner:
+        waiter.wait(timeout=60)
+        with _ALE_PNG_LOCK:
+            png = _ALE_PNG.get(cache_key)
+        if png is not None:
+            return png
+        return producer()
+    try:
+        disk = _png_disk_path(cache_key)
+        if disk.is_file():
+            png = disk.read_bytes()
+        else:
+            png = producer()
+            try:
+                disk.parent.mkdir(parents=True, exist_ok=True)
+                disk.write_bytes(png)
+            except OSError:
+                pass
+        with _ALE_PNG_LOCK:
+            _png_remember(cache_key, png)
+        return png
+    finally:
+        with _ALE_PNG_LOCK:
+            _ALE_PNG_INFLIGHT.pop(cache_key, None)
+            waiter.set()
 
 
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        sys.stderr.write("[desk] " + (fmt % args) + "\n")
+        try:
+            sys.stderr.write("[desk] " + (fmt % args) + "\n")
+        except OSError:
+            pass
 
-    def _send(self, code, body: bytes, ctype="application/octet-stream"):
+    def _send(self, code, body: bytes, ctype="application/octet-stream", cache="no-cache"):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
+            return
+
+    def _send_png(self, png: bytes):
+        self._send(200, png, "image/png", cache="public, max-age=604800, immutable")
 
     def _read_body(self) -> bytes:
         n = int(self.headers.get("Content-Length") or 0)
@@ -79,7 +153,7 @@ class Handler(SimpleHTTPRequestHandler):
                 frame = max(0, int(query.get("f", ["0"])[0]))
             except ValueError:
                 return self._send(400, b"invalid frame", "text/plain")
-            return self._bdesign_ale_png(path[len("/bdesign/ale/") :], frame)
+            return self._bdesign_ale_png(path[len("/bdesign/ale/") :], frame, thumb=query.get("thumb", ["0"])[0] in {"1", "true", "yes"})
         if path.startswith("/bdesign/res/"):
             return self._file(BDESIGN_RES / path[len("/bdesign/") :].replace("\\", "/"), guess=True)
         if path.startswith("/bdesign/imgs/"):
@@ -165,7 +239,7 @@ class Handler(SimpleHTTPRequestHandler):
                     kind = "desk"
                 elif path == "/api/parse-manor":
                     kind = "manor"
-                doc = loads_building(raw, kind=kind)
+                doc = public_building_document(loads_building(raw, kind=kind))
                 return self._send(
                     200, json.dumps(doc, ensure_ascii=False).encode("utf-8"), "application/json"
                 )
@@ -199,19 +273,16 @@ class Handler(SimpleHTTPRequestHandler):
         if not name or any(c in name for c in "/\\.."):
             return self._send(404, b"missing", "text/plain")
         cache_key = ("link-crop:" if crop else "link-atlas:") + name
-        if cache_key in ALE_PNG:
-            return self._send(200, ALE_PNG[cache_key], "image/png")
         src = (TILE / "mask" / (name + ".ale")).resolve()
         if not _is_under(src, (TILE / "mask").resolve()) or not src.is_file():
             return self._send(404, b"missing", "text/plain")
         try:
-            png = dumps_png(src.read_bytes(), crop=crop)
+            png = _png_cached(cache_key, lambda: dumps_png(src.read_bytes(), crop=crop))
         except (AleError, OSError) as e:
             return self._send(400, str(e).encode("utf-8", errors="replace"), "text/plain; charset=utf-8")
-        ALE_PNG[cache_key] = png
-        return self._send(200, png, "image/png")
+        return self._send_png(png)
 
-    def _bdesign_ale_png(self, name: str, frame: int = 0):
+    def _bdesign_ale_png(self, name: str, frame: int = 0, thumb: bool = False):
         clean = name.replace("\\", "/").lstrip("/")
         if clean.lower().endswith(".png"):
             clean = clean[:-4]
@@ -221,19 +292,19 @@ class Handler(SimpleHTTPRequestHandler):
         root = BDESIGN_RES.resolve()
         if not _is_under(src, root) or not src.is_file():
             return self._send(404, b"missing", "text/plain")
-        cache_key = f"building:{rel_cache_key(src, root)}:frame={frame}"
-        if cache_key in ALE_PNG:
-            return self._send(200, ALE_PNG[cache_key], "image/png")
+        cache_key = f"building:{rel_cache_key(src, root)}:frame={frame}:thumb={int(thumb)}"
         try:
-            png = dumps_png(src.read_bytes(), frame=frame, crop=False)
+            png = _png_cached(
+                cache_key,
+                lambda: dumps_png(src.read_bytes(), frame=frame, crop=False, trim=thumb),
+            )
         except (AleError, OSError) as exc:
             return self._send(
                 415,
                 str(exc).encode("utf-8", errors="replace"),
                 "text/plain; charset=utf-8",
             )
-        ALE_PNG[cache_key] = png
-        return self._send(200, png, "image/png")
+        return self._send_png(png)
 
     def _bdesign_img_ale_png(self, name: str, frame: int = 0):
         clean = name.replace("\\", "/").lstrip("/")
@@ -244,18 +315,18 @@ class Handler(SimpleHTTPRequestHandler):
         if not _is_under(src, root) or not src.is_file():
             return self._send(404, b"missing", "text/plain")
         cache_key = f"building-img:{rel_cache_key(src, root)}:frame={frame}"
-        if cache_key in ALE_PNG:
-            return self._send(200, ALE_PNG[cache_key], "image/png")
         try:
-            png = dumps_png(src.read_bytes(), frame=frame, crop=False)
+            png = _png_cached(
+                cache_key,
+                lambda: dumps_png(src.read_bytes(), frame=frame, crop=False),
+            )
         except (AleError, OSError) as exc:
             return self._send(
                 415,
                 str(exc).encode("utf-8", errors="replace"),
                 "text/plain; charset=utf-8",
             )
-        ALE_PNG[cache_key] = png
-        return self._send(200, png, "image/png")
+        return self._send_png(png)
 
     def _file(self, path: Path, guess=False):
         path = path.resolve()
@@ -308,7 +379,9 @@ def main():
         from tools.export_assets import main as export_assets
 
         export_assets()
+    ThreadingHTTPServer.allow_reuse_address = True
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    httpd.daemon_threads = True
     url = "http://127.0.0.1:%d/" % PORT
     print("外部设计桌", url)
     print("game", GAME)

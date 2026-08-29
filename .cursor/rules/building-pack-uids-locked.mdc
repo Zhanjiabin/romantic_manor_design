@@ -1,0 +1,45 @@
+---
+description: Frozen mixed-paper UID mapping and sprite resolution. Do not remap, borrow, or "fix" after visual match.
+alwaysApply: true
+---
+
+# Building pack UIDs are locked
+
+User-verified 2026-08-30 against the in-game café screenshot. **Do not change this mapping, resolution, or centering unless the user names a specific UID and asks.** "Looks incomplete" or `formula.tab` / `exhibit.tab` / `框架` evidence is not permission to remap.
+
+## Frozen mapping (`data/building_pack_uids.json`)
+
+`mat = uid * 1000 + local`. Source is `合成时间`, not `formula.tab` 名称ID and not `exhibit.tab` row order.
+
+| UID | pack | UID | pack |
+|-----|------|-----|------|
+| 1 | europe | 14 | bazaar |
+| 2 | egypt | 15 | supermarket |
+| 3 | greece | 16 | antique |
+| 4 | park | 19 | giant |
+| 5 | q | 20 | japan |
+| 7 | toy | 21 | tds |
+| 8 | flower1 | 25 | rose |
+| 9 | flower2 | 26 | shiqi |
+| 10 | candy | 27 | snow |
+| 13 | space | 28 | muguang |
+
+Café paper checks: `14124`→bazaar, `15512`→supermarket, `19160`→giant, `20129`→japan, `21161`→tds.
+
+## Resolution
+
+```js
+uid, local = divmod(mat, 1000)
+pack = mapping[uid]
+sprite = pack.mat.cfg [素材][local]
+```
+
+- Missing local stays missing. **No `框架` cross-pack borrow.**
+- `native.frameBorrow` stays `false`.
+- Center only records with `0 ≤ x,y ≤ 2047`. Do not use wrapped uint15 outliers.
+
+## Forbidden "fixes"
+
+- Remapping 14/15/19/20/21 (space/redera/bazaar guesses).
+- Filling gaps 6/11/12/17/18 by shifting existing keys.
+- Reintroducing `packFrames` / `packFrameOwners` fallback in `componentByUid`.

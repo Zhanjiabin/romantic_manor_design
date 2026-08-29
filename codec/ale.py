@@ -418,11 +418,29 @@ def _rgb565(value: int) -> tuple[int, int, int]:
     )
 
 
-def dumps_png(data: bytes, frame: int = 0, crop: bool = True) -> bytes:
+def dumps_png(data: bytes, frame: int = 0, crop: bool = True, trim: bool = False) -> bytes:
     buf = io.BytesIO()
     image = ale_to_rgba(data, frame=frame)
-    (crop_link_sprite(image) if crop else image).save(buf, format="PNG")
+    if crop:
+        image = crop_link_sprite(image)
+    elif trim:
+        image = trim_opaque(image)
+    image.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def trim_opaque(im, pad: int = 2):
+    bbox = im.getbbox()
+    if not bbox:
+        return im
+    left, top, right, bottom = bbox
+    left = max(0, left - pad)
+    top = max(0, top - pad)
+    right = min(im.size[0], right + pad)
+    bottom = min(im.size[1], bottom + pad)
+    if right - left < 2 or bottom - top < 2:
+        return im
+    return im.crop((left, top, right, bottom))
 
 
 def crop_link_sprite(im):

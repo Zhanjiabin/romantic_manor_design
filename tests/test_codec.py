@@ -13,6 +13,7 @@ from codec.building import (
     loads_gbk as loads_building_gbk,
     pack_desk_coordinates,
     parse_v1,
+    public_document,
     unpack_desk_coordinates,
 )
 from codec.terrain import dumps_document as dumps_terrain_document
@@ -83,6 +84,16 @@ def test_desk_v1_from_mat_cfg():
     a, b = got["records"]
     assert a["x"] == 182 and a["y"] == 184 and a["mat"] == 504 and a["state"] == 1
     assert format_v1(got["records"], kind="desk") == sample
+
+
+def test_public_document_strips_paper_text_and_snapshots():
+    sample = "V1;0Mk2s07s1;0Tk2u07s0"
+    got = public_document(parse_v1(sample))
+    assert got["kind"] == "desk"
+    assert "text" not in (got.get("_source") or {})
+    assert "raw" not in got["records"][0]
+    assert "_rawSnapshot" not in got["records"][0]
+    assert got["records"][0]["mat"] == 504
 
 
 def test_desk_coordinates_use_native_uint15_pair():
@@ -158,13 +169,15 @@ def test_tucode_building_v1():
     raw = Path(r"d:\game\浪漫庄园\图代码\建筑.txt").read_bytes()
     text = raw.decode("gbk")
     got = parse_v1(text)
-    assert got["kind"] == "manor"
+    assert got["kind"] == "desk"
     assert len(got["raw"]) == 1879
     assert all(len(r) == 9 for r in got["raw"])
     assert got["raw"][0] == "0ks3Q0005"
-    assert got["records"][0]["x"] == 48
-    assert got["records"][0]["y"] == 3587
-    assert got["records"][0]["item"] == 6815744
+    assert got["records"][0]["mat"] == 0
+    assert got["records"][0]["state"] == 5
+    assert got["records"][0]["x"] == 391
+    assert got["records"][0]["y"] == 218
+    assert got["records"][1]["mat"] == 14302
 
 
 def test_terrain_untouched_document_is_byte_exact():

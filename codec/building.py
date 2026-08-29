@@ -53,14 +53,22 @@ def parse_v1(text: str, kind: str | None = None) -> dict:
 def detect_kind(records: list[str]) -> str:
     if not records:
         return "manor"
-    # Desk papers use a three-character mat.cfg key in the 1..999 range.
+    # Desk papers use a three-character mat.cfg key: local 1xx–6xx, or
+    # 合成时间*1000+local when the design mixes theme packets.
     # Callers should still pass an explicit kind whenever the context is known.
     try:
         mats = [decode(r[5:8]) for r in records]
+        states = [decode(r[8]) for r in records]
     except CodecError:
         return "manor"
+    if mats[0] == 0 and 1 <= states[0] <= 80:
+        return "desk"
     if mats and sum(1 <= mat <= 999 for mat in mats) >= max(1, int(len(mats) * 0.85)):
         return "desk"
+    locals_ = [mat % 1000 for mat in mats if mat]
+    if locals_ and max(mats) <= 32 * 1000 + 699:
+        if sum(101 <= local <= 699 for local in locals_) >= max(1, int(len(locals_) * 0.7)):
+            return "desk"
     return "manor"
 
 
@@ -144,6 +152,39 @@ def dumps_document(doc: dict) -> bytes:
     if source.get("text") is not None and source.get("snapshot") == building_snapshot(doc):
         return source["text"].encode(source.get("encoding") or "gbk")
     return dumps_gbk(doc.get("records", []), kind=doc.get("kind") or "manor")
+
+
+def public_document(doc: dict) -> dict:
+    """Editor JSON: drop paper text, raw tokens, and per-record snapshots."""
+    records = []
+    for row in doc.get("records") or []:
+        mode = row.get("mode") or row.get("kind") or doc.get("kind") or "manor"
+        if mode == "desk":
+            records.append(
+                {
+                    "mode": "desk",
+                    "x": int(row.get("x") or 0),
+                    "y": int(row.get("y") or 0),
+                    "mat": int(row.get("mat") or 0),
+                    "state": int(row.get("state", row.get("flip", 0)) or 0),
+                }
+            )
+        else:
+            records.append(
+                {
+                    "mode": "manor",
+                    "x": int(row.get("x") or 0),
+                    "y": int(row.get("y") or 0),
+                    "item": int(row.get("item") or 0),
+                    "dir": int(row.get("dir") or 0),
+                }
+            )
+    return {
+        "kind": doc.get("kind") or "manor",
+        "kindSource": doc.get("kindSource"),
+        "records": records,
+        "_source": {"encoding": (doc.get("_source") or {}).get("encoding")},
+    }
 
 
 def record_snapshot(obj: dict) -> list:

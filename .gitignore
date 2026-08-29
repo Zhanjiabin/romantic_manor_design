@@ -2,7 +2,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.local
-.cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
 .vscode/
 .idea/
 Thumbs.db
@@ -11,6 +13,9 @@ Thumbs.db
 # Machine-specific game path. Clone uses vendor/game instead.
 config.json
 game_root.txt
+
+# Decoded ALE PNG cache (rebuilt on demand).
+data/ale_png_cache/
 
 # Research dumps, not needed to run the desk.
 data/_all_furn/

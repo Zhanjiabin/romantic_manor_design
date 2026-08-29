@@ -13,6 +13,37 @@ const DESK_K = 1;
 const TERRAIN_SOURCE_SCALE = 1;
 const GRASS_DECORATION_PERMILLE = 6;
 const TERRAIN_LIGHT_SRC = "/tiles/maptexture/990000.jpg";
+const SAND_LIGHT_SRC = "/tiles/maptexture/990200.jpg";
+// dxsj_s.cmap → tile/01shamo.ini. Same kind codes as 00changgui, different plates.
+const SAND_TILESET = {
+  "土/沙地": "maptexture/170200.jpg",
+  "草/绿草": "maptexture/110201.jpg",
+  "草/青草": "maptexture/110200.jpg",
+  "矿区/金": "maptexture/150000.jpg",
+  "地/石板地": "maptexture/100001.gif",
+  "地/灰砖地2": "maptexture/160000.jpg",
+  "地/灰砖地1": "maptexture/100002.gif",
+  "地/石子地": "maptexture/100003.gif",
+  "地/砖地": "maptexture/100200.jpg",
+  "土/干土": "maptexture/130000.jpg",
+  "土/土": "maptexture/120000.jpg",
+  "土/干地": "maptexture/130200.jpg",
+  "土/海沙": "maptexture/170000.jpg",
+  "土/湿土": "maptexture/120001.jpg",
+  "水/河水": "water/189901.jpg",
+  "花/绿花丛": "maptexture/h031.jpg",
+  "花/青花丛": "maptexture/h032.jpg",
+  "花/绿野花": "maptexture/h041.jpg",
+  "花/青野花": "maptexture/h042.jpg",
+  "雪/雪地": "maptexture/s01.jpg",
+  "地/山石地": "maptexture/d04.jpg",
+  "室内/绿草": "maptexture/110201.jpg",
+  "室内/青草": "maptexture/110200.jpg",
+  "室内/石板地": "maptexture/100001.gif",
+  "室内/灰砖地2": "maptexture/160000.jpg",
+  "室内/灰砖地1": "maptexture/100002.gif",
+  "室内/山石地": "maptexture/d04.jpg",
+};
 const TERRAIN_BASE_DARKEN = 0.12;
 const TERRAIN_LIGHT_GAIN = 0.28;
 const KIND_ORDER = ["草地", "土地", "砖地", "水面", "花丛", "雪地", "矿场"];
@@ -106,6 +137,7 @@ let view = document.getElementById("view");
 let ctx = view.getContext("2d");
 
 async function boot() {
+  document.documentElement.classList.add("boot-pending");
   const kinds = await (await fetch("/api/kinds")).json();
   state.kinds = kinds;
   fillListKind(kinds.brushes || []);
@@ -113,7 +145,19 @@ async function boot() {
   fillSizes(visibleMapSizes(kinds.mapSizes || []));
   resize();
   {
-    const names = new Set(["wlink014", "clink012", "clink014", "slink014", "980005", "980006"]);
+    const names = new Set([
+      "wlink014",
+      "clink012",
+      "clink014",
+      "slink014",
+      "980005",
+      "980006",
+      "980201",
+      "980202",
+      "980203",
+      "980204",
+      "slink01",
+    ]);
     for (const L of kinds.links || []) if (L.ale) names.add(L.ale);
     names.forEach((n) => {
       preload("/ale-atlas/" + n + ".png");
@@ -145,6 +189,33 @@ async function boot() {
   } else if (restored) {
     fitTerrainContent();
     draw();
+  }
+  await consumePendingBuildingImport();
+  requestAnimationFrame(() => {
+    document.documentElement.classList.remove("boot-pending");
+    document.documentElement.classList.add("boot-ready");
+  });
+}
+
+async function consumePendingBuildingImport() {
+  if (!/[?&]importBuilding=1/.test(location.search)) return;
+  let payload = null;
+  try {
+    payload = JSON.parse(sessionStorage.getItem("manor-pending-building-import") || "null");
+  } catch {
+    payload = null;
+  }
+  sessionStorage.removeItem("manor-pending-building-import");
+  history.replaceState({}, "", location.pathname);
+  if (!payload?.base64) return;
+  try {
+    const binary = atob(payload.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const file = new File([bytes], payload.name || "建筑.txt", { type: "text/plain" });
+    await importFile(file, "build");
+  } catch (err) {
+    alert(err.message || String(err));
   }
 }
 
@@ -300,6 +371,8 @@ function preloadAllTiles() {
   for (const t of uniqueTerrainTiles()) {
     if (t.texture) preload("/tiles/" + t.texture);
   }
+  for (const tex of Object.values(SAND_TILESET)) preload("/tiles/" + tex);
+  preload(SAND_LIGHT_SRC);
 }
 
 function brushDisplayName(b) {
@@ -541,8 +614,19 @@ function isSandKind(kind) {
   return type === "沙地" || code === "土/沙地";
 }
 
+function terrainLightSrc() {
+  return isSandBase() ? SAND_LIGHT_SRC : TERRAIN_LIGHT_SRC;
+}
+
+function deskChrome() {
+  // Outside the map: muted warm gray, not sand/grass, not a bright flash.
+  return "#4a4844";
+}
+
 function planeBackdrop() {
-  return isSandBase() ? "#c4a05a" : "#2a5a30";
+  // 170200 sand averages ~#f2c671. A darker fill (#c4a05a) shows through
+  // 1px iso seams as repeating dark V-waves.
+  return isSandBase() ? "#f2c671" : "#2a5a30";
 }
 
 function useBrush(b) {
@@ -842,10 +926,12 @@ function tileDrawSize() {
 
 function groupOf(kind) {
   const extra = kind && kind.charAt(0) === "@" ? kind.slice(1) : "";
-  const tile = extra ? (state.kinds.tiles || []).find((x) => x.code === extra) : null;
+  const tile = extra
+    ? (state.kinds.tiles || []).find((x) => x.code === extra)
+    : tileByChar(kind);
   const b = brushByPaperChar(kind);
   const typ = (tile && tile.type) || (b && b.type) || "";
-  const code = extra || ((b && b.code) || "") + typ;
+  const code = extra || (tile && tile.code) || (b && b.code) || "" + typ;
   if (typ.includes("雪地") || code.includes("雪/")) return "snow";
   if (typ.includes("花") || code.includes("花")) return "flower";
   if (code.includes("水")) return "water";
@@ -921,6 +1007,17 @@ function cellsInView() {
 
 function tileDrawRank(tile) {
   const kinds = [...new Set(tile.corners)];
+  if (isSandBase()) {
+    // Grass-base never draws 0xF grass (it is the fill plane), so paved/water
+    // rims sit on top. Sand-base must draw grass islands first or those same
+    // diamonds cover 980204 / 980202 / slink01.
+    const implicit = baseChar();
+    const overlays = kinds.filter((kind) => kind !== implicit && !isGrassFamily(kind));
+    if (!overlays.length) return 0;
+    if (overlays.some(isWaterTerrain)) return 4;
+    if (overlays.some(isSnowTerrain)) return 3;
+    return 2;
+  }
   if (kinds.length > 1) {
     const grass = grassChar();
     const hasGrass = kinds.some((kind) => kind === grass || isGrassFamily(kind));
@@ -984,7 +1081,7 @@ function drawNow() {
     paintFrame();
   } catch (err) {
     console.warn("draw failed", err);
-    ctx.fillStyle = planeBackdrop();
+    ctx.fillStyle = deskChrome();
     ctx.fillRect(0, 0, view.width, view.height);
   }
 }
@@ -998,10 +1095,12 @@ function paintFrame() {
   const canUseCache = terrainReady && tKey === terrainScreenKey && terrainScreenCache.width === view.width;
   if (!canUseCache) {
     ctx.clearRect(0, 0, view.width, view.height);
-    ctx.fillStyle = planeBackdrop();
+    ctx.fillStyle = deskChrome();
     ctx.fillRect(0, 0, view.width, view.height);
     ctx.save();
     clipMap();
+    ctx.fillStyle = planeBackdrop();
+    ctx.fillRect(0, 0, view.width, view.height);
     drawTerrainCells();
     ctx.restore();
     if (terrainReady) {
@@ -1125,6 +1224,8 @@ function terrainAtlas(im) {
   if (state.tileAtlases.has(key)) return state.tileAtlases.get(key);
   const cols = Math.max(1, Math.ceil(im.naturalWidth / TILE_W));
   const all = [];
+  const byKey = new Map();
+  let maxRow = 0;
   for (let index = 0; ; index++) {
     const row = Math.floor(index / cols);
     const col = index % cols;
@@ -1132,9 +1233,12 @@ function terrainAtlas(im) {
     const sy = row * (TILE_H / 2);
     if (sy + TILE_DH > im.naturalHeight) break;
     if (sx + TILE_DW > im.naturalWidth) continue;
-    all.push({ sx, sy, sprite: isoTileSprite(im, sx, sy) });
+    const variant = { sx, sy, sprite: isoTileSprite(im, sx, sy), col, row };
+    all.push(variant);
+    byKey.set(col + "," + row, variant);
+    if (row > maxRow) maxRow = row;
   }
-  if (!all.length) all.push({ sx: 0, sy: 0, sprite: isoTileSprite(im, 0, 0) });
+  if (!all.length) all.push({ sx: 0, sy: 0, sprite: isoTileSprite(im, 0, 0), col: 0, row: 0 });
   const plain = [];
   const decorated = [];
   for (const v of all) (variantHasYellow(v.sprite) ? decorated : plain).push(v);
@@ -1143,6 +1247,9 @@ function terrainAtlas(im) {
     plain: plain.length ? plain : all,
     decorated,
     salt: imageSalt(im),
+    cols,
+    rowCount: maxRow + 1,
+    byKey,
   };
   state.tileAtlases.set(key, atlas);
   return atlas;
@@ -1159,6 +1266,24 @@ function chooseTerrainVariant(atlas, col, row, sparseDecorations) {
   const random = nativeLinkRandom(pool.length, col, row);
   const count = random % 64 <= 50 ? Math.max(1, Math.floor(pool.length / 2)) : pool.length;
   return pool[random % count];
+}
+
+function chooseCoherentVariant(atlas, col, row) {
+  // Neighboring iso cells sample neighboring 64×16 slices so dune ridges continue.
+  // Hash-picking (chooseTerrainVariant) is for noisy grass, not 170200's waves.
+  const cols = atlas.cols || 1;
+  const rows = atlas.rowCount || 1;
+  let c = col % cols;
+  if (c < 0) c += cols;
+  let r = row % rows;
+  if (r < 0) r += rows;
+  if (atlas.byKey) {
+    for (let i = 0; i < cols; i++) {
+      const hit = atlas.byKey.get(((c - i + cols) % cols) + "," + r);
+      if (hit) return hit;
+    }
+  }
+  return atlas.all[0];
 }
 
 function terrainTextureScale() {
@@ -1184,16 +1309,27 @@ function drawTerrainPlane(im, sparseDecorations) {
     const offset = (row & 1) * (colStep / 2);
     const col0 = Math.floor((0 - anchorX - offset) / colStep) - 2;
     const col1 = Math.ceil((view.width - anchorX - offset) / colStep) + 2;
+    const coherent = isSandBase() && !sparseDecorations;
     for (let col = col0; col <= col1; col++) {
       const cx = anchorX + col * colStep + offset;
-      const variant = chooseTerrainVariant(atlas, col, row, sparseDecorations);
-      ctx.drawImage(
-        variant.sprite,
-        Math.floor(cx - (TILE_W / 2) * k),
-        Math.floor(cy - (TILE_H / 2) * k),
-        Math.max(1, Math.ceil(tw)),
-        Math.max(1, Math.ceil(th))
-      );
+      const variant = coherent
+        ? chooseCoherentVariant(atlas, col, row)
+        : chooseTerrainVariant(atlas, col, row, sparseDecorations);
+      const ox = cx - (TILE_W / 2) * k;
+      const oy = cy - (TILE_H / 2) * k;
+      let dx, dy, dw, dh;
+      if (coherent) {
+        dx = Math.round(ox);
+        dy = Math.round(oy);
+        dw = Math.max(1, Math.round(ox + tw) - dx);
+        dh = Math.max(1, Math.round(oy + th) - dy);
+      } else {
+        dx = Math.floor(ox);
+        dy = Math.floor(oy);
+        dw = Math.max(1, Math.ceil(tw));
+        dh = Math.max(1, Math.ceil(th));
+      }
+      ctx.drawImage(variant.sprite, dx, dy, dw, dh);
     }
   }
   return true;
@@ -1201,8 +1337,9 @@ function drawTerrainPlane(im, sparseDecorations) {
 
 function drawTerrainLight() {
   if (!state.terrainEffects) return;
-  preload(TERRAIN_LIGHT_SRC);
-  const im = state.images.get(TERRAIN_LIGHT_SRC);
+  const lightSrc = terrainLightSrc();
+  preload(lightSrc);
+  const im = state.images.get(lightSrc);
   if (!im || !im.complete || !im.naturalWidth) return;
   const k = terrainTextureScale();
   const width = im.naturalWidth * k;
@@ -1297,7 +1434,9 @@ function drawTerrainCells() {
 
 function terrainTexturePath(kind) {
   const tile = tileByChar(kind);
-  return tile?.texture ? "/tiles/" + tile.texture : null;
+  if (!tile) return null;
+  const tex = (isSandBase() && tile.code && SAND_TILESET[tile.code]) || tile.texture;
+  return tex ? "/tiles/" + tex : null;
 }
 
 function terrainCode(kind) {
@@ -1319,11 +1458,12 @@ function terrainVariant(kind, col, row) {
   preload(src);
   const image = state.images.get(src);
   if (!image?.complete || !image.naturalWidth) return null;
-  return chooseTerrainVariant(
-    terrainAtlas(image),
-    col,
-    row,
-    kind === grassChar()
+  const atlas = terrainAtlas(image);
+  const coherent = isSandBase() && (kind === sandChar() || isSandKind(kind));
+  return (
+    coherent
+      ? chooseCoherentVariant(atlas, col, row)
+      : chooseTerrainVariant(atlas, col, row, kind === grassChar())
   ).sprite;
 }
 
@@ -1418,38 +1558,32 @@ function sandBaseSoftLink(fromKind, toKind) {
 }
 
 function linkForSandBasePair(a, b) {
-  // Sand-base is a different native look: patches feather into dunes (989802 /
-  // town 980005), not the grass-base farmland pebble rings.
-  if (isWaterTerrain(a) && isSandKind(b)) return aleNamedLink("980005", a, b);
-  if (isWaterTerrain(b) && isSandKind(a)) return aleNamedLink("980005", b, a);
-  if (isPavedTerrain(a) && isSandKind(b)) {
-    return { link: null, fromKind: a, toKind: b, mode: "flat" };
+  // dxsj_s.cmap / 01shamo.ini — not the grass-base clink014 pebble set.
+  // 980005's JPEG is dune-colored (no wlink014 green key), so copying it as a
+  // shore overlay just redraws sand. Game desk water on dunes is the same
+  // 989802 foggy lip as dirt/grass patches — a blue stain, not a pebble ring.
+  if (isWaterTerrain(a) && isSandKind(b)) return sandBaseSoftLink(a, b);
+  if (isWaterTerrain(b) && isSandKind(a)) return sandBaseSoftLink(b, a);
+  if (isWaterTerrain(a) && isGrassFamily(b)) {
+    return aleNamedLink(terrainCode(b).includes("青") ? "980201" : "980202", a, b);
   }
-  if (isPavedTerrain(b) && isSandKind(a)) {
-    return { link: null, fromKind: b, toKind: a, mode: "flat" };
+  if (isWaterTerrain(b) && isGrassFamily(a)) {
+    return aleNamedLink(terrainCode(a).includes("青") ? "980201" : "980202", b, a);
   }
-  if (isGrassFamily(a) && isSandKind(b)) return sandBaseSoftLink(a, b);
-  if (isGrassFamily(b) && isSandKind(a)) return sandBaseSoftLink(b, a);
-  if (isWaterTerrain(a) && isGrassFamily(b)) return aleNamedLink("wlink014", a, b);
-  if (isWaterTerrain(b) && isGrassFamily(a)) return aleNamedLink("wlink014", b, a);
-  if (isSnowTerrain(a) && isGrassFamily(b)) return aleNamedLink("clink013", a, b);
-  if (isSnowTerrain(b) && isGrassFamily(a)) return aleNamedLink("clink013", b, a);
-  const exact = catalogLinkFor(a, b);
-  const grassAles = {
-    clink012: 1,
-    clink013: 1,
-    clink014: 1,
-    clink022: 1,
-    clink023: 1,
-    wlink012: 1,
-    wlink014: 1,
-  };
-  if (exact && !grassAles[exact.link?.ale]) {
-    if (!(isPavedTerrain(exact.fromKind) && exact.link?.ale === "clink014")) return exact;
+  if (isSandKind(a) && terrainCode(b) === "地/砖地") return aleNamedLink("980006", b, a);
+  if (isSandKind(b) && terrainCode(a) === "地/砖地") return aleNamedLink("980006", a, b);
+  if (isPavedTerrain(a) && isGrassFamily(b)) {
+    // 01shamo lists 980204, but that JPEG has ~1% green chroma (olive plate).
+    // Treating it like clink012 paints mottled sand crumbs; pure-alpha occupancy
+    // loses the sunken lip. Use clink012 — same paved↔grass chroma the grass
+    // desk already gets right (green→brick, tan curb copied, near-black skipped).
+    return aleNamedLink("clink012", a, b);
   }
-  if (isPavedTerrain(a) && isPavedTerrain(b)) {
-    return { link: null, fromKind: a, toKind: b, mode: "flat" };
+  if (isPavedTerrain(b) && isGrassFamily(a)) {
+    return aleNamedLink("clink012", b, a);
   }
+  if (isSnowTerrain(a) && !isSnowTerrain(b)) return aleNamedLink("slink01", a, b);
+  if (isSnowTerrain(b) && !isSnowTerrain(a)) return aleNamedLink("slink01", b, a);
   if (isFillTerrain(a) && isFillTerrain(b)) {
     let fromKind = a;
     let toKind = b;
@@ -1718,10 +1852,12 @@ function solidKindCovers(tile, localX, localY, fillKind) {
 }
 
 function paintLinkFarmland(dest, fromSprite, toSprite, aleSprite, cornerFrom, pattern, tile, fillKind, keepSprite) {
-  // clink014 / wlink014 share one chroma-key (test_stamp_compose2.py):
+  // Native chroma (clink012 / clink014 / wlink014):
   //   green        -> fromKind fill
-  //   opaque other -> shore / pebbles
+  //   opaque other -> shore / pebbles / beige curb copied from the ALE
   //   transparent  -> toKind, unless a neighboring 0xF fill diamond covers us
+  // clink012's near-black outer GIF stroke is skipped so paving reads as a
+  // recess (grass covers the drop-shadow pedestal), not a floating slab.
   void pattern;
   const g = dest.getContext("2d");
   const from = readSpriteRGBA(fromSprite);
@@ -1786,10 +1922,6 @@ function paintLinkFarmland(dest, fromSprite, toSprite, aleSprite, cornerFrom, pa
         out.data[i + 3] = 255;
         continue;
       }
-      // clink012 bakes a near-black outer GIF stroke against the tan lip
-      // (neighbors brown+transparent, never green fill). Copying it paints a
-      // drop-shadow pedestal. Game desk keeps only the beige curb so paving
-      // reads as a recess, not a floating slab.
       if (isPavedTerrain(fillKind) && Math.max(ale[i], ale[i + 1], ale[i + 2]) < 55) {
         const src = keep || to;
         out.data[i] = src[i];
@@ -1807,16 +1939,73 @@ function paintLinkFarmland(dest, fromSprite, toSprite, aleSprite, cornerFrom, pa
   g.putImageData(out, 0, 0);
 }
 
+function paintDesertJpegOccupancy(dest, fillSprite, keepSprite, aleSprite, tile, fillKind) {
+  // 01shamo 980204/980202 are JPEG occupancy plates (almost no green chroma).
+  // Native desk look for paved-in-grass: fill shape from alpha, grass outside.
+  // Do NOT copy ALE RGB — JPEG edge darkening and mottled tan read as crumbs
+  // / a scalloped black rim (the debris the editor has been painting).
+  const g = dest.getContext("2d");
+  const fill = readSpriteRGBA(fillSprite);
+  const grass = readSpriteRGBA(keepSprite);
+  const ale = aleSprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data;
+  const out = g.createImageData(TILE_DW, TILE_DH);
+  if (!fill || !grass) {
+    if (fillSprite) g.drawImage(fillSprite, 0, 0);
+    else if (keepSprite) g.drawImage(keepSprite, 0, 0);
+    return;
+  }
+  for (let y = 0; y < TILE_DH; y++) {
+    const width = ISO_SPAN.widths[y];
+    const ox = ISO_SPAN.srcx[y];
+    for (let p = 0; p < width; p++) {
+      const x = ox + p;
+      const i = isoIdx(x, y) * 4;
+      const a = ale[i + 3];
+      const occupied = a >= 40 && Math.max(ale[i], ale[i + 1], ale[i + 2]) >= 40;
+      const covered = tile && fillKind && solidKindCovers(tile, x, y, fillKind);
+      const src = occupied || covered ? fill : grass;
+      out.data[i] = src[i];
+      out.data[i + 1] = src[i + 1];
+      out.data[i + 2] = src[i + 2];
+      out.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(out, 0, 0);
+}
+
+function paintLinkPavedGrassOnSand(dest, fromSprite, toSprite, aleSprite, keepSprite, tile, fillKind) {
+  paintDesertJpegOccupancy(dest, fromSprite, keepSprite || toSprite, aleSprite, tile, fillKind);
+}
+
 function isSnowChromaPixel(r, g, b, a) {
   // clink013's fill key is the same saturated green as clink014.
   // Semi-transparent leftovers are the GIF grass-blade cutout, not snow.
   return a >= 160 && g > r + 25 && g > b + 25;
 }
 
+function snowAleUsesGreenChroma(ale) {
+  // clink013 ≈ 89% green key. slink01 (01shamo snow↔sand/grass) is a
+  // white-blue plate with soft alpha and ~0% green — chroma mode paints
+  // nothing and leaves a hard 0xF snow diamond.
+  let green = 0;
+  let opaque = 0;
+  for (let y = 0; y < TILE_DH; y++) {
+    const width = ISO_SPAN.widths[y];
+    const ox = ISO_SPAN.srcx[y];
+    for (let p = 0; p < width; p++) {
+      const i = isoIdx(ox + p, y) * 4;
+      if (ale[i + 3] < 40) continue;
+      opaque++;
+      if (isSnowChromaPixel(ale[i], ale[i + 1], ale[i + 2], ale[i + 3])) green++;
+    }
+  }
+  return opaque > 0 && green * 5 >= opaque;
+}
+
 function paintLinkSnow(dest, fromSprite, toSprite, aleSprite, keepSprite) {
-  // Game design desk: snow stays inside the ALE; grass tufts overlap it.
-  // Native occupancy is opaque chroma → snow, everything else → grass texture.
-  // Copying ALE RGB painted a black rim; feathering ate the blade-shaped holes.
+  // Grass-base clink013: opaque green → snow texture, else outside (grass tufts).
+  // Sand-base slink01: white-blue plate with alpha ramp — soft-blend snow into
+  // sand/grass. Treating slink01 as chroma erases the fill and kills diffusion.
   const g = dest.getContext("2d");
   const from = readSpriteRGBA(fromSprite);
   const to = readSpriteRGBA(keepSprite || toSprite);
@@ -1827,25 +2016,95 @@ function paintLinkSnow(dest, fromSprite, toSprite, aleSprite, keepSprite) {
     else if (toSprite) g.drawImage(toSprite, 0, 0);
     return;
   }
+  const chroma = snowAleUsesGreenChroma(ale);
   for (let y = 0; y < TILE_DH; y++) {
     const width = ISO_SPAN.widths[y];
     const ox = ISO_SPAN.srcx[y];
     for (let p = 0; p < width; p++) {
       const x = ox + p;
       const i = isoIdx(x, y) * 4;
-      const src = isSnowChromaPixel(ale[i], ale[i + 1], ale[i + 2], ale[i + 3]) ? from : to;
-      out.data[i] = src[i];
-      out.data[i + 1] = src[i + 1];
-      out.data[i + 2] = src[i + 2];
+      if (chroma) {
+        const src = isSnowChromaPixel(ale[i], ale[i + 1], ale[i + 2], ale[i + 3]) ? from : to;
+        out.data[i] = src[i];
+        out.data[i + 1] = src[i + 1];
+        out.data[i + 2] = src[i + 2];
+      } else {
+        const a = ale[i + 3];
+        if (a < 24) {
+          out.data[i] = to[i];
+          out.data[i + 1] = to[i + 1];
+          out.data[i + 2] = to[i + 2];
+        } else if (a >= 220) {
+          out.data[i] = from[i];
+          out.data[i + 1] = from[i + 1];
+          out.data[i + 2] = from[i + 2];
+        } else {
+          // Soft diffusion: lerp snow texture with outside by ALE alpha.
+          const t = a;
+          const n = 255 - t;
+          out.data[i] = ((from[i] * t + to[i] * n) / 255) | 0;
+          out.data[i + 1] = ((from[i + 1] * t + to[i + 1] * n) / 255) | 0;
+          out.data[i + 2] = ((from[i + 2] * t + to[i + 2] * n) / 255) | 0;
+        }
+      }
       out.data[i + 3] = 255;
     }
   }
   g.putImageData(out, 0, 0);
 }
 
-function paintLinkWater(dest, fromSprite, toSprite, aleSprite, weights, keepSprite) {
+function paintLinkWaterOnSand(dest, fromSprite, toSprite, aleSprite, weights) {
+  // dxsj_s / 980005: the JPEG plate is dune-colored, so copying RGB as a
+  // "shore overlay" (wlink014 logic) just redraws sand and leaves 189800's
+  // hard diamond. Native is a foggy blue lip into the dunes.
+  const g = dest.getContext("2d");
+  const water = readSpriteRGBA(fromSprite);
+  const sand = readSpriteRGBA(toSprite);
+  const ale = aleSprite
+    ? aleSprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data
+    : null;
+  const out = g.createImageData(TILE_DW, TILE_DH);
+  if (!water || !sand) {
+    if (fromSprite) g.drawImage(fromSprite, 0, 0);
+    else if (toSprite) g.drawImage(toSprite, 0, 0);
+    return;
+  }
+  for (let y = 0; y < TILE_DH; y++) {
+    const width = ISO_SPAN.widths[y];
+    const ox = ISO_SPAN.srcx[y];
+    for (let p = 0; p < width; p++) {
+      const x = ox + p;
+      const idx = y * TILE_DW + x;
+      const i = idx * 4;
+      let m = weights ? weights[idx] | 0 : 31;
+      if (ale && ale[i + 3] < 40) m = 31;
+      if (m >= 31) {
+        out.data[i] = sand[i];
+        out.data[i + 1] = sand[i + 1];
+        out.data[i + 2] = sand[i + 2];
+      } else if (m <= 0) {
+        out.data[i] = water[i];
+        out.data[i + 1] = water[i + 1];
+        out.data[i + 2] = water[i + 2];
+      } else {
+        const n = 32 - m;
+        out.data[i] = (sand[i] * m + water[i] * n) >> 5;
+        out.data[i + 1] = (sand[i + 1] * m + water[i + 1] * n) >> 5;
+        out.data[i + 2] = (sand[i + 2] * m + water[i + 2] * n) >> 5;
+      }
+      out.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(out, 0, 0);
+}
+
+function paintLinkWater(dest, fromSprite, toSprite, aleSprite, weights, keepSprite, copyAleShore) {
   // Occupancy is 189800, hard cut (blend against snow/sand is the foggy shore).
   // Opaque non-green ALE is the shore: wlink sand, slink02 ice, slink015 dirt.
+  // 01shamo 980201/980202 are olive JPEG plates (0.2% pass isLinkGrassPixel).
+  // Copying non-green as shore pastes that plate as a dark rocky ring — use
+  // paintLinkWaterOnDesertGrass instead.
+  if (copyAleShore == null) copyAleShore = true;
   const g = dest.getContext("2d");
   const from = readSpriteRGBA(fromSprite);
   const outside = readSpriteRGBA(keepSprite || toSprite);
@@ -1865,7 +2124,7 @@ function paintLinkWater(dest, fromSprite, toSprite, aleSprite, weights, keepSpri
       const x = ox + p;
       const idx = y * TILE_DW + x;
       const i = idx * 4;
-      if (ale) {
+      if (copyAleShore && ale) {
         const a = ale[i + 3];
         if (a >= 40 && !isLinkGrassPixel(ale[i], ale[i + 1], ale[i + 2], a)) {
           out.data[i] = ale[i];
@@ -1883,6 +2142,17 @@ function paintLinkWater(dest, fromSprite, toSprite, aleSprite, weights, keepSpri
     }
   }
   g.putImageData(out, 0, 0);
+}
+
+function paintLinkWaterOnDesertGrass(dest, fromSprite, toSprite, aleSprite, weights, keepSprite, tile, fillKind) {
+  void weights;
+  if (!aleSprite) {
+    const g = dest.getContext("2d");
+    if (fromSprite) g.drawImage(fromSprite, 0, 0);
+    else if (toSprite) g.drawImage(toSprite, 0, 0);
+    return;
+  }
+  paintDesertJpegOccupancy(dest, fromSprite, keepSprite || toSprite, aleSprite, tile, fillKind);
 }
 
 function paintHardMask(dest, fillSprite, keepSprite, weights) {
@@ -1946,8 +2216,15 @@ function stampFillOnto(canvas, tile, kind, other, col, row) {
     const weights = slot >= 0 ? waterMaskWeights(slot) : null;
     const ale =
       relation?.link?.ale ||
-      (isGrassFamily(other) ? "wlink014" : isSnowTerrain(other) ? "slink02" : null);
-    paintLinkWater(canvas, fromSprite, toSprite, loadLinkSprite(ale, slot), weights, canvas);
+      (isGrassFamily(other) ? (isSandBase() ? "980202" : "wlink014") : isSnowTerrain(other) ? "slink02" : null);
+    const aleSprite = loadLinkSprite(ale, slot);
+    if (isSandBase() && isSandKind(other)) {
+      paintLinkWaterOnSand(canvas, fromSprite, toSprite, aleSprite, weights);
+    } else if (isSandBase() && isGrassFamily(other)) {
+      paintLinkWaterOnDesertGrass(canvas, fromSprite, toSprite, aleSprite, weights, canvas, tile, kind);
+    } else {
+      paintLinkWater(canvas, fromSprite, toSprite, aleSprite, weights, canvas);
+    }
     return;
   }
 
@@ -1966,12 +2243,38 @@ function stampFillOnto(canvas, tile, kind, other, col, row) {
     return;
   }
 
+  if (relation?.mode === "soft") {
+    if (pattern === 0xf) {
+      canvas.getContext("2d").drawImage(fromSprite, 0, 0);
+      return;
+    }
+    preload(MASK_SRC);
+    const weights = slot >= 0 ? maskWeights(slot) : null;
+    if (weights) {
+      const blended = blendRgb565Style(toSprite, fromSprite, weights);
+      if (blended) canvas.getContext("2d").drawImage(blended, 0, 0);
+    }
+    return;
+  }
+
   if (relation?.mode === "pebble" && relation.link?.ale && slot >= 0) {
     const aleSprite = loadLinkSprite(relation.link.ale, slot);
     if (aleSprite) {
       paintLinkFarmland(canvas, fromSprite, toSprite, aleSprite, null, pattern, tile, kind, canvas);
     }
   }
+}
+
+function layerUnderKind(kind, fills, implicit, hasImplicit, baseKind) {
+  if (isWaterTerrain(kind) && fills.some(isSnowTerrain)) return fills.find(isSnowTerrain);
+  // Sand-base grass is a fill, not the plane. Paved/water/snow stamped into
+  // that grass must link against grass (980204 / 980202 / slink01), not sand.
+  if (isSandBase() && !isGrassFamily(kind)) {
+    const grass = fills.find(isGrassFamily);
+    if (grass) return grass;
+  }
+  if (hasImplicit) return implicit;
+  return fills.find((entry) => entry !== kind) || baseKind;
 }
 
 function synthesizeLayeredTile(tile, col, row) {
@@ -1988,15 +2291,7 @@ function synthesizeLayeredTile(tile, col, row) {
   const canvas = copySprite(base);
   for (let i = hasImplicit ? 0 : 1; i < fills.length; i++) {
     const kind = fills[i];
-    let other;
-    if (isWaterTerrain(kind) && fills.some((entry) => isSnowTerrain(entry))) {
-      other = fills.find((entry) => isSnowTerrain(entry));
-    } else if (hasImplicit) {
-      other = implicit;
-    } else {
-      other = fills.find((entry) => entry !== kind) || baseKind;
-    }
-    stampFillOnto(canvas, tile, kind, other, col, row);
+    stampFillOnto(canvas, tile, kind, layerUnderKind(kind, fills, implicit, hasImplicit, baseKind), col, row);
   }
   return canvas;
 }
@@ -2144,14 +2439,22 @@ function synthesizedLinkTile(tile, relation, col, row) {
     preload(WATER_MASK_SRC);
     const weights = waterMaskWeights(slot);
     if (!weights) return fallback;
-    paintLinkWater(canvas, fromSprite, toSprite, linkTileSprite(image, slot), weights);
+    const aleSprite = linkTileSprite(image, slot);
+    if (isSandBase() && isSandKind(relation.toKind)) {
+      paintLinkWaterOnSand(canvas, fromSprite, toSprite, aleSprite, weights);
+    } else if (isSandBase() && isGrassFamily(relation.toKind)) {
+      paintLinkWaterOnDesertGrass(canvas, fromSprite, toSprite, aleSprite, weights, null, tile, relation.fromKind);
+    } else {
+      paintLinkWater(canvas, fromSprite, toSprite, aleSprite, weights);
+    }
     return canvas;
   }
   if (isSnowTerrain(relation.fromKind)) {
     paintLinkSnow(canvas, fromSprite, toSprite, linkTileSprite(image, slot));
     return canvas;
   }
-  paintLinkFarmland(canvas, fromSprite, toSprite, linkTileSprite(image, slot), cornerFrom, pattern, tile, relation.fromKind);
+  const aleSprite = linkTileSprite(image, slot);
+  paintLinkFarmland(canvas, fromSprite, toSprite, aleSprite, cornerFrom, pattern, tile, relation.fromKind);
   return canvas;
 }
 
@@ -2187,7 +2490,11 @@ function synthesizeTwoWay(tile, col, row) {
   const kinds = [...new Set(tile.corners)];
   const implicit = baseChar();
   const fills = kinds.filter((kind) => kind !== implicit);
-  if (fills.some((kind) => isWaterTerrain(kind) || isSnowTerrain(kind))) {
+  const snowy = fills.some(isSnowTerrain);
+  const watery = fills.some(isWaterTerrain);
+  const waterOnlyOnSand =
+    isSandBase() && watery && !snowy && fills.every((kind) => isWaterTerrain(kind) || isSandKind(kind));
+  if ((watery || snowy) && !waterOnlyOnSand) {
     return synthesizeLayeredTile(tile, col, row);
   }
   const relation = linkRelationForTile(tile);
@@ -2221,7 +2528,15 @@ function displayCorners(tile) {
   // become a hollow hole.
   const implicit = baseChar();
   const self = tile.corners[0];
-  if (!isSolidKind(tile, self) || self === implicit || !isFillTerrain(self) || isGrassFamily(self)) {
+  // Grass-base: grass is the implicit plane — never invent mixed edges with it.
+  // Sand-base: grass is a stamped fill. Paved/dirt/water abutting solid grass
+  // must regain edge bits or 980204 / soft fringes never appear (dark crescent).
+  if (
+    !isSolidKind(tile, self) ||
+    self === implicit ||
+    !isFillTerrain(self) ||
+    (isGrassFamily(self) && !isSandBase())
+  ) {
     return tile.corners;
   }
   const corners = tile.corners.slice();
@@ -2229,7 +2544,8 @@ function displayCorners(tile) {
     const n = state.cornerTiles.get(cellKey(tile.u + du, tile.v + dv));
     if (!n) continue;
     const nk = n.corners[0];
-    if (nk === self || nk === implicit || isGrassFamily(nk)) continue;
+    if (nk === self || nk === implicit) continue;
+    if (isGrassFamily(nk) && !isSandBase()) continue;
     if (!isFillTerrain(nk) || !isSolidKind(n, nk)) continue;
     for (let c = 0; c < 4; c++) {
       if (bits & (1 << c)) corners[c] = nk;
@@ -2244,7 +2560,24 @@ function clipSolidFillAgainstShores(tile, sprite, fillKind) {
   // 0xF water diamonds overlap mixed shore cells. Those tips are the
   // unmasked blue shards past the sand ring. Native draws the wlink cell
   // on top; we drop 0xF pixels that already sit inside a non-solid neighbor.
-  if (!sprite || !(isWaterTerrain(fillKind) || isSnowTerrain(fillKind)) || !isSolidKind(tile, fillKind)) return sprite;
+  //
+  // Sand-base: grass/paved/dirt are real drawn fills (not the implicit plane).
+  // Their solid diamonds cover 989802 / 980204 mixed cells the same way —
+  // grass soft fringe dies, paved recess collapses to a dark crescent.
+  if (
+    !sprite ||
+    !isSolidKind(tile, fillKind) ||
+    !(
+      isWaterTerrain(fillKind) ||
+      isSnowTerrain(fillKind) ||
+      (isSandBase() &&
+        (isGrassFamily(fillKind) ||
+          isPavedTerrain(fillKind) ||
+          (isEarthTerrain(fillKind) && !isSandKind(fillKind))))
+    )
+  ) {
+    return sprite;
+  }
   const src = readSpriteRGBA(sprite);
   if (!src) return sprite;
   const pos = nativeTilePosition(tile);
@@ -2290,9 +2623,59 @@ function clipSolidFillAgainstShores(tile, sprite, fillKind) {
   return canvas;
 }
 
+function compositeOntoSand(innerSprite, tile, col, row) {
+  // Dirt-on-grass: 989802 occupancy of the fill, A=grass plane, B=fill.
+  // Grass-on-sand is the same with A=sand plane, B=the grass-base composite.
+  const sandSprite = terrainVariant(sandChar(), col, row);
+  if (!innerSprite) return sandSprite;
+  if (!sandSprite) return innerSprite;
+  let pattern = 0;
+  tile.corners.forEach((kind, index) => {
+    if (kind !== sandChar()) pattern |= 1 << index;
+  });
+  if (!pattern) return sandSprite;
+  if (pattern === 0xf) return innerSprite;
+  const slot = linkSlot(pattern, col, row);
+  if (slot < 0) return innerSprite;
+  preload(MASK_SRC);
+  const weights = maskWeights(slot);
+  if (!weights) return innerSprite;
+  return blendRgb565Style(sandSprite, innerSprite, weights);
+}
+
+function synthesizeOnSandPlane(tile, col, row) {
+  // Grass-base: implicit grass plane + 2-way overlays (wlink014 / clink012).
+  // Sand-base: implicit sand plane. If a cell also has grass, rewrite sand
+  // corners to that grass and run the same overlay synthesis, then sit the
+  // result on sand with 989802. Never 3-way-link water/paved against sand
+  // while grass is in the cell.
+  const kinds = [...new Set(tile.corners)];
+  if (kinds.length === 1) {
+    const sprite = terrainVariant(kinds[0], col, row);
+    return clipSolidFillAgainstShores(tile, sprite, kinds[0]);
+  }
+  const sand = sandChar();
+  const grassKind = tile.corners.find(isGrassFamily);
+  if (grassKind && kinds.includes(sand)) {
+    const inner = {
+      u: tile.u,
+      v: tile.v,
+      corners: tile.corners.map((kind) => (kind === sand ? grassKind : kind)),
+    };
+    const innerKinds = [...new Set(inner.corners)];
+    const innerSprite =
+      innerKinds.length === 1
+        ? terrainVariant(innerKinds[0], col, row)
+        : synthesizeTwoWay(inner, col, row);
+    return compositeOntoSand(innerSprite, tile, col, row);
+  }
+  return synthesizeTwoWay(tile, col, row);
+}
+
 function synthesizeTerrainTile(tile, col, row) {
   const corners = displayCorners(tile);
   const view = corners === tile.corners ? tile : { u: tile.u, v: tile.v, corners };
+  if (isSandBase()) return synthesizeOnSandPlane(view, col, row);
   const kinds = [...new Set(corners)];
   if (kinds.length === 1) {
     const sprite = terrainVariant(kinds[0], col, row);
@@ -2317,6 +2700,46 @@ function synthesisReady(tile) {
   const corners = displayCorners(tile);
   const kinds = [...new Set(corners)];
   if (kinds.length <= 1) return true;
+  if (isSandBase()) {
+    const sand = sandChar();
+    const grassKind = corners.find(isGrassFamily);
+    if (grassKind && kinds.includes(sand)) {
+      if (!groundMaskReady() || !terrainVariant(sand, 0, 0) || !terrainVariant(grassKind, 0, 0)) return false;
+      const innerCorners = corners.map((kind) => (kind === sand ? grassKind : kind));
+      if ([...new Set(innerCorners)].length <= 1) return true;
+      return synthesisReady({ u: tile.u, v: tile.v, corners: innerCorners });
+    }
+  }
+  const implicit = baseChar();
+  const fills = kinds.filter((kind) => kind !== implicit);
+  const snowy = fills.some(isSnowTerrain);
+  const watery = fills.some(isWaterTerrain);
+  const waterOnlyOnSand =
+    isSandBase() && watery && !snowy && fills.every((kind) => isWaterTerrain(kind) || isSandKind(kind));
+  if ((watery || snowy) && !waterOnlyOnSand) {
+    const ranked = fills
+      .slice()
+      .sort((a, b) => fillDrawRank(a) - fillDrawRank(b) || String(a).localeCompare(String(b)));
+    const hasImplicit = kinds.includes(implicit);
+    const baseKind = hasImplicit ? implicit : ranked[0];
+    if (!terrainVariant(baseKind, 0, 0)) return false;
+    for (let i = hasImplicit ? 0 : 1; i < ranked.length; i++) {
+      const kind = ranked[i];
+      if (!terrainVariant(kind, 0, 0)) return false;
+      const other = layerUnderKind(kind, ranked, implicit, hasImplicit, baseKind);
+      const relation = linkForTerrainPair(kind, other);
+      if (!relation) continue;
+      if (relation.mode === "soft" && !groundMaskReady()) return false;
+      if (isWaterTerrain(kind) && !waterMaskReady()) return false;
+      if (relation.link?.ale) {
+        const url = `/ale-atlas/${relation.link.ale}.png`;
+        preload(url);
+        const image = state.images.get(url);
+        if (!(image && image.complete && image.naturalWidth)) return false;
+      }
+    }
+    return true;
+  }
   const relation = linkRelationForTile({ u: tile.u, v: tile.v, corners });
   if (!relation) return true;
   if (relation.mode === "soft" || relation.mode === "flat") {
@@ -2352,9 +2775,17 @@ function nativeTerrainBlit(tile) {
 function cachedTerrainSprite(tile) {
   const position = logicalToNative(tile.u, tile.v);
   const corners = displayCorners(tile);
-  let key = corners.join("") + "@" + position.col + "," + position.row;
+  let key = (state.mapflag || 0) + ":" + corners.join("") + "@" + position.col + "," + position.row;
   const self = tile.corners[0];
-  if (isSolidKind(tile, self) && (isWaterTerrain(self) || isSnowTerrain(self))) {
+  if (
+    isSolidKind(tile, self) &&
+    (isWaterTerrain(self) ||
+      isSnowTerrain(self) ||
+      (isSandBase() &&
+        (isGrassFamily(self) ||
+          isPavedTerrain(self) ||
+          (isEarthTerrain(self) && !isSandKind(self)))))
+  ) {
     for (const { du, dv } of NEIGHBOR_EDGE_BITS) {
       const n = state.cornerTiles.get(cellKey(tile.u + du, tile.v + dv));
       key += n && n.corners.every((kind) => kind === self) ? "w" : "s";
@@ -2370,11 +2801,10 @@ function tileTexPath(kind) {
   if (kind && kind.charAt(0) === "@") {
     const code = kind.slice(1);
     const t = (state.kinds.tiles || []).find((x) => x.code === code);
-    return t && t.texture ? "/tiles/" + t.texture : null;
+    const tex = (isSandBase() && t?.code && SAND_TILESET[t.code]) || t?.texture;
+    return tex ? "/tiles/" + tex : null;
   }
-  const b = brushByPaperChar(kind);
-  const t = b || tileByChar(kind);
-  return t && t.texture ? "/tiles/" + t.texture : null;
+  return terrainTexturePath(kind);
 }
 
 function drawCellTexture(s) {
@@ -2735,19 +3165,24 @@ function plotGridDot(data, w, h, x, y) {
 }
 
 function drawDottedSeg(data, w, h, x0, y0, x1, y1) {
-  let x = Math.round(x0);
-  let y = Math.round(y0);
-  const x1i = Math.round(x1);
-  const y1i = Math.round(y1);
-  const dx = Math.abs(x1i - x);
-  const dy = Math.abs(y1i - y);
-  const sx = x < x1i ? 1 : -1;
-  const sy = y < y1i ? 1 : -1;
+  // 1px dots, never 8-adjacent on the same edge — isometric 2:1 lines
+  // otherwise clump into 2px grains wherever Bresenham takes a double step.
+  let x = x0;
+  let y = y0;
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
   let err = dx - dy;
-  let i = 0;
+  let lastX = -99;
+  let lastY = -99;
   for (;;) {
-    if ((i & 1) === 0) plotGridDot(data, w, h, x, y);
-    if (x === x1i && y === y1i) break;
+    if (Math.abs(x - lastX) > 1 || Math.abs(y - lastY) > 1) {
+      plotGridDot(data, w, h, x, y);
+      lastX = x;
+      lastY = y;
+    }
+    if (x === x1 && y === y1) break;
     const e2 = err * 2;
     if (e2 > -dy) {
       err -= dy;
@@ -2757,7 +3192,6 @@ function drawDottedSeg(data, w, h, x0, y0, x1, y1) {
       err += dx;
       y += sy;
     }
-    i++;
   }
 }
 
@@ -2772,20 +3206,25 @@ function paintGrid(gctx) {
     gridPixels.data.fill(0);
   }
   const data = gridPixels.data;
-  const rowStep = (TILE_H / 2) * k;
-  const colStep = TILE_W * k;
-  if (rowStep < 0.5 || colStep < 0.5) return;
-  const row0 = Math.floor(-state.cam.y / rowStep) - 2;
-  const row1 = Math.ceil((h - state.cam.y) / rowStep) + 2;
+  const stepX = 32 * k;
+  const stepY = 16 * k;
+  if (stepX < 0.5 || stepY < 0.5) return;
+  const originX = state.cam.x;
+  const originY = state.cam.y;
+  const vertex = (i, j) => [Math.round(originX + i * stepX), Math.round(originY + j * stepY)];
+  const row0 = Math.floor(-originY / stepY) - 2;
+  const row1 = Math.ceil((h - originY) / stepY) + 2;
   for (let row = row0; row <= row1; row++) {
-    const offset = (row & 1) * (colStep / 2);
-    const col0 = Math.floor((-state.cam.x - offset) / colStep) - 2;
-    const col1 = Math.ceil((w - state.cam.x - offset) / colStep) + 2;
+    const odd = row & 1;
+    const col0 = Math.floor((-originX / stepX - odd) / 2) - 2;
+    const col1 = Math.ceil((w - originX) / stepX / 2) + 2;
     for (let col = col0; col <= col1; col++) {
-      const cx = state.cam.x + col * colStep + offset;
-      const cy = state.cam.y + row * rowStep;
-      drawDottedSeg(data, w, h, cx, cy - 16 * k, cx + 32 * k, cy);
-      drawDottedSeg(data, w, h, cx, cy - 16 * k, cx - 32 * k, cy);
+      const i = odd ? 2 * col + 1 : 2 * col;
+      const [x0, y0] = vertex(i, row - 1);
+      const [xR, yR] = vertex(i + 1, row);
+      const [xL, yL] = vertex(i - 1, row);
+      drawDottedSeg(data, w, h, x0, y0, xR, yR);
+      drawDottedSeg(data, w, h, x0, y0, xL, yL);
     }
   }
   gctx.putImageData(gridPixels, 0, 0);
@@ -3043,9 +3482,10 @@ function tileKindOfBrush(brush) {
 }
 
 function brushPaintsBase(brush) {
+  // Paper kind "C" is 石砖 (mapdata 12). Sand's *tile* char is also "C".
+  // Only the tile char means "paint the implicit base / erase".
   if (!brush) return false;
-  const fill = baseChar();
-  return tileKindOfBrush(brush) === fill || paperKindOfBrush(brush) === fill;
+  return tileKindOfBrush(brush) === baseChar();
 }
 
 function cellTerrainKind(u, v) {
@@ -3305,7 +3745,7 @@ function floodFillAt(wx, wy) {
   const paintKind = tileKindOfBrush(brush) || fillKind;
   if (erase) {
     if (target === baseChar()) return;
-  } else if (target === paintKind || target === fillKind) {
+  } else if (target === paintKind) {
     return;
   }
 
@@ -3539,20 +3979,67 @@ function formatSaveTime(ts) {
   return d.getMonth() + 1 + "/" + d.getDate() + " " + p(d.getHours()) + ":" + p(d.getMinutes());
 }
 
-async function saveDraft() {
+const TERRAIN_DRAFT_LS = "manor-terrain-draft-v1";
+
+function draftHasWork(snap) {
+  return !!(
+    snap &&
+    ((snap.stamps && snap.stamps.length) ||
+      (snap.buildings && snap.buildings.length) ||
+      (snap.grassKeep && snap.grassKeep.length) ||
+      snap.mapflag)
+  );
+}
+
+function saveDraftLocal(snap) {
   try {
-    const snap = projectSnapshot("自动保存");
-    await idbPut("kv", snap, "draft");
-    state.dirty = false;
-    setSaveStatus("已自动保存 " + formatSaveTime(snap.savedAt));
+    localStorage.setItem(TERRAIN_DRAFT_LS, JSON.stringify(snap || projectSnapshot("自动保存")));
   } catch (err) {
-    setSaveStatus("自动保存失败");
     console.warn(err);
   }
 }
 
+function loadDraftLocal() {
+  try {
+    const raw = localStorage.getItem(TERRAIN_DRAFT_LS);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function saveDraft() {
+  const snap = projectSnapshot("自动保存");
+  saveDraftLocal(snap);
+  try {
+    await idbPut("kv", snap, "draft");
+    state.dirty = false;
+    setSaveStatus("已自动保存 " + formatSaveTime(snap.savedAt));
+  } catch (err) {
+    setSaveStatus("已本地暂存 " + formatSaveTime(snap.savedAt));
+    console.warn(err);
+  }
+}
+
+function wireDeskSwitchSave(saveFn) {
+  document.querySelectorAll(".desk-switch-inline a[href]").forEach((link) => {
+    if (link.classList.contains("on") || link.getAttribute("aria-current") === "page") return;
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      const href = link.getAttribute("href");
+      Promise.resolve(saveFn())
+        .catch(() => {})
+        .finally(() => {
+          window.location.assign(href);
+        });
+    });
+  });
+}
+
 async function saveNamedVersion(name) {
   const snap = projectSnapshot(name || "快照");
+  saveDraftLocal(snap);
   await idbPut("versions", snap);
   await idbPut("kv", snap, "draft");
   const all = (await idbGetAll("versions")).sort((a, b) => b.savedAt - a.savedAt);
@@ -3562,15 +4049,61 @@ async function saveNamedVersion(name) {
   return snap;
 }
 
+function mapHasWork() {
+  return !!(
+    (state.stamps && state.stamps.length) ||
+    (state.buildings && state.buildings.length) ||
+    (state.grassKeep && state.grassKeep.size) ||
+    state.mapflag
+  );
+}
+
+async function startNewTerrain() {
+  try {
+    if (mapHasWork() || state.dirty) {
+      const label = (document.getElementById("desc")?.value || "").trim();
+      await saveNamedVersion(label ? "换新前 · " + label : "换新前 " + formatSaveTime(Date.now()));
+    }
+  } catch (err) {
+    console.warn(err);
+    setSaveStatus("保存旧图失败，未换新");
+    return;
+  }
+  state.stamps = [];
+  state.buildings = [];
+  state.grassKeep = new Set();
+  state.mapflag = 0;
+  state.terrainSource = null;
+  state.buildingSource = null;
+  state.selectedBld = -1;
+  state.history = [];
+  state.future = [];
+  state.unknown = new Set();
+  state.synthCache = new Map();
+  const desc = document.getElementById("desc");
+  if (desc) desc.value = "";
+  initPortalPos();
+  syncChgTerrButton();
+  rebuildStampIndex();
+  playCam();
+  await saveDraft();
+  setSaveStatus("新图（草地）");
+  draw();
+}
+
 async function restoreDraft() {
   try {
-    const snap = await idbGet("kv", "draft");
-    const hasWork =
-      snap &&
-      ((snap.stamps && snap.stamps.length) ||
-        (snap.buildings && snap.buildings.length) ||
-        snap.mapflag);
-    if (!hasWork) {
+    let snap = null;
+    try {
+      snap = await idbGet("kv", "draft");
+    } catch (err) {
+      console.warn(err);
+    }
+    if (!draftHasWork(snap)) {
+      const local = loadDraftLocal();
+      if (draftHasWork(local)) snap = local;
+    }
+    if (!draftHasWork(snap)) {
       setSaveStatus("新图");
       return false;
     }
@@ -3667,6 +4200,18 @@ function syncChgTerrButton() {
   btn.title = isSandBase() ? "当前底板：沙地（再点切回草地）" : "当前底板：草地（再点换成沙地）";
 }
 
+function paperCharForTile(tileChar, stampSize) {
+  // Stamps store mapdata paper chars (encKind), not tile chars.
+  // Sand tile char "C" collides with paper "C" = 石砖 (mapdata 12).
+  const size = stampSize || 1;
+  const brushes = state.kinds.brushes || [];
+  const match =
+    brushes.find((b) => b.char === tileChar && (b.stampSize || 1) === size) ||
+    brushes.find((b) => b.char === tileChar && (b.stampSize || 1) === 1) ||
+    brushes.find((b) => b.char === tileChar);
+  return match ? paperKindOfBrush(match) : null;
+}
+
 function adoptBaseTerrain(sand) {
   const next = sand ? 1 : 0;
   const wasSand = isSandBase();
@@ -3677,27 +4222,46 @@ function adoptBaseTerrain(sand) {
   }
   pushHist();
   const grass = grassChar();
+  const sandC = sandChar();
+  // Sand-base: sand is the plane, grass stamps are the overlay.
+  // Grass-base: grass is the plane, sand stamps are the overlay.
+  // Flipping swaps those roles — keep brush size, write paper chars not tile chars.
+  for (const s of state.stamps) {
+    const brush = brushByPaperChar(s.kind);
+    const ch = stampTerrainChar(s);
+    const size = (brush && brush.stampSize) || 1;
+    if (ch === grass) {
+      const paper = paperCharForTile(sandC, size);
+      if (paper) s.kind = paper;
+    } else if (ch === sandC || isSandKind(ch)) {
+      const paper = paperCharForTile(grass, size);
+      if (paper) s.kind = paper;
+    }
+  }
+  // grassKeep marks intentional grass holes inside dirt on grass-base. When
+  // moving to sand-base those cells become real grass stamps on the sand plane.
   if (!wasSand && willSand) {
+    const grassPaper = paperCharForTile(grass, 1) || grass;
+    const seen = new Set(
+      state.stamps
+        .filter((s) => stampTerrainChar(s) === grass)
+        .map((s) => {
+          const p = nativePointToLogical(s.x, s.y);
+          return cellKey(p.u, p.v);
+        })
+    );
     for (const key of state.grassKeep || []) {
+      if (seen.has(key)) continue;
       const comma = String(key).indexOf(",");
       if (comma < 0) continue;
       const u = +key.slice(0, comma);
       const v = +key.slice(comma + 1);
       if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
       const pos = logicalToNative(u, v);
-      state.stamps.push({ kind: grass, x: pos.cx, y: pos.cy });
+      state.stamps.push({ kind: grassPaper, x: pos.cx, y: pos.cy });
     }
-    state.grassKeep = new Set();
-  } else {
-    const keep = [];
-    state.stamps = state.stamps.filter((s) => {
-      if (stampTerrainChar(s) !== grass) return true;
-      const p = nativePointToLogical(s.x, s.y);
-      keep.push(cellKey(p.u, p.v));
-      return false;
-    });
-    state.grassKeep = new Set(keep);
   }
+  state.grassKeep = new Set();
   state.mapflag = next;
   state.synthCache = new Map();
   terrainScreenKey = "";
@@ -3799,6 +4363,9 @@ function bind() {
   document.getElementById("btnChgTerr").onclick = () => {
     adoptBaseTerrain(!isSandBase());
   };
+  document.getElementById("btnNewTerr").onclick = () => {
+    startNewTerrain();
+  };
   syncChgTerrButton();
   document.getElementById("btnMatList").onclick = () => {
     refreshMatCount();
@@ -3827,10 +4394,18 @@ function bind() {
     if (state.dirty) saveDraft();
   }, 20000);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && state.dirty) saveDraft();
+    if (document.hidden) {
+      saveDraftLocal();
+      if (state.dirty) saveDraft();
+    }
   });
   window.addEventListener("pagehide", () => {
+    saveDraftLocal();
     if (state.dirty) saveDraft();
+  });
+  wireDeskSwitchSave(async () => {
+    saveDraftLocal();
+    await saveDraft();
   });
 
   const stage = mapHost || view.parentElement;
@@ -4308,10 +4883,12 @@ async function exportTerrainPng() {
   await new Promise((resolve) => requestAnimationFrame(resolve));
   try {
     withDrawTarget(out, { x: pad, y: pad, k }, () => {
-    ctx.fillStyle = planeBackdrop();
+    ctx.fillStyle = deskChrome();
     ctx.fillRect(0, 0, w, h);
     ctx.save();
     clipMap();
+    ctx.fillStyle = planeBackdrop();
+    ctx.fillRect(0, 0, w, h);
     drawTerrainCells();
       ctx.restore();
       ctx.save();

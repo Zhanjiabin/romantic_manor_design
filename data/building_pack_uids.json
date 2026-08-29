@@ -1,0 +1,427 @@
+{
+  "schema": 3,
+  "locked": true,
+  "method": "合成时间 * 1000 + mat.cfg local id",
+  "native": {
+    "packet": "svr_designguide.txt GetMatInfoOk uid=GetDirectIntVal(合成时间) folder=配方成品",
+    "encode": "rc3.exe 0x658d1b uid*1000 + local",
+    "decode": "rc3.exe 0x656bd0 magic 0x10624dd3 div 1000",
+    "frameBorrow": false,
+    "frameMeaning": "mat.cfg 框架 lists compatible building frames, not packet UIDs"
+  },
+  "mapping": {
+    "1": "europe",
+    "2": "egypt",
+    "3": "greece",
+    "4": "park",
+    "5": "q",
+    "7": "toy",
+    "8": "flower1",
+    "9": "flower2",
+    "10": "candy",
+    "13": "space",
+    "14": "bazaar",
+    "15": "supermarket",
+    "16": "antique",
+    "19": "giant",
+    "20": "japan",
+    "21": "tds",
+    "25": "rose",
+    "26": "shiqi",
+    "27": "snow",
+    "28": "muguang"
+  },
+  "frames": {
+    "antique": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "bazaar": [
+      1,
+      2,
+      3,
+      4,
+      8,
+      13,
+      22,
+      23
+    ],
+    "candy": [
+      3,
+      4,
+      9,
+      10,
+      16,
+      21,
+      22,
+      23
+    ],
+    "egypt": [
+      1,
+      2,
+      5,
+      8,
+      11,
+      12,
+      22,
+      23
+    ],
+    "europe": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "flower1": [
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+    ],
+    "flower2": [
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+    ],
+    "fruit": [
+      2,
+      3,
+      4,
+      9,
+      16,
+      21,
+      22,
+      23
+    ],
+    "giant": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "greece": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      17
+    ],
+    "japan": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "military": [
+      1,
+      2,
+      10,
+      16,
+      17,
+      19,
+      20
+    ],
+    "muguang": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "paradise": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "park": [
+      1,
+      2,
+      3,
+      4,
+      6,
+      7,
+      16,
+      21
+    ],
+    "q": [
+      1,
+      8,
+      11,
+      12,
+      18,
+      21,
+      22,
+      23
+    ],
+    "redera": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "rose": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "sea": [
+      1,
+      14,
+      15,
+      18,
+      19,
+      20,
+      21,
+      24
+    ],
+    "shiqi": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "snow": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "space": [
+      2,
+      6,
+      7,
+      13,
+      17,
+      19,
+      20,
+      24
+    ],
+    "supermarket": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "tds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "toy": [
+      5,
+      14,
+      15,
+      17,
+      18,
+      19,
+      20,
+      24
+    ]
+  },
+  "packs": [
+    {
+      "uid": 1,
+      "key": "europe",
+      "folder": "europe",
+      "name": "欧洲风格",
+      "source": "legacy packet table"
+    },
+    {
+      "uid": 2,
+      "key": "egypt",
+      "folder": "egypt",
+      "name": "埃及风格",
+      "source": "legacy packet table"
+    },
+    {
+      "uid": 3,
+      "key": "greece",
+      "folder": "greece",
+      "name": "希腊风格",
+      "source": "legacy packet table"
+    },
+    {
+      "uid": 4,
+      "key": "park",
+      "folder": "park",
+      "name": "园林风格",
+      "source": "legacy packet table"
+    },
+    {
+      "uid": 5,
+      "key": "q",
+      "folder": "q",
+      "name": "Q版风格",
+      "source": "mixed paper exact ground match"
+    },
+    {
+      "uid": 7,
+      "key": "toy",
+      "folder": "toy",
+      "name": "玩具天地",
+      "source": "legacy packet table"
+    },
+    {
+      "uid": 8,
+      "key": "flower1",
+      "folder": "flower1",
+      "name": "花卉风格",
+      "source": "legacy packet table"
+    },
+    {
+      "uid": 9,
+      "key": "flower2",
+      "folder": "flower2",
+      "name": "植物风格",
+      "source": "legacy packet table"
+    },
+    {
+      "uid": 10,
+      "key": "candy",
+      "folder": "candy",
+      "name": "糖果乐园",
+      "source": "exact mixed-paper wall match"
+    },
+    {
+      "uid": 13,
+      "key": "space",
+      "folder": "space",
+      "name": "太空幻想",
+      "source": "mixed paper glass-wall match"
+    },
+    {
+      "uid": 14,
+      "key": "bazaar",
+      "folder": "bazaar",
+      "name": "商业建筑",
+      "source": "mixed café paper geometry and ALE match"
+    },
+    {
+      "uid": 15,
+      "key": "supermarket",
+      "folder": "supermarket",
+      "name": "超市建筑",
+      "source": "exact ALE screenshot matches"
+    },
+    {
+      "uid": 16,
+      "key": "antique",
+      "folder": "antique",
+      "name": "古韵建筑",
+      "source": "vendor packet table"
+    },
+    {
+      "uid": 19,
+      "key": "giant",
+      "folder": "giant",
+      "name": "巨人国度",
+      "source": "exact giant ribbon/star matches"
+    },
+    {
+      "uid": 20,
+      "key": "japan",
+      "folder": "japan",
+      "name": "唐韵和风",
+      "source": "exact repeated trim matches"
+    },
+    {
+      "uid": 21,
+      "key": "tds",
+      "folder": "tds",
+      "name": "奇幻之塔",
+      "source": "exact repeated roof-edge match"
+    },
+    {
+      "uid": 25,
+      "key": "rose",
+      "folder": "rose",
+      "name": "玫瑰风情",
+      "source": "exact flower/ground matches"
+    },
+    {
+      "uid": 26,
+      "key": "shiqi",
+      "folder": "shiqi",
+      "name": "石器时代",
+      "source": "exact ALE screenshot matches"
+    },
+    {
+      "uid": 27,
+      "key": "snow",
+      "folder": "snow",
+      "name": "冰雪风格",
+      "source": "mixed paper match"
+    },
+    {
+      "uid": 28,
+      "key": "muguang",
+      "folder": "muguang",
+      "name": "暮光之城",
+      "source": "unique locals 244 and 326"
+    }
+  ]
+}

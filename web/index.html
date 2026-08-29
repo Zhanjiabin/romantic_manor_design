@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="boot-pending">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
@@ -9,7 +9,8 @@
   <meta name="theme-color" content="#2f6b4f" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>设计桌</title>
-  <link rel="stylesheet" href="/web/app.css?v=66" />
+  <link rel="stylesheet" href="/web/app.css?v=70" />
+  <link rel="stylesheet" href="/web/desk-chrome.css?v=3" />
 </head>
 <body>
   <div class="app" id="desk">
@@ -19,6 +20,10 @@
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-title">设计桌</span>
         </div>
+        <nav class="desk-switch-inline" aria-label="设计桌切换">
+          <a class="on" href="/" aria-current="page">地形设计桌</a>
+          <a href="/web/building.html">建筑设计桌</a>
+        </nav>
         <div class="save-status" id="saveStatus">未保存</div>
       </div>
       <div class="top-actions">
@@ -119,6 +124,7 @@
             <button type="button" class="btn btn-compact" id="btnZoom1" title="1:1 缩放">1:1</button>
           </div>
           <button type="button" class="btn btn-compact" id="btnChgMap">地图面积</button>
+          <button type="button" class="btn btn-compact" id="btnNewTerr" title="先保存当前图，再开一张空白草地">新地形</button>
           <button type="button" class="btn btn-compact" id="btnChgTerr" title="更换底板：草地 / 沙地（与游戏「更换地形」相同）">更换地形</button>
         </div>
       </main>
@@ -227,7 +233,7 @@
         <button type="button" class="icon-x" data-close="dlgHistory" aria-label="关闭"></button>
       </div>
       <div class="modal-body">
-        <p class="dlg-desc">自动保存约每 20 秒一次。点保存会再留一个可恢复的快照（最多 30 份）。</p>
+        <p class="dlg-desc">自动保存约每 20 秒一次。点保存或「新地形」会再留一个可恢复的快照（最多 30 份）。</p>
         <label class="field">
           <span>快照名称</span>
           <input class="input" id="snapName" maxlength="40" placeholder="例如 828庄园" />
@@ -246,6 +252,6 @@
   <input type="file" id="fileBld" accept=".txt,text/plain,*/*" hidden />
 
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/app.js?v=152"></script>
+  <script src="/web/app.js?v=180"></script>
 </body>
 </html>

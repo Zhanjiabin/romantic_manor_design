@@ -1,78 +1,280 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="boot-pending">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#1e4a36" />
   <title>建筑设计桌</title>
-  <link rel="stylesheet" href="/web/app.css?v=40" />
-  <link rel="stylesheet" href="/web/building.css?v=1" />
+  <link rel="stylesheet" href="/web/app.css?v=70" />
+  <link rel="stylesheet" href="/web/desk-chrome.css?v=3" />
+  <link rel="stylesheet" href="/web/building.css?v=40" />
 </head>
 <body>
-  <div class="stage">
-    <div class="desk-scale" id="buildingScale">
-      <main class="desk building-desk">
-        <div class="caption">
-          <span class="caption-title">设计桌</span>
-          <button type="button" class="winbtn win-max" id="btnBuildingMax" title="最大化"></button>
-          <button type="button" class="winbtn win-close" id="btnBuildingClose" title="关闭"></button>
+  <div class="app building-app phase-select" id="buildingApp">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-title">设计桌</span>
+        </div>
+        <nav class="desk-switch-inline" aria-label="设计桌切换">
+          <a href="/">地形设计桌</a>
+          <a class="on" href="/web/building.html" aria-current="page">建筑设计桌</a>
+        </nav>
+      </div>
+      <div class="top-actions">
+        <div class="top-cluster" title="吸附">
+          <label class="check top-check">
+            <input type="checkbox" id="snapEnabled" checked />
+            <span>吸附</span>
+          </label>
+          <select class="input snap-step" id="snapStep" title="吸附步长">
+            <option value="1">1px</option>
+            <option value="4" selected>4px</option>
+            <option value="8">8px</option>
+            <option value="16">16px</option>
+          </select>
+        </div>
+        <div class="top-cluster" title="幕布">
+          <label class="check top-check">
+            <input type="checkbox" id="veilEnabled" checked />
+            <span>幕布</span>
+          </label>
+          <label class="veil-opacity-wrap">
+            <input type="range" id="veilOpacity" min="0" max="90" value="42" step="1" />
+            <span id="veilOpacityLabel">42%</span>
+          </label>
+        </div>
+      </div>
+    </header>
+
+    <div class="workspace building-workspace">
+      <main class="building-stage" id="buildingStage">
+        <div class="canvas-shell" id="canvasShell">
+          <div class="canvas-zoom-inner" id="canvasZoomInner">
+            <div class="canvas-frame" id="canvasFrame">
+              <canvas id="buildingView" width="570" height="550"></canvas>
+              <div class="canvas-empty" id="canvasEmpty" hidden>
+                <strong>选择右侧户型</strong>
+                <span>地基会在场景正中显示，再点「开始设计」</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="hud-stack" id="hudStack">
+            <div class="base-meta" id="baseMeta">
+              <div><span>名称</span><strong id="buildingName">无</strong></div>
+              <div><span>占地</span><strong id="buildingPut">0×0</strong></div>
+              <div><span>室内空间</span><strong id="buildingSpace">无</strong></div>
+              <div><span>室外影响</span><strong id="buildingOutside">无</strong></div>
+              <div id="paperBaseHint" class="paper-base-hint" hidden></div>
+            </div>
+
+            <div class="zoom-control" id="zoomControl" title="画布缩放 · Ctrl+滚轮">
+              <button type="button" class="tool-btn" id="btnZoomOut" title="缩小 Ctrl+-">−</button>
+              <button type="button" class="zoom-label" id="btnZoomReset" title="重置 100% Ctrl+0">100%</button>
+              <button type="button" class="tool-btn" id="btnZoomIn" title="放大 Ctrl++">+</button>
+            </div>
+          </div>
         </div>
 
-        <section class="design-side">
-          <canvas id="buildingView" width="570" height="550"></canvas>
-          <div class="building-notice"><b>注意！</b> 超出亮光部分会被剪裁</div>
-          <div class="base-meta">
-            <span>名　　称：</span><strong id="buildingName">无</strong>
-            <span>占　　地：</span><strong id="buildingPut">0×0</strong>
-            <span>室内空间：</span><strong id="buildingSpace">0</strong>
-            <span>室外影响：</span><strong id="buildingOutside">0</strong>
+        <div class="stage-bar">
+          <div class="stage-dock" id="designDock" hidden>
+            <div class="stage-tool-row">
+              <div class="canvas-toolbar" id="layerTools">
+                <div class="tool-group">
+                  <button type="button" class="tool-btn" data-command="undo" title="撤销"><span class="tool-glyph">↩</span><kbd>Ctrl+Z</kbd></button>
+                  <button type="button" class="tool-btn" data-command="redo" title="重做"><span class="tool-glyph">↪</span><kbd>Ctrl+Y</kbd></button>
+                </div>
+                <span class="tool-sep"></span>
+                <div class="tool-group">
+                  <button type="button" class="tool-btn" data-command="bottom" title="到底层"><span class="tool-glyph">⇊</span><kbd>Ctrl+Shift+[</kbd></button>
+                  <button type="button" class="tool-btn" data-command="down" title="下移一层"><span class="tool-glyph">↓</span><kbd>[</kbd></button>
+                  <button type="button" class="tool-btn" data-command="up" title="上移一层"><span class="tool-glyph">↑</span><kbd>]</kbd></button>
+                  <button type="button" class="tool-btn" data-command="top" title="到顶层"><span class="tool-glyph">⇈</span><kbd>Ctrl+]</kbd></button>
+                </div>
+                <span class="tool-sep"></span>
+                <div class="facing-control" id="facingControl" title="放置/粘贴朝向">
+                  <span class="facing-cap">朝向</span>
+                  <button type="button" class="tool-btn" id="btnFacingPrev" title="上一朝向"><span class="tool-glyph">◀</span><kbd>,</kbd></button>
+                  <strong id="facingLabel">1/1</strong>
+                  <button type="button" class="tool-btn" id="btnFacingNext" title="下一朝向"><span class="tool-glyph">▶</span><kbd>.</kbd></button>
+                </div>
+                <span class="tool-sep"></span>
+                <div class="tool-group">
+                  <button type="button" class="tool-btn" data-command="flip" title="转向"><span class="tool-glyph">↻</span><kbd>Space</kbd></button>
+                  <button type="button" class="tool-btn" data-command="lock" title="锁定/解锁"><span class="tool-glyph">🔒</span><kbd>Ctrl+L</kbd></button>
+                  <button type="button" class="tool-btn" data-command="duplicate" title="复制"><span class="tool-glyph">⧉</span><kbd>Ctrl+D</kbd></button>
+                  <button type="button" class="tool-btn" data-command="group" title="成组"><span class="tool-glyph">▢</span><kbd>Ctrl+G</kbd></button>
+                  <button type="button" class="tool-btn" data-command="ungroup" title="拆组"><span class="tool-glyph">⬚</span><kbd>Ctrl+Shift+G</kbd></button>
+                  <button type="button" class="tool-btn" data-command="savePreset" title="保存为自定义组件"><span class="tool-glyph">★</span></button>
+                  <button type="button" class="tool-btn tool-danger" data-command="delete" title="删除"><span class="tool-glyph">✕</span><kbd>Del</kbd></button>
+                </div>
+              </div>
+              <div class="align-bar" id="alignBar" hidden>
+                <button type="button" class="tool-btn" data-align="left" title="左对齐"><span class="tool-glyph">⫷</span></button>
+                <button type="button" class="tool-btn" data-align="centerX" title="水平居中"><span class="tool-glyph">☰</span></button>
+                <button type="button" class="tool-btn" data-align="right" title="右对齐"><span class="tool-glyph">⫸</span></button>
+                <button type="button" class="tool-btn" data-align="top" title="顶对齐"><span class="tool-glyph">⫷</span></button>
+                <button type="button" class="tool-btn" data-align="centerY" title="垂直居中"><span class="tool-glyph">☰</span></button>
+                <button type="button" class="tool-btn" data-align="bottom" title="底对齐"><span class="tool-glyph">⫸</span></button>
+                <button type="button" class="tool-btn" data-align="distributeX" title="水平分布"><span class="tool-glyph">⇔</span></button>
+                <button type="button" class="tool-btn" data-align="distributeY" title="垂直分布"><span class="tool-glyph">⇕</span></button>
+              </div>
+            </div>
           </div>
-          <div class="layer-tools" aria-label="图层工具">
-            <button type="button" data-command="bottom" title="到底层">⇊</button>
-            <button type="button" data-command="down" title="到下层">↓</button>
-            <button type="button" data-command="up" title="到上层">↑</button>
-            <button type="button" data-command="top" title="到顶层">⇈</button>
-            <button type="button" data-command="flip" title="转向">↔</button>
-            <button type="button" data-command="delete" title="删除">×</button>
-            <button type="button" data-command="break" title="拆散套件">拆</button>
+          <div class="stage-bar-main">
+            <div class="selection-line">
+              <span class="selection-label">当前</span>
+              <strong id="selectedComponent">无</strong>
+              <span class="current-materials" id="currentMaterials"></span>
+              <button type="button" class="btn btn-compact btn-clear-pick" id="btnClearPick" hidden title="取消选用与选中 · Esc">取消</button>
+            </div>
+            <div class="selection-actions" id="selectionActions" hidden>
+              <button type="button" class="btn btn-compact" id="btnGroupSel" title="将选中素材分成一组，之后可一起移动">分组</button>
+              <button type="button" class="btn btn-compact" id="btnUngroupSel" title="取消分组">拆组</button>
+              <button type="button" class="btn btn-compact" id="btnLockSel" title="锁定选中，防止误拖误删 Ctrl+L">锁定</button>
+              <button type="button" class="btn btn-compact" id="btnUnlockSel" title="解锁选中">解锁</button>
+            </div>
           </div>
-          <div class="selection-caption">当前选择：<span id="selectedComponent">无</span></div>
-          <div class="current-materials" id="currentMaterials"></div>
-        </section>
-
-        <aside class="material-side">
-          <fieldset class="base-group">
-            <legend>当前户型：</legend>
-            <strong id="currentBase">无</strong>
-            <button type="button" class="gbtn compact" id="btnChooseBase">更换户型</button>
-          </fieldset>
-          <div class="class-labels">
-            <span>按组件分类：</span>
-            <span>按主题分类：</span>
+          <div class="material-line">
+            <span class="selection-label">材料</span>
+            <div class="all-material-strip" id="allMaterials"></div>
+            <button type="button" class="btn btn-compact" id="btnAllMaterials" title="所有材料">明细</button>
           </div>
-          <div class="material-browser">
-            <div class="component-kinds" id="componentKinds"></div>
-            <div class="theme-list" id="themeList"></div>
-            <div class="component-list" id="componentList"></div>
-            <div class="template-list" id="templateList" hidden></div>
-          </div>
-          <button type="button" class="gbtn compact import-design" id="btnImportDesign">导入设计</button>
-          <button type="button" class="gbtn compact save-design" id="btnSaveDesign">保存设计</button>
-        </aside>
-
-        <button type="button" class="gbtn all-materials" id="btnAllMaterials">所有材料</button>
-        <div class="all-material-strip" id="allMaterials"></div>
-        <button type="button" class="gbtn make-building" id="btnMakeBuilding">生成图纸</button>
-        <button type="button" class="gbtn close-building" id="btnCloseBuilding">关闭</button>
-
-        <div class="dlg building-base-dialog" id="baseDialog" hidden>
-          <div class="dlg-cap">选择户型<button type="button" class="winbtn win-close dlg-x" id="btnBaseDialogClose"></button></div>
-          <div class="base-dialog-list" id="baseDialogList"></div>
         </div>
       </main>
+
+      <aside class="rail rail-right building-rail">
+        <div class="rail-panel" id="baseSelectSide">
+          <div class="rail-head">
+            <h2 class="rail-title">选择户型</h2>
+            <p class="rail-desc">先选分类再点户型。已有装修时，「开始设计」会询问是否清空</p>
+          </div>
+          <div class="base-preview-box" id="basePreviewBox">
+            <img id="basePreviewImg" alt="" />
+          </div>
+          <div class="base-kind-tabs" id="baseKindTabs"></div>
+          <div class="base-icon-grid" id="baseIconGrid"></div>
+          <div class="rail-sub">材料需求</div>
+          <div class="base-mat-list" id="baseMatList"></div>
+          <div class="rail-actions">
+            <button type="button" class="btn btn-primary btn-block" id="btnNextBase">开始设计</button>
+            <button type="button" class="btn btn-ghost btn-block" id="btnBackBase">返回</button>
+          </div>
+        </div>
+
+        <div class="rail-panel design-panel" id="materialSide" hidden>
+          <div class="base-current">
+            <div class="base-current-text">
+              <span class="rail-sub">当前户型</span>
+              <strong id="currentBase">无</strong>
+            </div>
+            <div class="base-current-actions">
+              <button type="button" class="btn btn-compact" id="btnChooseBase">更换</button>
+              <button type="button" class="btn btn-compact btn-clear-design" id="btnClearDesign" title="清空现有装修，保留户型">清空</button>
+            </div>
+          </div>
+
+          <div class="rail-tabs" role="tablist">
+            <button type="button" class="rail-tab on" data-tab="assets">素材</button>
+            <button type="button" class="rail-tab" data-tab="layers">图层</button>
+            <button type="button" class="rail-tab" data-tab="customs">组件</button>
+          </div>
+
+          <div class="tab-pane" id="tabAssets">
+            <div class="asset-filters">
+              <div class="asset-filter-summary" id="assetFilterSummary">选择主题与类别</div>
+              <div class="asset-filter-section">
+                <span class="filter-cap">类别</span>
+                <div class="category-grid" id="componentKinds" role="tablist" aria-label="素材类别"></div>
+              </div>
+              <div class="asset-filter-section">
+                <span class="filter-cap">主题</span>
+                <label class="theme-search">
+                  <span class="theme-search-icon" aria-hidden="true">⌕</span>
+                  <input
+                    type="search"
+                    id="themeSearch"
+                    class="input theme-search-input"
+                    placeholder="搜索主题…"
+                    autocomplete="off"
+                  />
+                </label>
+                <div class="theme-grid" id="themeList" role="listbox" aria-label="主题列表"></div>
+              </div>
+            </div>
+            <div class="component-list" id="componentList"></div>
+          </div>
+
+          <div class="tab-pane" id="tabLayers" hidden>
+            <div class="layer-filter-row">
+              <input class="input layer-filter" id="layerFilter" type="search" placeholder="搜索图层…" autocomplete="off" />
+            </div>
+            <div class="layer-list" id="layerList" role="listbox" aria-label="图层列表"></div>
+            <div class="layer-footer">
+              <button type="button" class="layer-foot-btn" id="btnSelectAll" title="全选">全选</button>
+              <button type="button" class="layer-foot-btn" id="btnClearSel" title="取消选择">清除</button>
+              <span class="layer-foot-sep"></span>
+              <button type="button" class="layer-foot-btn" id="btnLayerGroup" title="将选中图层分组 Ctrl+G">分组</button>
+              <button type="button" class="layer-foot-btn" id="btnLayerUngroup" title="拆组 Ctrl+Shift+G">拆组</button>
+              <button type="button" class="layer-foot-btn danger" id="btnLayerDelete" title="删除选中 Del">删除</button>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tabCustoms" hidden>
+            <div class="custom-folder-row">
+              <select class="input" id="customFolderFilter">
+                <option value="">全部分组</option>
+              </select>
+              <button type="button" class="btn btn-compact" id="btnNewFolder" title="新建分组">＋分组</button>
+            </div>
+            <div class="custom-list" id="customList"></div>
+            <p class="custom-hint">拖到画布放置，或点选后点击画布。先设好朝向再粘贴。</p>
+          </div>
+
+          <div class="rail-foot">
+            <label class="check keep-foundation">
+              <input type="checkbox" id="keepFoundation" checked />
+              <span>保留地基</span>
+            </label>
+            <div class="panel-actions">
+              <button type="button" class="btn" id="btnSaveDesign">保存</button>
+              <button type="button" class="btn" id="btnImportDesign" title="导入建筑设计桌图纸">导入图纸</button>
+            </div>
+            <div class="panel-actions panel-actions-primary">
+              <button type="button" class="btn btn-primary" id="btnMakeBuilding">生成图纸</button>
+              <button type="button" class="btn" id="btnCloseBuilding">关闭</button>
+            </div>
+          </div>
+        </div>
+      </aside>
     </div>
   </div>
+
+  <div class="modal" id="dlgPreset" hidden>
+    <div class="modal-card modal-narrow">
+      <div class="modal-cap">
+        <span>保存为自定义组件</span>
+        <button type="button" class="icon-x" id="btnPresetClose" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>名称</span>
+          <input class="input" id="presetName" maxlength="32" placeholder="例如 门廊组合" />
+        </label>
+        <label class="field">
+          <span>分组</span>
+          <input class="input" id="presetFolder" list="folderSuggestions" maxlength="24" placeholder="例如 常用 / 屋顶" />
+          <datalist id="folderSuggestions"></datalist>
+        </label>
+        <button type="button" class="btn btn-primary btn-block" id="btnPresetOk">保存</button>
+      </div>
+    </div>
+  </div>
+
   <input type="file" id="buildingFile" accept=".txt" hidden />
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/building.js?v=6"></script>
+  <script src="/web/building.js?v=52"></script>
 </body>
 </html>

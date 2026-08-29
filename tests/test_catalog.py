@@ -79,6 +79,67 @@ def test_building_paper_ids_are_direct_component_ids():
     assert gaps == {"flower1": {513}, "flower2": {512}, "japan": {172}}
 
 
+def test_building_pack_uids_match_proven_mixed_paper_packets():
+    pack_uids = load_json("building_pack_uids.json")
+    assert pack_uids.get("locked") is True
+    mapping = pack_uids["mapping"]
+    assert mapping["1"] == "europe"
+    assert mapping["7"] == "toy"
+    assert mapping["10"] == "candy"
+    assert mapping["13"] == "space"
+    assert mapping["14"] == "bazaar"
+    assert mapping["15"] == "supermarket"
+    assert mapping["19"] == "giant"
+    assert mapping["20"] == "japan"
+    assert mapping["21"] == "tds"
+    assert mapping["26"] == "shiqi"
+    assert mapping["28"] == "muguang"
+    catalog = load_json("editor_catalog.json")
+    keys = {pack["key"] for pack in catalog["building"]["packs"]}
+    assert set(mapping.values()) <= keys
+    assert pack_uids["native"]["frameBorrow"] is False
+
+
+def test_mixed_cafe_paper_resolves_directly_without_frame_borrow():
+    from codec.building import loads_gbk
+    from pathlib import Path
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root))
+    from game_paths import GAME
+
+    paper = GAME / "图代码" / "建筑.txt"
+    if not paper.is_file():
+        return
+    pack_uids = load_json("building_pack_uids.json")
+    catalog = load_json("editor_catalog.json")
+    packs = {pack["key"]: pack for pack in catalog["building"]["packs"]}
+    mapping = {int(k): v for k, v in pack_uids["mapping"].items()}
+
+    def resolve(mat: int):
+        uid, local = divmod(mat, 1000)
+        key = mapping.get(uid)
+        if not key:
+            return None
+        pack = packs[key]
+        if any(c["kind"] == "sprite" and c["id"] == local for c in pack["components"]):
+            return key
+        return None
+
+    doc = loads_gbk(paper.read_bytes(), kind="desk")
+    mats = [r["mat"] for r in doc["records"] if r.get("mat", 0) >= 1000]
+    assert 14124 in mats
+    assert resolve(14124) == "bazaar"
+    assert resolve(13518) == "space"
+    assert resolve(15512) == "supermarket"
+    assert resolve(19160) == "giant"
+    assert resolve(20129) == "japan"
+    assert resolve(21161) == "tds"
+    missing = [mat for mat in mats if resolve(mat) is None]
+    assert not missing
+
+
 if __name__ == "__main__":
     tests = [value for key, value in list(globals().items()) if key.startswith("test_")]
     for test in tests:

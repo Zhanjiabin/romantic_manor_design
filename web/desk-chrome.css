@@ -1,0 +1,57 @@
+/* Shared desk switcher + chrome polish — terrain & building. */
+
+.app .desk-switch-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--panel-sunken, #eef3eb);
+  border: 1px solid rgba(185, 201, 180, 0.85);
+  box-shadow: inset 0 1px 2px rgba(21, 36, 28, 0.04);
+}
+
+.app .desk-switch-inline a {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  background: transparent;
+  font: 600 12px/28px var(--font);
+  letter-spacing: 0.01em;
+  transition:
+    background var(--dur, 160ms) var(--ease, ease),
+    color var(--dur, 160ms) var(--ease, ease),
+    box-shadow var(--dur, 160ms) var(--ease, ease);
+}
+
+.app .desk-switch-inline a:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.app .desk-switch-inline a.on {
+  color: #fff;
+  background: linear-gradient(180deg, #3a7d5c 0%, var(--accent) 100%);
+  box-shadow:
+    0 1px 2px rgba(21, 36, 28, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  font-weight: 650;
+}
+
+.app .desk-switch-inline a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (max-width: 720px) {
+  .app .desk-switch-inline a {
+    padding: 0 10px;
+    font-size: 11px;
+  }
+}

@@ -1,0 +1,231 @@
+{
+  "schema": 1,
+  "missingCount": 53,
+  "decodeErrorCount": 0,
+  "missing": [
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/clink012.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/clink014.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/clink023.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/wlink012.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/980101.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/slink012.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/slink014.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/slink016.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/980100.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/980205.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/980099.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/980098.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/slink017.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/clink022.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/00china.ini",
+      "reference": "mask/slink021.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/01changgui.ini",
+      "reference": "mask/980002.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/01changgui.ini",
+      "reference": "mask/980003.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/01changgui.ini",
+      "reference": "mask/980102.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/05bar.ini",
+      "reference": "mask/980002.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/05bar.ini",
+      "reference": "mask/980003.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/05bar.ini",
+      "reference": "mask/980102.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/new_td.ini",
+      "reference": "mask/slink0012.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/new_td.ini",
+      "reference": "mask/980099.png"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/sea_zhucheng.ini",
+      "reference": "mask/sea_slink014.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcex/maps/tile/sea_zhucheng.ini",
+      "reference": "mask/010tc02.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/1&2.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/1&2.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/2&1.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/2&1.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&4.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&4.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/1&4.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/1&4.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&1.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&1.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/2&4.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/2&4.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&2.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&2.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/3&4.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/3&4.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&3.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&3.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/2&6.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/2&6.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/6&2.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/6&2.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&6.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/4&6.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/6&4.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/6&4.gif"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/6&6.ale"
+    },
+    {
+      "owner": "sourceCode/leo/rcsys/svr/bdesign/item/customroot.tab",
+      "reference": "baseimg/6&6.gif"
+    }
+  ],
+  "decodeErrors": [],
+  "summary": {
+    "terrainBrushes": 30,
+    "terrainPalettes": 41,
+    "terrainKinds": 1916,
+    "terrainLinks": 827,
+    "buildingBases": 80,
+    "customBases": 46,
+    "buildingPacks": 32,
+    "buildingComponents": 2980,
+    "buildingTemplates": 86
+  }
+}

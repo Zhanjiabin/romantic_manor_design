@@ -1,0 +1,3374 @@
+{
+  "alphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_`abcdefghijklmnopqrstuvwxyz",
+  "kindAlphabet": "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+  "tileIndexNote": "模板= 种类字符 = mapdata.tab 序号，用 0-9A-Z（A=10）。不是 00changgui.ini 的 addkind。每种地形还带 1/3/5 格笔刷。坐标仍是 64 进制。",
+  "tiles": [
+    {
+      "index": 0,
+      "walk": 1,
+      "code": "草/绿草",
+      "type": "草地",
+      "texture": "maptexture/c01.jpg",
+      "char": "0",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 1,
+      "walk": 1,
+      "code": "草/青草",
+      "type": "草地",
+      "texture": "maptexture/c02.jpg",
+      "char": "1",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 2,
+      "walk": 1,
+      "code": "矿区/金",
+      "type": "矿场",
+      "texture": "maptexture/150000.jpg",
+      "char": "2",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 3,
+      "walk": 1,
+      "code": "地/石板地",
+      "type": "建筑地",
+      "texture": "maptexture/100001.gif",
+      "char": "3",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 4,
+      "walk": 1,
+      "code": "地/灰砖地1",
+      "type": "砖地",
+      "texture": "maptexture/100002.gif",
+      "char": "4",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 5,
+      "walk": 1,
+      "code": "地/灰砖地2",
+      "type": "砖地",
+      "texture": "maptexture/100102.jpg",
+      "char": "5",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 6,
+      "walk": 1,
+      "code": "地/石子地",
+      "type": "砖地",
+      "texture": "maptexture/100003.gif",
+      "char": "6",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 7,
+      "walk": 1,
+      "code": "地/砖地",
+      "type": "砖地",
+      "texture": "maptexture/100000.gif",
+      "char": "7",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 8,
+      "walk": 1,
+      "code": "地/土质砖地",
+      "type": "砖地",
+      "texture": "maptexture/100200.jpg",
+      "char": "8",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 9,
+      "walk": 1,
+      "code": "土/干土",
+      "type": "土地",
+      "texture": "maptexture/130000.jpg",
+      "char": "9",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 10,
+      "walk": 1,
+      "code": "土/土",
+      "type": "土地",
+      "texture": "maptexture/120001.jpg",
+      "char": "A",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 11,
+      "walk": 1,
+      "code": "土/干地",
+      "type": "土地",
+      "texture": "maptexture/130200.jpg",
+      "char": "B",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 12,
+      "walk": 1,
+      "code": "土/沙地",
+      "type": "沙地",
+      "texture": "maptexture/170200.jpg",
+      "char": "C",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 13,
+      "walk": 1,
+      "code": "土/海沙",
+      "type": "海沙",
+      "texture": "maptexture/170000.jpg",
+      "char": "D",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 14,
+      "walk": 1,
+      "code": "土/湿土",
+      "type": "耕地",
+      "texture": "maptexture/120000.jpg",
+      "char": "E",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 15,
+      "walk": 1,
+      "code": "土/黑土",
+      "type": "土地",
+      "texture": "maptexture/t01.jpg",
+      "char": "F",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 16,
+      "walk": 1,
+      "code": "土/沙土",
+      "type": "土地",
+      "texture": "maptexture/t02.jpg",
+      "char": "G",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 17,
+      "walk": 1,
+      "code": "土/黄土",
+      "type": "土地",
+      "texture": "maptexture/t03.jpg",
+      "char": "H",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 18,
+      "walk": 1,
+      "code": "花/绿花丛",
+      "type": "草地",
+      "texture": "maptexture/h011.jpg",
+      "char": "I",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 19,
+      "walk": 1,
+      "code": "花/青花丛",
+      "type": "草地",
+      "texture": "maptexture/h012.jpg",
+      "char": "J",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 20,
+      "walk": 1,
+      "code": "花/绿野花",
+      "type": "草地",
+      "texture": "maptexture/h021.jpg",
+      "char": "K",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 21,
+      "walk": 1,
+      "code": "花/青野花",
+      "type": "草地",
+      "texture": "maptexture/h022.jpg",
+      "char": "L",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 22,
+      "walk": 1,
+      "code": "雪/雪地",
+      "type": "雪地",
+      "texture": "maptexture/s01.jpg",
+      "char": "M",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 23,
+      "walk": 0,
+      "code": "水/河水",
+      "type": "水",
+      "texture": "water/189902.jpg",
+      "char": "N",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 24,
+      "walk": 1,
+      "code": "草/湿草",
+      "type": "草地",
+      "texture": "maptexture/140000.jpg",
+      "char": "O",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 25,
+      "walk": 1,
+      "code": "草/绿叶草",
+      "type": "草地",
+      "texture": "maptexture/c03.jpg",
+      "char": "P",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 26,
+      "walk": 1,
+      "code": "草/青叶草",
+      "type": "草地",
+      "texture": "maptexture/c04.jpg",
+      "char": "Q",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 27,
+      "walk": 1,
+      "code": "地/土石地1",
+      "type": "砖地",
+      "texture": "maptexture/100004.jpg",
+      "char": "R",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 28,
+      "walk": 1,
+      "code": "地/土石地2",
+      "type": "砖地",
+      "texture": "maptexture/100005.jpg",
+      "char": "S",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 29,
+      "walk": 1,
+      "code": "地/方砖地1",
+      "type": "砖地",
+      "texture": "maptexture/100100.gif",
+      "char": "T",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 30,
+      "walk": 1,
+      "code": "地/方砖地2",
+      "type": "砖地",
+      "texture": "maptexture/100101.gif",
+      "char": "U",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 31,
+      "walk": 1,
+      "code": "地/碎石地1",
+      "type": "砖地",
+      "texture": "maptexture/100103.jpg",
+      "char": "V",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 32,
+      "walk": 1,
+      "code": "地/碎石地2",
+      "type": "砖地",
+      "texture": "maptexture/160000.jpg",
+      "char": "W",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 33,
+      "walk": 1,
+      "code": "地/洞窟地1",
+      "type": "砖地",
+      "texture": "maptexture/d01.jpg",
+      "char": "X",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 34,
+      "walk": 1,
+      "code": "地/洞窟地2",
+      "type": "砖地",
+      "texture": "maptexture/d02.jpg",
+      "char": "Y",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 35,
+      "walk": 1,
+      "code": "地/石块地",
+      "type": "砖地",
+      "texture": "maptexture/d03.jpg",
+      "char": "Z",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 36,
+      "walk": 1,
+      "code": "地/山石地",
+      "type": "砖地",
+      "texture": "maptexture/d04.jpg",
+      "char": "_",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 37,
+      "walk": 1,
+      "code": "地/草石地",
+      "type": "砖地",
+      "texture": "maptexture/d05.gif",
+      "char": "`",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 38,
+      "walk": 1,
+      "code": "地/圆砖地",
+      "type": "砖地",
+      "texture": "maptexture/d06.gif",
+      "char": "a",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 39,
+      "walk": 1,
+      "code": "土/白土",
+      "type": "土地",
+      "texture": "maptexture/170201.jpg",
+      "char": "b",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 40,
+      "walk": 1,
+      "code": "土/红土",
+      "type": "土地",
+      "texture": "maptexture/t04.jpg",
+      "char": "c",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 41,
+      "walk": 0,
+      "code": "室内/绿草",
+      "type": "草地",
+      "texture": "maptexture/c01.jpg",
+      "char": "d",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 42,
+      "walk": 0,
+      "code": "室内/青草",
+      "type": "草地",
+      "texture": "maptexture/c02.jpg",
+      "char": "e",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 43,
+      "walk": 0,
+      "code": "室内/石板地",
+      "type": "建筑地",
+      "texture": "maptexture/100001.gif",
+      "char": "f",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 44,
+      "walk": 0,
+      "code": "室内/灰砖地1",
+      "type": "砖地",
+      "texture": "maptexture/100002.gif",
+      "char": "g",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 45,
+      "walk": 0,
+      "code": "室内/灰砖地2",
+      "type": "砖地",
+      "texture": "maptexture/100102.jpg",
+      "char": "h",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 46,
+      "walk": 0,
+      "code": "室内/石子地",
+      "type": "砖地",
+      "texture": "maptexture/100003.gif",
+      "char": "i",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 47,
+      "walk": 0,
+      "code": "室内/砖地",
+      "type": "砖地",
+      "texture": "maptexture/100000.gif",
+      "char": "j",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 48,
+      "walk": 0,
+      "code": "室内/土质砖地",
+      "type": "砖地",
+      "texture": "maptexture/100200.jpg",
+      "char": "k",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 49,
+      "walk": 0,
+      "code": "室内/土石地1",
+      "type": "砖地",
+      "texture": "maptexture/100004.jpg",
+      "char": "l",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 50,
+      "walk": 0,
+      "code": "室内/土石地2",
+      "type": "砖地",
+      "texture": "maptexture/100005.jpg",
+      "char": "m",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 51,
+      "walk": 0,
+      "code": "室内/方砖地1",
+      "type": "砖地",
+      "texture": "maptexture/100100.gif",
+      "char": "n",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 52,
+      "walk": 0,
+      "code": "室内/方砖地2",
+      "type": "砖地",
+      "texture": "maptexture/100101.gif",
+      "char": "o",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    },
+    {
+      "index": 53,
+      "walk": 0,
+      "code": "室内/山石地",
+      "type": "砖地",
+      "texture": "maptexture/d04.jpg",
+      "char": "p",
+      "calibrated": true,
+      "source": "00changgui.ini#addkind"
+    }
+  ],
+  "brushes": [
+    {
+      "mapdataIndex": 0,
+      "sysName": "地形改造-草地01",
+      "name": "绿草地形",
+      "code": "草/绿草",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=3",
+      "price": 25,
+      "type": "草地",
+      "char": "0",
+      "paperChar": "0",
+      "texture": "maptexture/c01.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 1,
+      "sysName": "地形改造-草地02",
+      "name": "中型绿草地形",
+      "code": "草/绿草",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=3",
+      "price": 203,
+      "type": "草地",
+      "char": "0",
+      "paperChar": "1",
+      "texture": "maptexture/c01.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 2,
+      "sysName": "地形改造-草地03",
+      "name": "大型绿草地形",
+      "code": "草/绿草",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=3",
+      "price": 500,
+      "type": "草地",
+      "char": "0",
+      "paperChar": "2",
+      "texture": "maptexture/c01.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 3,
+      "sysName": "地形改造-耕地01",
+      "name": "耕地地形",
+      "code": "土/湿土",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=13",
+      "price": 25,
+      "type": "土地",
+      "char": "E",
+      "paperChar": "3",
+      "texture": "maptexture/120000.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 4,
+      "sysName": "地形改造-耕地02",
+      "name": "中型耕地地形",
+      "code": "土/湿土",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=13",
+      "price": 203,
+      "type": "土地",
+      "char": "E",
+      "paperChar": "4",
+      "texture": "maptexture/120000.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 5,
+      "sysName": "地形改造-耕地03",
+      "name": "大型耕地地形",
+      "code": "土/湿土",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=13",
+      "price": 500,
+      "type": "土地",
+      "char": "E",
+      "paperChar": "5",
+      "texture": "maptexture/120000.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 6,
+      "sysName": "地形改造-建筑地01",
+      "name": "建筑地形",
+      "code": "地/石板地",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=23",
+      "price": 100,
+      "type": "砖地",
+      "char": "3",
+      "paperChar": "6",
+      "texture": "maptexture/100001.gif",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 7,
+      "sysName": "地形改造-建筑地02",
+      "name": "中型建筑地形",
+      "code": "地/石板地",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=23",
+      "price": 810,
+      "type": "砖地",
+      "char": "3",
+      "paperChar": "7",
+      "texture": "maptexture/100001.gif",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 8,
+      "sysName": "地形改造-建筑地03",
+      "name": "大型建筑地形",
+      "code": "地/石板地",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=23",
+      "price": 2000,
+      "type": "砖地",
+      "char": "3",
+      "paperChar": "8",
+      "texture": "maptexture/100001.gif",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 9,
+      "sysName": "地形改造-沙地01",
+      "name": "沙地地形",
+      "code": "土/沙地",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=33",
+      "price": 25,
+      "type": "土地",
+      "char": "C",
+      "paperChar": "9",
+      "texture": "maptexture/170200.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 10,
+      "sysName": "地形改造-沙地02",
+      "name": "中型沙地地形",
+      "code": "土/沙地",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=33",
+      "price": 203,
+      "type": "土地",
+      "char": "C",
+      "paperChar": "A",
+      "texture": "maptexture/170200.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 11,
+      "sysName": "地形改造-沙地03",
+      "name": "大型沙地地形",
+      "code": "土/沙地",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=33",
+      "price": 500,
+      "type": "土地",
+      "char": "C",
+      "paperChar": "B",
+      "texture": "maptexture/170200.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 12,
+      "sysName": "地形改造-石砖地01",
+      "name": "石砖地形",
+      "code": "地/灰砖地2",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=4",
+      "price": 25,
+      "type": "砖地",
+      "char": "5",
+      "paperChar": "C",
+      "texture": "maptexture/100102.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 13,
+      "sysName": "地形改造-石砖地02",
+      "name": "中型石砖地形",
+      "code": "地/灰砖地2",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=4",
+      "price": 203,
+      "type": "砖地",
+      "char": "5",
+      "paperChar": "D",
+      "texture": "maptexture/100102.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 14,
+      "sysName": "地形改造-石砖地03",
+      "name": "大型石砖地形",
+      "code": "地/灰砖地2",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=4",
+      "price": 500,
+      "type": "砖地",
+      "char": "5",
+      "paperChar": "E",
+      "texture": "maptexture/100102.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 15,
+      "sysName": "地形改造-水01",
+      "name": "水面地形",
+      "code": "水/河水",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=14",
+      "price": 25,
+      "type": "水面",
+      "char": "N",
+      "paperChar": "F",
+      "texture": "water/189902.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 16,
+      "sysName": "地形改造-水02",
+      "name": "中型水面地形",
+      "code": "水/河水",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=14",
+      "price": 203,
+      "type": "水面",
+      "char": "N",
+      "paperChar": "G",
+      "texture": "water/189902.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 17,
+      "sysName": "地形改造-水03",
+      "name": "大型水面地形",
+      "code": "水/河水",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=14",
+      "price": 500,
+      "type": "水面",
+      "char": "N",
+      "paperChar": "H",
+      "texture": "water/189902.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 18,
+      "sysName": "地形改造-土地01",
+      "name": "土地地形",
+      "code": "土/干地",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=24",
+      "price": 25,
+      "type": "土地",
+      "char": "B",
+      "paperChar": "I",
+      "texture": "maptexture/130200.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 19,
+      "sysName": "地形改造-土地02",
+      "name": "中型土地地形",
+      "code": "土/干地",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=24",
+      "price": 203,
+      "type": "土地",
+      "char": "B",
+      "paperChar": "J",
+      "texture": "maptexture/130200.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 20,
+      "sysName": "地形改造-土地03",
+      "name": "大型土地地形",
+      "code": "土/干地",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=24",
+      "price": 500,
+      "type": "土地",
+      "char": "B",
+      "paperChar": "K",
+      "texture": "maptexture/130200.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 21,
+      "sysName": "地形改造-花丛01",
+      "name": "花丛地形",
+      "code": "花/绿花丛",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=3",
+      "price": 25,
+      "type": "花丛",
+      "char": "I",
+      "paperChar": "L",
+      "texture": "maptexture/h011.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 22,
+      "sysName": "地形改造-花丛02",
+      "name": "中型花丛地形",
+      "code": "花/绿花丛",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=3",
+      "price": 203,
+      "type": "花丛",
+      "char": "I",
+      "paperChar": "M",
+      "texture": "maptexture/h011.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 23,
+      "sysName": "地形改造-花丛03",
+      "name": "大型花丛地形",
+      "code": "花/绿花丛",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=3",
+      "price": 500,
+      "type": "花丛",
+      "char": "I",
+      "paperChar": "N",
+      "texture": "maptexture/h011.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 24,
+      "sysName": "地形改造-野花01",
+      "name": "野花地形",
+      "code": "花/绿野花",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=3",
+      "price": 25,
+      "type": "花丛",
+      "char": "K",
+      "paperChar": "O",
+      "texture": "maptexture/h021.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 25,
+      "sysName": "地形改造-野花02",
+      "name": "中型野花地形",
+      "code": "花/绿野花",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=3",
+      "price": 203,
+      "type": "花丛",
+      "char": "K",
+      "paperChar": "P",
+      "texture": "maptexture/h021.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 26,
+      "sysName": "地形改造-野花03",
+      "name": "大型野花地形",
+      "code": "花/绿野花",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=3",
+      "price": 500,
+      "type": "花丛",
+      "char": "K",
+      "paperChar": "Q",
+      "texture": "maptexture/h021.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 27,
+      "sysName": "地形改造-雪地01",
+      "name": "雪地地形",
+      "code": "雪/雪地",
+      "stampSize": 1,
+      "icon": "item/地形.ale?f=14",
+      "price": 25,
+      "type": "雪地",
+      "char": "M",
+      "paperChar": "R",
+      "texture": "maptexture/s01.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 28,
+      "sysName": "地形改造-雪地02",
+      "name": "中型雪地地形",
+      "code": "雪/雪地",
+      "stampSize": 3,
+      "icon": "item/地形.ale?f=14",
+      "price": 203,
+      "type": "雪地",
+      "char": "M",
+      "paperChar": "S",
+      "texture": "maptexture/s01.jpg",
+      "calibrated": true
+    },
+    {
+      "mapdataIndex": 29,
+      "sysName": "地形改造-雪地03",
+      "name": "大型雪地地形",
+      "code": "雪/雪地",
+      "stampSize": 5,
+      "icon": "item/地形.ale?f=14",
+      "price": 500,
+      "type": "雪地",
+      "char": "M",
+      "paperChar": "T",
+      "texture": "maptexture/s01.jpg",
+      "calibrated": true
+    }
+  ],
+  "mapSizes": [
+    {
+      "size": 3880,
+      "level": "110级以上庄园",
+      "basePrice": 152000,
+      "desc": "地形面积3880*3880, 适用于声望110级以上的庄园"
+    },
+    {
+      "size": 3600,
+      "level": "100级以上庄园",
+      "basePrice": 126000,
+      "desc": "地形面积3600*3600, 适用于声望100级以上的庄园"
+    },
+    {
+      "size": 3320,
+      "level": "90级以上庄园",
+      "basePrice": 106000,
+      "desc": "地形面积3320*3320, 适用于声望90级以上的庄园"
+    },
+    {
+      "size": 3040,
+      "level": "80级以上庄园",
+      "basePrice": 90000,
+      "desc": "地形面积3040*3040, 适用于声望80级以上的庄园"
+    },
+    {
+      "size": 2760,
+      "level": "70级以上庄园",
+      "basePrice": 74000,
+      "desc": "地形面积2760*2760, 适用于声望70级以上的庄园"
+    },
+    {
+      "size": 2480,
+      "level": "60级以上庄园",
+      "basePrice": 60000,
+      "desc": "地形面积2480*2480, 适用于声望60级以上的庄园"
+    },
+    {
+      "size": 2200,
+      "level": "50级以上庄园",
+      "basePrice": 46000,
+      "desc": "地形面积2200*2200, 适用于声望50级以上的庄园"
+    },
+    {
+      "size": 1920,
+      "level": "40级以上庄园",
+      "basePrice": 36000,
+      "desc": "地形面积1920*1920, 适用于声望40级以上的庄园"
+    },
+    {
+      "size": 1640,
+      "level": "30级以上庄园",
+      "basePrice": 26000,
+      "desc": "地形面积1640*1640, 适用于声望30级以上的庄园"
+    },
+    {
+      "size": 1360,
+      "level": "20级以上庄园",
+      "basePrice": 12000,
+      "desc": "地形面积1360*1360, 适用于声望20级以上的庄园"
+    },
+    {
+      "size": 1080,
+      "level": "10级以上庄园",
+      "basePrice": 10000,
+      "desc": "地形面积1080*1080，适用于声望10级以上的庄园"
+    },
+    {
+      "size": 800,
+      "level": "3级以上庄园",
+      "basePrice": 6000,
+      "desc": "地形面积800*800，适用于声望3级以上的庄园"
+    }
+  ],
+  "bases": [
+    {
+      "no": 1,
+      "kind": 0,
+      "name": "标准小单间",
+      "cx": 48,
+      "cy": 174,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 2,
+      "kind": 0,
+      "name": "标准单间",
+      "cx": 78,
+      "cy": 350,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3_.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3_.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 3,
+      "kind": 0,
+      "name": "标准大单间1",
+      "cx": 90,
+      "cy": 407,
+      "baseImage": "baseimg/3&5.ale",
+      "maskImage": "baseimg/3&5.gif",
+      "workImage": "baseimg/3&5wk.ale",
+      "mask": "baseimg/3&5.gif",
+      "footprint": [
+        5,
+        3
+      ]
+    },
+    {
+      "no": 4,
+      "kind": 0,
+      "name": "标准大单间2",
+      "cx": 97,
+      "cy": 375,
+      "baseImage": "baseimg/5&3.ale",
+      "maskImage": "baseimg/5&3.gif",
+      "workImage": "baseimg/5&3wk.ale",
+      "mask": "baseimg/5&3.gif",
+      "footprint": [
+        3,
+        5
+      ]
+    },
+    {
+      "no": 5,
+      "kind": 0,
+      "name": "标准大房间",
+      "cx": 90,
+      "cy": 376,
+      "baseImage": "baseimg/5&5.ale",
+      "maskImage": "baseimg/5&5.gif",
+      "workImage": "baseimg/5&5wk.ale",
+      "mask": "baseimg/5&5.gif",
+      "footprint": [
+        5,
+        5
+      ]
+    },
+    {
+      "no": 6,
+      "kind": 0,
+      "name": "标准小别墅1",
+      "cx": 93,
+      "cy": 393,
+      "baseImage": "baseimg/5&7.ale",
+      "maskImage": "baseimg/5&7.gif",
+      "workImage": "baseimg/5&7wk.ale",
+      "mask": "baseimg/5&7.gif",
+      "footprint": [
+        7,
+        5
+      ]
+    },
+    {
+      "no": 7,
+      "kind": 0,
+      "name": "标准小别墅2",
+      "cx": 88,
+      "cy": 361,
+      "baseImage": "baseimg/7&5.ale",
+      "maskImage": "baseimg/7&5.gif",
+      "workImage": "baseimg/7&5wk.ale",
+      "mask": "baseimg/7&5.gif",
+      "footprint": [
+        5,
+        7
+      ]
+    },
+    {
+      "no": 8,
+      "kind": 0,
+      "name": "标准别墅",
+      "cx": 61,
+      "cy": 355,
+      "baseImage": "baseimg/7&7.ale",
+      "maskImage": "baseimg/7&7.gif",
+      "workImage": "baseimg/7&7wk.ale",
+      "mask": "baseimg/7&7.gif",
+      "footprint": [
+        7,
+        7
+      ]
+    },
+    {
+      "no": 9,
+      "kind": 1,
+      "name": "简单植物室",
+      "cx": 48,
+      "cy": 174,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 10,
+      "kind": 1,
+      "name": "小植物室",
+      "cx": 78,
+      "cy": 350,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3_.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3_.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 11,
+      "kind": 1,
+      "name": "植物室1",
+      "cx": 90,
+      "cy": 407,
+      "baseImage": "baseimg/3&5.ale",
+      "maskImage": "baseimg/3&5.gif",
+      "workImage": "baseimg/3&5wk.ale",
+      "mask": "baseimg/3&5.gif",
+      "footprint": [
+        5,
+        3
+      ]
+    },
+    {
+      "no": 12,
+      "kind": 1,
+      "name": "植物室2",
+      "cx": 97,
+      "cy": 375,
+      "baseImage": "baseimg/5&3.ale",
+      "maskImage": "baseimg/5&3.gif",
+      "workImage": "baseimg/5&3wk.ale",
+      "mask": "baseimg/5&3.gif",
+      "footprint": [
+        3,
+        5
+      ]
+    },
+    {
+      "no": 13,
+      "kind": 1,
+      "name": "中型植物室",
+      "cx": 90,
+      "cy": 376,
+      "baseImage": "baseimg/5&5.ale",
+      "maskImage": "baseimg/5&5.gif",
+      "workImage": "baseimg/5&5wk.ale",
+      "mask": "baseimg/5&5.gif",
+      "footprint": [
+        5,
+        5
+      ]
+    },
+    {
+      "no": 14,
+      "kind": 1,
+      "name": "大型植物室1",
+      "cx": 93,
+      "cy": 393,
+      "baseImage": "baseimg/5&7.ale",
+      "maskImage": "baseimg/5&7.gif",
+      "workImage": "baseimg/5&7wk.ale",
+      "mask": "baseimg/5&7.gif",
+      "footprint": [
+        7,
+        5
+      ]
+    },
+    {
+      "no": 15,
+      "kind": 1,
+      "name": "大型植物室2",
+      "cx": 88,
+      "cy": 361,
+      "baseImage": "baseimg/7&5.ale",
+      "maskImage": "baseimg/7&5.gif",
+      "workImage": "baseimg/7&5wk.ale",
+      "mask": "baseimg/7&5.gif",
+      "footprint": [
+        5,
+        7
+      ]
+    },
+    {
+      "no": 16,
+      "kind": 1,
+      "name": "超大植物室",
+      "cx": 61,
+      "cy": 355,
+      "baseImage": "baseimg/7&7.ale",
+      "maskImage": "baseimg/7&7.gif",
+      "workImage": "baseimg/7&7wk.ale",
+      "mask": "baseimg/7&7.gif",
+      "footprint": [
+        7,
+        7
+      ]
+    },
+    {
+      "no": 17,
+      "kind": 2,
+      "name": "简单饲养屋",
+      "cx": 48,
+      "cy": 174,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 18,
+      "kind": 2,
+      "name": "小饲养屋",
+      "cx": 78,
+      "cy": 350,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3_.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3_.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 19,
+      "kind": 2,
+      "name": "饲养屋1",
+      "cx": 90,
+      "cy": 407,
+      "baseImage": "baseimg/3&5.ale",
+      "maskImage": "baseimg/3&5.gif",
+      "workImage": "baseimg/3&5wk.ale",
+      "mask": "baseimg/3&5.gif",
+      "footprint": [
+        5,
+        3
+      ]
+    },
+    {
+      "no": 20,
+      "kind": 2,
+      "name": "饲养屋2",
+      "cx": 97,
+      "cy": 375,
+      "baseImage": "baseimg/5&3.ale",
+      "maskImage": "baseimg/5&3.gif",
+      "workImage": "baseimg/5&3wk.ale",
+      "mask": "baseimg/5&3.gif",
+      "footprint": [
+        3,
+        5
+      ]
+    },
+    {
+      "no": 21,
+      "kind": 2,
+      "name": "中型饲养屋",
+      "cx": 90,
+      "cy": 376,
+      "baseImage": "baseimg/5&5.ale",
+      "maskImage": "baseimg/5&5.gif",
+      "workImage": "baseimg/5&5wk.ale",
+      "mask": "baseimg/5&5.gif",
+      "footprint": [
+        5,
+        5
+      ]
+    },
+    {
+      "no": 22,
+      "kind": 2,
+      "name": "大型饲养屋1",
+      "cx": 93,
+      "cy": 393,
+      "baseImage": "baseimg/5&7.ale",
+      "maskImage": "baseimg/5&7.gif",
+      "workImage": "baseimg/5&7wk.ale",
+      "mask": "baseimg/5&7.gif",
+      "footprint": [
+        7,
+        5
+      ]
+    },
+    {
+      "no": 23,
+      "kind": 2,
+      "name": "大型饲养屋2",
+      "cx": 88,
+      "cy": 361,
+      "baseImage": "baseimg/7&5.ale",
+      "maskImage": "baseimg/7&5.gif",
+      "workImage": "baseimg/7&5wk.ale",
+      "mask": "baseimg/7&5.gif",
+      "footprint": [
+        5,
+        7
+      ]
+    },
+    {
+      "no": 24,
+      "kind": 2,
+      "name": "超大饲养屋",
+      "cx": 61,
+      "cy": 355,
+      "baseImage": "baseimg/7&7.ale",
+      "maskImage": "baseimg/7&7.gif",
+      "workImage": "baseimg/7&7wk.ale",
+      "mask": "baseimg/7&7.gif",
+      "footprint": [
+        7,
+        7
+      ]
+    },
+    {
+      "no": 26,
+      "kind": 3,
+      "name": "普通装饰",
+      "cx": 37,
+      "cy": 109,
+      "baseImage": "baseimg/2&2.ale",
+      "maskImage": "baseimg/2&2.gif",
+      "workImage": "baseimg/2&2wk.ale",
+      "mask": "baseimg/2&2.gif",
+      "footprint": [
+        2,
+        2
+      ]
+    },
+    {
+      "no": 27,
+      "kind": 3,
+      "name": "精致装饰1",
+      "cx": 37,
+      "cy": 116,
+      "baseImage": "baseimg/2&3.ale",
+      "maskImage": "baseimg/2&3.gif",
+      "workImage": "baseimg/2&3wk.ale",
+      "mask": "baseimg/2&3.gif",
+      "footprint": [
+        3,
+        2
+      ]
+    },
+    {
+      "no": 28,
+      "kind": 3,
+      "name": "精致装饰2",
+      "cx": 37,
+      "cy": 100,
+      "baseImage": "baseimg/3&2.ale",
+      "maskImage": "baseimg/3&2.gif",
+      "workImage": "baseimg/3&2wk.ale",
+      "mask": "baseimg/3&2.gif",
+      "footprint": [
+        2,
+        3
+      ]
+    },
+    {
+      "no": 29,
+      "kind": 3,
+      "name": "简单装饰",
+      "cx": 48,
+      "cy": 174,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 30,
+      "kind": 3,
+      "name": "小装饰",
+      "cx": 78,
+      "cy": 350,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3_.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3_.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 31,
+      "kind": 3,
+      "name": "装饰1",
+      "cx": 90,
+      "cy": 407,
+      "baseImage": "baseimg/3&5.ale",
+      "maskImage": "baseimg/3&5.gif",
+      "workImage": "baseimg/3&5wk.ale",
+      "mask": "baseimg/3&5.gif",
+      "footprint": [
+        5,
+        3
+      ]
+    },
+    {
+      "no": 32,
+      "kind": 3,
+      "name": "装饰2",
+      "cx": 97,
+      "cy": 375,
+      "baseImage": "baseimg/5&3.ale",
+      "maskImage": "baseimg/5&3.gif",
+      "workImage": "baseimg/5&3wk.ale",
+      "mask": "baseimg/5&3.gif",
+      "footprint": [
+        3,
+        5
+      ]
+    },
+    {
+      "no": 33,
+      "kind": 3,
+      "name": "中型装饰",
+      "cx": 90,
+      "cy": 376,
+      "baseImage": "baseimg/5&5.ale",
+      "maskImage": "baseimg/5&5.gif",
+      "workImage": "baseimg/5&5wk.ale",
+      "mask": "baseimg/5&5.gif",
+      "footprint": [
+        5,
+        5
+      ]
+    },
+    {
+      "no": 34,
+      "kind": 3,
+      "name": "大型装饰1",
+      "cx": 93,
+      "cy": 393,
+      "baseImage": "baseimg/5&7.ale",
+      "maskImage": "baseimg/5&7.gif",
+      "workImage": "baseimg/5&7wk.ale",
+      "mask": "baseimg/5&7.gif",
+      "footprint": [
+        7,
+        5
+      ]
+    },
+    {
+      "no": 35,
+      "kind": 3,
+      "name": "大型装饰2",
+      "cx": 88,
+      "cy": 361,
+      "baseImage": "baseimg/7&5.ale",
+      "maskImage": "baseimg/7&5.gif",
+      "workImage": "baseimg/7&5wk.ale",
+      "mask": "baseimg/7&5.gif",
+      "footprint": [
+        5,
+        7
+      ]
+    },
+    {
+      "no": 36,
+      "kind": 3,
+      "name": "超大装饰",
+      "cx": 61,
+      "cy": 355,
+      "baseImage": "baseimg/7&7.ale",
+      "maskImage": "baseimg/7&7.gif",
+      "workImage": "baseimg/7&7wk.ale",
+      "mask": "baseimg/7&7.gif",
+      "footprint": [
+        7,
+        7
+      ]
+    },
+    {
+      "no": 37,
+      "kind": 0,
+      "name": "豪华别墅",
+      "cx": 61,
+      "cy": 440,
+      "baseImage": "baseimg/11&11.ale",
+      "maskImage": "baseimg/11&11.gif",
+      "workImage": "baseimg/11&11wk.ale",
+      "mask": "baseimg/11&11.gif",
+      "footprint": [
+        11,
+        11
+      ]
+    },
+    {
+      "no": 100,
+      "kind": 100,
+      "name": "动物孕育场",
+      "cx": 61,
+      "cy": 355,
+      "baseImage": "baseimg/7&7.ale",
+      "maskImage": "baseimg/7&7.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/7&7.gif",
+      "footprint": [
+        4,
+        4
+      ]
+    },
+    {
+      "no": 101,
+      "kind": 100,
+      "name": "动物小屋",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/2&2.ale",
+      "maskImage": "baseimg/2&2.gif",
+      "workImage": "baseimg/2&2wk.ale",
+      "mask": "baseimg/2&2.gif",
+      "footprint": [
+        2,
+        2
+      ]
+    },
+    {
+      "no": 201,
+      "kind": 4,
+      "name": "普通建筑",
+      "cx": 37,
+      "cy": 109,
+      "baseImage": "baseimg/2&2.ale",
+      "maskImage": "baseimg/2&2.gif",
+      "workImage": "baseimg/2&2wk.ale",
+      "mask": "baseimg/2&2.gif",
+      "footprint": [
+        2,
+        2
+      ]
+    },
+    {
+      "no": 202,
+      "kind": 4,
+      "name": "精致建筑1",
+      "cx": 37,
+      "cy": 116,
+      "baseImage": "baseimg/2&3.ale",
+      "maskImage": "baseimg/2&3.gif",
+      "workImage": "baseimg/2&3wk.ale",
+      "mask": "baseimg/2&3.gif",
+      "footprint": [
+        3,
+        2
+      ]
+    },
+    {
+      "no": 203,
+      "kind": 4,
+      "name": "精致建筑2",
+      "cx": 37,
+      "cy": 100,
+      "baseImage": "baseimg/3&2.ale",
+      "maskImage": "baseimg/3&2.gif",
+      "workImage": "baseimg/3&2wk.ale",
+      "mask": "baseimg/3&2.gif",
+      "footprint": [
+        2,
+        3
+      ]
+    },
+    {
+      "no": 204,
+      "kind": 4,
+      "name": "简单建筑",
+      "cx": 48,
+      "cy": 174,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 205,
+      "kind": 4,
+      "name": "经济建筑",
+      "cx": 78,
+      "cy": 350,
+      "baseImage": "baseimg/3&3.ale",
+      "maskImage": "baseimg/3&3_.gif",
+      "workImage": "baseimg/3&3wk.ale",
+      "mask": "baseimg/3&3_.gif",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 206,
+      "kind": 4,
+      "name": "建筑1",
+      "cx": 90,
+      "cy": 407,
+      "baseImage": "baseimg/3&5.ale",
+      "maskImage": "baseimg/3&5.gif",
+      "workImage": "baseimg/3&5wk.ale",
+      "mask": "baseimg/3&5.gif",
+      "footprint": [
+        5,
+        3
+      ]
+    },
+    {
+      "no": 207,
+      "kind": 4,
+      "name": "建筑2",
+      "cx": 97,
+      "cy": 375,
+      "baseImage": "baseimg/5&3.ale",
+      "maskImage": "baseimg/5&3.gif",
+      "workImage": "baseimg/5&3wk.ale",
+      "mask": "baseimg/5&3.gif",
+      "footprint": [
+        3,
+        5
+      ]
+    },
+    {
+      "no": 208,
+      "kind": 4,
+      "name": "中型建筑",
+      "cx": 90,
+      "cy": 376,
+      "baseImage": "baseimg/5&5.ale",
+      "maskImage": "baseimg/5&5.gif",
+      "workImage": "baseimg/5&5wk.ale",
+      "mask": "baseimg/5&5.gif",
+      "footprint": [
+        5,
+        5
+      ]
+    },
+    {
+      "no": 209,
+      "kind": 4,
+      "name": "大型建筑1",
+      "cx": 93,
+      "cy": 393,
+      "baseImage": "baseimg/5&7.ale",
+      "maskImage": "baseimg/5&7.gif",
+      "workImage": "baseimg/5&7wk.ale",
+      "mask": "baseimg/5&7.gif",
+      "footprint": [
+        7,
+        5
+      ]
+    },
+    {
+      "no": 210,
+      "kind": 4,
+      "name": "大型建筑2",
+      "cx": 88,
+      "cy": 361,
+      "baseImage": "baseimg/7&5.ale",
+      "maskImage": "baseimg/7&5.gif",
+      "workImage": "baseimg/7&5wk.ale",
+      "mask": "baseimg/7&5.gif",
+      "footprint": [
+        5,
+        7
+      ]
+    },
+    {
+      "no": 211,
+      "kind": 4,
+      "name": "超大建筑",
+      "cx": 61,
+      "cy": 355,
+      "baseImage": "baseimg/7&7.ale",
+      "maskImage": "baseimg/7&7.gif",
+      "workImage": "baseimg/7&7wk.ale",
+      "mask": "baseimg/7&7.gif",
+      "footprint": [
+        7,
+        7
+      ]
+    },
+    {
+      "no": 212,
+      "kind": 4,
+      "name": "巨型建筑",
+      "cx": 61,
+      "cy": 440,
+      "baseImage": "baseimg/11&11.ale",
+      "maskImage": "baseimg/11&11.gif",
+      "workImage": "baseimg/11&11wk.ale",
+      "mask": "baseimg/11&11.gif",
+      "footprint": [
+        11,
+        11
+      ]
+    },
+    {
+      "no": 213,
+      "kind": 100,
+      "name": "箭塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/箭塔1建造.ale",
+      "maskImage": "baseimg/箭塔1建造.ale",
+      "workImage": "baseimg/箭塔1建造.ale",
+      "mask": "baseimg/箭塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 214,
+      "kind": 100,
+      "name": "箭塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/箭塔2建造.ale",
+      "maskImage": "baseimg/箭塔2建造.ale",
+      "workImage": "baseimg/箭塔2建造.ale",
+      "mask": "baseimg/箭塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 215,
+      "kind": 100,
+      "name": "箭塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/箭塔3建造.ale",
+      "maskImage": "baseimg/箭塔3建造.ale",
+      "workImage": "baseimg/箭塔3建造.ale",
+      "mask": "baseimg/箭塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 216,
+      "kind": 100,
+      "name": "炮塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/炮塔1建造.ale",
+      "maskImage": "baseimg/炮塔1建造.ale",
+      "workImage": "baseimg/炮塔1建造.ale",
+      "mask": "baseimg/炮塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 217,
+      "kind": 100,
+      "name": "炮塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/炮塔2建造.ale",
+      "maskImage": "baseimg/炮塔2建造.ale",
+      "workImage": "baseimg/炮塔2建造.ale",
+      "mask": "baseimg/炮塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 218,
+      "kind": 100,
+      "name": "炮塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/炮塔3建造.ale",
+      "maskImage": "baseimg/炮塔3建造.ale",
+      "workImage": "baseimg/炮塔3建造.ale",
+      "mask": "baseimg/炮塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 219,
+      "kind": 100,
+      "name": "魔法塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/魔法塔1建造.ale",
+      "maskImage": "baseimg/魔法塔1建造.ale",
+      "workImage": "baseimg/魔法塔1建造.ale",
+      "mask": "baseimg/魔法塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 220,
+      "kind": 100,
+      "name": "魔法塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/魔法塔2建造.ale",
+      "maskImage": "baseimg/魔法塔2建造.ale",
+      "workImage": "baseimg/魔法塔2建造.ale",
+      "mask": "baseimg/魔法塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 221,
+      "kind": 100,
+      "name": "魔法塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/魔法塔3建造.ale",
+      "maskImage": "baseimg/魔法塔3建造.ale",
+      "workImage": "baseimg/魔法塔3建造.ale",
+      "mask": "baseimg/魔法塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 222,
+      "kind": 100,
+      "name": "毒塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/毒塔1建造.ale",
+      "maskImage": "baseimg/毒塔1建造.ale",
+      "workImage": "baseimg/毒塔1建造.ale",
+      "mask": "baseimg/毒塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 223,
+      "kind": 100,
+      "name": "毒塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/毒塔2建造.ale",
+      "maskImage": "baseimg/毒塔2建造.ale",
+      "workImage": "baseimg/毒塔2建造.ale",
+      "mask": "baseimg/毒塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 224,
+      "kind": 100,
+      "name": "毒塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/毒塔3建造.ale",
+      "maskImage": "baseimg/毒塔3建造.ale",
+      "workImage": "baseimg/毒塔3建造.ale",
+      "mask": "baseimg/毒塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 225,
+      "kind": 100,
+      "name": "骑乘塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/骑乘塔1建造.ale",
+      "maskImage": "baseimg/骑乘塔1建造.ale",
+      "workImage": "baseimg/骑乘塔1建造.ale",
+      "mask": "baseimg/骑乘塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 226,
+      "kind": 100,
+      "name": "骑乘塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/骑乘塔2建造.ale",
+      "maskImage": "baseimg/骑乘塔2建造.ale",
+      "workImage": "baseimg/骑乘塔2建造.ale",
+      "mask": "baseimg/骑乘塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 227,
+      "kind": 100,
+      "name": "骑乘塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/骑乘塔3建造.ale",
+      "maskImage": "baseimg/骑乘塔3建造.ale",
+      "workImage": "baseimg/骑乘塔3建造.ale",
+      "mask": "baseimg/骑乘塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 228,
+      "kind": 100,
+      "name": "竹子箭塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/竹子箭塔1建造.ale",
+      "maskImage": "baseimg/竹子箭塔1建造.ale",
+      "workImage": "baseimg/竹子箭塔1建造.ale",
+      "mask": "baseimg/竹子箭塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 229,
+      "kind": 100,
+      "name": "竹子箭塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/竹子箭塔2建造.ale",
+      "maskImage": "baseimg/竹子箭塔2建造.ale",
+      "workImage": "baseimg/竹子箭塔2建造.ale",
+      "mask": "baseimg/竹子箭塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 230,
+      "kind": 100,
+      "name": "竹子箭塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/竹子箭塔3建造.ale",
+      "maskImage": "baseimg/竹子箭塔3建造.ale",
+      "workImage": "baseimg/竹子箭塔3建造.ale",
+      "mask": "baseimg/竹子箭塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 231,
+      "kind": 100,
+      "name": "水果炮塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水果炮塔1建造.ale",
+      "maskImage": "baseimg/水果炮塔1建造.ale",
+      "workImage": "baseimg/水果炮塔1建造.ale",
+      "mask": "baseimg/水果炮塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 232,
+      "kind": 100,
+      "name": "水果炮塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水果炮塔2建造.ale",
+      "maskImage": "baseimg/水果炮塔2建造.ale",
+      "workImage": "baseimg/水果炮塔2建造.ale",
+      "mask": "baseimg/水果炮塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 233,
+      "kind": 100,
+      "name": "水果炮塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水果炮塔3建造.ale",
+      "maskImage": "baseimg/水果炮塔3建造.ale",
+      "workImage": "baseimg/水果炮塔3建造.ale",
+      "mask": "baseimg/水果炮塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 234,
+      "kind": 100,
+      "name": "水产魔法塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水产魔法塔1建造.ale",
+      "maskImage": "baseimg/水产魔法塔1建造.ale",
+      "workImage": "baseimg/水产魔法塔1建造.ale",
+      "mask": "baseimg/水产魔法塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 235,
+      "kind": 100,
+      "name": "水产魔法塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水产魔法塔2建造.ale",
+      "maskImage": "baseimg/水产魔法塔2建造.ale",
+      "workImage": "baseimg/水产魔法塔2建造.ale",
+      "mask": "baseimg/水产魔法塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 236,
+      "kind": 100,
+      "name": "水产魔法塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水产魔法塔3建造.ale",
+      "maskImage": "baseimg/水产魔法塔3建造.ale",
+      "workImage": "baseimg/水产魔法塔3建造.ale",
+      "mask": "baseimg/水产魔法塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 237,
+      "kind": 100,
+      "name": "水产毒塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水产毒塔1建造.ale",
+      "maskImage": "baseimg/水产毒塔1建造.ale",
+      "workImage": "baseimg/水产毒塔1建造.ale",
+      "mask": "baseimg/水产毒塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 238,
+      "kind": 100,
+      "name": "水产毒塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水产毒塔2建造.ale",
+      "maskImage": "baseimg/水产毒塔2建造.ale",
+      "workImage": "baseimg/水产毒塔2建造.ale",
+      "mask": "baseimg/水产毒塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 239,
+      "kind": 100,
+      "name": "水产毒塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水产毒塔3建造.ale",
+      "maskImage": "baseimg/水产毒塔3建造.ale",
+      "workImage": "baseimg/水产毒塔3建造.ale",
+      "mask": "baseimg/水产毒塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 240,
+      "kind": 100,
+      "name": "水果骑乘塔工地1",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水果骑乘塔1建造.ale",
+      "maskImage": "baseimg/水果骑乘塔1建造.ale",
+      "workImage": "baseimg/水果骑乘塔1建造.ale",
+      "mask": "baseimg/水果骑乘塔1建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 241,
+      "kind": 100,
+      "name": "水果骑乘塔工地2",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水果骑乘塔2建造.ale",
+      "maskImage": "baseimg/水果骑乘塔2建造.ale",
+      "workImage": "baseimg/水果骑乘塔2建造.ale",
+      "mask": "baseimg/水果骑乘塔2建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    },
+    {
+      "no": 242,
+      "kind": 100,
+      "name": "水果骑乘塔工地3",
+      "cx": 34,
+      "cy": 114,
+      "baseImage": "baseimg/水果骑乘塔3建造.ale",
+      "maskImage": "baseimg/水果骑乘塔3建造.ale",
+      "workImage": "baseimg/水果骑乘塔3建造.ale",
+      "mask": "baseimg/水果骑乘塔3建造.ale",
+      "footprint": [
+        3,
+        3
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink012",
+      "file": "mask/clink012.ale"
+    },
+    {
+      "from": [
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/干地",
+        "土/湿土",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink014",
+      "file": "mask/clink014.ale"
+    },
+    {
+      "from": [
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "wlink014",
+      "file": "mask/wlink014.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "wlink012",
+      "file": "mask/wlink012.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/石板地"
+      ],
+      "ale": "980100",
+      "file": "mask/980100.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/灰砖地2"
+      ],
+      "ale": "980101",
+      "file": "mask/980101.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/灰砖地1"
+      ],
+      "ale": "slink012",
+      "file": "mask/slink012.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/石子地"
+      ],
+      "ale": "slink014",
+      "file": "mask/slink014.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/砖地"
+      ],
+      "ale": "slink016",
+      "file": "mask/slink016.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "980205",
+      "file": "mask/980205.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "土/海沙"
+      ],
+      "ale": "slink015",
+      "file": "mask/slink015.ale"
+    },
+    {
+      "from": [
+        "地/方砖地1"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink012",
+      "file": "mask/clink012.ale"
+    },
+    {
+      "from": [
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/草石地",
+        "雪/雪地"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink013",
+      "file": "mask/clink013.ale"
+    },
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/方砖地1"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink022",
+      "file": "mask/clink022.ale"
+    },
+    {
+      "from": [
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "地/圆砖地",
+        "雪/雪地"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "土/白土",
+        "土/红土"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink014",
+      "file": "mask/clink014.ale"
+    },
+    {
+      "from": [
+        "土/白土",
+        "土/红土"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "雪/雪地"
+      ],
+      "ale": "slink02",
+      "file": "mask/slink02.ale"
+    },
+    {
+      "from": [
+        "地/山石地"
+      ],
+      "to": [
+        "水/河水",
+        "雪/雪地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草"
+      ],
+      "ale": "slink021",
+      "file": "mask/slink021.ale"
+    },
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "地/圆砖地"
+      ],
+      "to": [
+        "地/山石地"
+      ],
+      "ale": "slink020",
+      "file": "mask/slink020.ale"
+    },
+    {
+      "from": [
+        "地/圆砖地"
+      ],
+      "to": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草"
+      ],
+      "ale": "slink019",
+      "file": "mask/slink019.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/草石地"
+      ],
+      "ale": "slink017",
+      "file": "mask/slink017.ale"
+    },
+    {
+      "from": [
+        "地/石块地"
+      ],
+      "to": [
+        "水/河水",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土"
+      ],
+      "ale": "slink018",
+      "file": "mask/slink018.ale"
+    },
+    {
+      "from": [
+        "室内/山石地"
+      ],
+      "to": [
+        "水/河水",
+        "雪/雪地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草",
+        "室内/绿草"
+      ],
+      "ale": "slink021",
+      "file": "mask/slink021.ale"
+    },
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink012",
+      "file": "mask/clink012.ale"
+    },
+    {
+      "from": [
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/干地",
+        "土/湿土",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink014",
+      "file": "mask/clink014.ale"
+    },
+    {
+      "from": [
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "wlink014",
+      "file": "mask/wlink014.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "wlink012",
+      "file": "mask/wlink012.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/石板地"
+      ],
+      "ale": "980100",
+      "file": "mask/980100.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/灰砖地2"
+      ],
+      "ale": "slink0012",
+      "file": "mask/slink0012.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/灰砖地1"
+      ],
+      "ale": "slink012",
+      "file": "mask/slink012.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/石子地"
+      ],
+      "ale": "slink014",
+      "file": "mask/slink014.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/砖地"
+      ],
+      "ale": "slink016",
+      "file": "mask/slink016.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "980205",
+      "file": "mask/980205.ale"
+    },
+    {
+      "from": [
+        "地/方砖地1"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink012",
+      "file": "mask/clink012.ale"
+    },
+    {
+      "from": [
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/草石地",
+        "雪/雪地"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink013",
+      "file": "mask/clink013.ale"
+    },
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/方砖地1"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink022",
+      "file": "mask/clink022.ale"
+    },
+    {
+      "from": [
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "地/圆砖地",
+        "雪/雪地"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "土/白土",
+        "土/红土"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink014",
+      "file": "mask/clink014.ale"
+    },
+    {
+      "from": [
+        "土/白土",
+        "土/红土"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "雪/雪地"
+      ],
+      "ale": "slink02",
+      "file": "mask/slink02.ale"
+    },
+    {
+      "from": [
+        "地/山石地"
+      ],
+      "to": [
+        "水/河水",
+        "雪/雪地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草"
+      ],
+      "ale": "slink021",
+      "file": "mask/slink021.ale"
+    },
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "地/圆砖地"
+      ],
+      "to": [
+        "地/山石地"
+      ],
+      "ale": "slink020",
+      "file": "mask/slink020.ale"
+    },
+    {
+      "from": [
+        "地/圆砖地"
+      ],
+      "to": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草"
+      ],
+      "ale": "slink019",
+      "file": "mask/slink019.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/草石地"
+      ],
+      "ale": "slink017",
+      "file": "mask/slink017.ale"
+    },
+    {
+      "from": [
+        "地/石块地"
+      ],
+      "to": [
+        "水/河水",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土"
+      ],
+      "ale": "slink018",
+      "file": "mask/slink018.ale"
+    },
+    {
+      "from": [
+        "室内/山石地"
+      ],
+      "to": [
+        "水/河水",
+        "雪/雪地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草",
+        "室内/绿草"
+      ],
+      "ale": "slink021",
+      "file": "mask/slink021.ale"
+    },
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink012",
+      "file": "mask/clink012.ale"
+    },
+    {
+      "from": [
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/干地",
+        "土/湿土",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink014",
+      "file": "mask/clink014.ale"
+    },
+    {
+      "from": [
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "wlink014",
+      "file": "mask/wlink014.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "wlink012",
+      "file": "mask/wlink012.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/石板地"
+      ],
+      "ale": "980100",
+      "file": "mask/980100.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/灰砖地2"
+      ],
+      "ale": "980101",
+      "file": "mask/980101.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/灰砖地1"
+      ],
+      "ale": "slink012",
+      "file": "mask/slink012.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/石子地"
+      ],
+      "ale": "slink014",
+      "file": "mask/slink014.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/砖地"
+      ],
+      "ale": "slink016",
+      "file": "mask/slink016.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "980205",
+      "file": "mask/980205.ale"
+    },
+    {
+      "from": [
+        "地/方砖地1"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink012",
+      "file": "mask/clink012.ale"
+    },
+    {
+      "from": [
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/草石地",
+        "雪/雪地"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink013",
+      "file": "mask/clink013.ale"
+    },
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/方砖地1"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink022",
+      "file": "mask/clink022.ale"
+    },
+    {
+      "from": [
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "地/圆砖地",
+        "雪/雪地"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "土/白土",
+        "土/红土"
+      ],
+      "to": [
+        "草/绿草"
+      ],
+      "ale": "clink014",
+      "file": "mask/clink014.ale"
+    },
+    {
+      "from": [
+        "土/白土",
+        "土/红土"
+      ],
+      "to": [
+        "草/青草"
+      ],
+      "ale": "clink023",
+      "file": "mask/clink023.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "雪/雪地"
+      ],
+      "ale": "slink02",
+      "file": "mask/slink02.ale"
+    },
+    {
+      "from": [
+        "地/山石地"
+      ],
+      "to": [
+        "水/河水",
+        "雪/雪地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草"
+      ],
+      "ale": "slink021",
+      "file": "mask/slink021.ale"
+    },
+    {
+      "from": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "地/圆砖地"
+      ],
+      "to": [
+        "地/山石地"
+      ],
+      "ale": "slink020",
+      "file": "mask/slink020.ale"
+    },
+    {
+      "from": [
+        "地/圆砖地"
+      ],
+      "to": [
+        "地/石板地",
+        "地/灰砖地1",
+        "地/石子地",
+        "地/砖地",
+        "地/灰砖地2",
+        "地/土质砖地",
+        "地/土石地1",
+        "地/土石地2",
+        "地/方砖地1",
+        "地/方砖地2",
+        "地/碎石地1",
+        "地/碎石地2",
+        "地/洞窟地1",
+        "地/洞窟地2",
+        "地/石块地",
+        "地/山石地",
+        "地/草石地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草"
+      ],
+      "ale": "slink019",
+      "file": "mask/slink019.ale"
+    },
+    {
+      "from": [
+        "水/河水"
+      ],
+      "to": [
+        "地/草石地"
+      ],
+      "ale": "slink017",
+      "file": "mask/slink017.ale"
+    },
+    {
+      "from": [
+        "地/石块地"
+      ],
+      "to": [
+        "水/河水",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土"
+      ],
+      "ale": "slink018",
+      "file": "mask/slink018.ale"
+    },
+    {
+      "from": [
+        "室内/山石地"
+      ],
+      "to": [
+        "水/河水",
+        "雪/雪地",
+        "土/干土",
+        "土/沙地",
+        "土/土",
+        "土/湿土",
+        "土/海沙",
+        "土/干地",
+        "土/黑土",
+        "土/沙土",
+        "土/黄土",
+        "土/白土",
+        "土/红土",
+        "草/绿草",
+        "室内/绿草"
+      ],
+      "ale": "slink021",
+      "file": "mask/slink021.ale"
+    }
+  ],
+  "unmappedChars": []
+}

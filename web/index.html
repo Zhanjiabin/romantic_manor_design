@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="设计桌" />
+  <meta name="theme-color" content="#2f6b4f" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>设计桌</title>
+  <link rel="stylesheet" href="/web/app.css?v=66" />
+</head>
+<body>
+  <div class="app" id="desk">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-title">设计桌</span>
+        </div>
+        <div class="save-status" id="saveStatus">未保存</div>
+      </div>
+      <div class="top-actions">
+        <button type="button" class="btn btn-compact mobile-only" id="btnDrawerLeft">工具</button>
+        <button type="button" class="btn btn-compact mobile-only" id="btnSaveMobile" title="保存到本机">保存</button>
+        <button type="button" class="btn btn-compact mobile-only" id="btnDrawerRight">文件</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="rail rail-left">
+        <div class="drawer-cap mobile-only">
+          <span>工具与地形</span>
+          <button type="button" class="icon-x" data-drawer-close aria-label="关闭"></button>
+        </div>
+        <div class="rail-block rail-block-tools">
+          <div class="rail-head">模式</div>
+          <div class="tool-row tool-row-3" id="modeRow">
+            <button type="button" class="tool on" data-mode="brush" title="笔刷模式 (B)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17l-2.5 2.5a1.5 1.5 0 0 0 2.1 2.1L9 19l8.5-8.5-2-2L7 17zm10.6-10.6l-1.2-1.2a1.5 1.5 0 0 0-2.1 0L13 6.5l2 2 2.6-2.1z"/></svg>
+              <span>笔刷</span>
+            </button>
+            <button type="button" class="tool" data-mode="erase" title="橡皮模式 (E)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.2 3.5l4.3 4.3a2 2 0 0 1 0 2.8l-8.5 8.5H6.5L3.2 15.8a2 2 0 0 1 0-2.8L11.7 4.5a2 2 0 0 1 2.8 0l1.7-1zM6.9 17h4.1l7.1-7.1-4.1-4.1L6.9 12.9V17z"/></svg>
+              <span>橡皮</span>
+            </button>
+            <button type="button" class="tool" data-mode="pan" title="拖动画布。手机也可用双指拖动/缩放">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4v7H4v2h7v7h2v-7h7v-2h-7V4z"/></svg>
+              <span>拖动</span>
+            </button>
+          </div>
+          <div class="rail-head">工具</div>
+          <div class="tool-row" id="toolRow">
+            <button type="button" class="tool on" data-tool="free" title="自由绘制">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"/></svg>
+              <span>自由</span>
+            </button>
+            <button type="button" class="tool" data-tool="fill" title="油漆桶 (G)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 11l-8-8-1.4 1.4 1.3 1.3L4 13.6V19h5.4l7.9-7.9 1.3 1.3L19 11zM7 17H6v-1l5.6-5.6 1 1L7 17z"/></svg>
+              <span>填充</span>
+            </button>
+            <button type="button" class="tool" data-tool="line" title="直线 (L)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5l15-15" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+              <span>直线</span>
+            </button>
+            <button type="button" class="tool" data-tool="rect" title="矩形 (R)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              <span>矩形</span>
+            </button>
+            <button type="button" class="tool" data-tool="ellipse" title="圆形/椭圆 (O)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="8" ry="6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              <span>圆形</span>
+            </button>
+            <button type="button" class="tool" data-tool="triangle" title="三角形">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 16H3z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              <span>三角</span>
+            </button>
+            <button type="button" class="tool" data-tool="diamond" title="菱形">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 9-9 9-9-9z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              <span>菱形</span>
+            </button>
+            <button type="button" class="tool" data-tool="heart" title="心形">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-9.2C5 7.5 7.2 6 9.2 6c1.2 0 2.3.6 2.8 1.5C12.5 6.6 13.6 6 14.8 6 16.8 6 19 7.5 19 10.8 19 15.6 12 20 12 20z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              <span>心形</span>
+            </button>
+            <button type="button" class="tool" data-tool="star" title="五角星">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.4 6.6H21l-5.2 4 2 6.4L12 16.8 6.2 20l2-6.4L3 9.6h6.6z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+              <span>星形</span>
+            </button>
+          </div>
+          <div class="shape-opts" id="shapeOpts">
+            <label class="opt"><input type="radio" name="shapeMode" value="fill" checked />填充</label>
+            <label class="opt"><input type="radio" name="shapeMode" value="outline" />描边</label>
+          </div>
+        </div>
+        <div class="rail-block rail-block-terrain">
+          <div class="rail-head">地形</div>
+          <div class="brush-grid" id="mapmult"></div>
+        </div>
+        <p class="rail-hint" id="kindNote">单指绘制 · 双指拖动缩放</p>
+      </aside>
+
+      <main class="map-host" id="mapHost">
+        <div class="map-stage">
+          <canvas id="view" width="581" height="551"></canvas>
+          <div class="map-overlay">
+            <div class="map-hint">单指绘制 · 双指拖动缩放</div>
+            <div class="map-coord" id="coord">0, 0</div>
+          </div>
+        </div>
+        <div class="map-toolbar" id="mapToolbar">
+          <div class="btn-group">
+            <button type="button" class="btn btn-compact" id="btnUndo" title="Ctrl+Z">撤销</button>
+            <button type="button" class="btn btn-compact" id="btnRedo" title="Ctrl+Y">重做</button>
+          </div>
+          <div class="btn-group">
+            <button type="button" class="btn btn-compact" id="btnFit" title="适应窗口">适应</button>
+            <button type="button" class="btn btn-compact" id="btnZoom1" title="1:1 缩放">1:1</button>
+          </div>
+          <button type="button" class="btn btn-compact" id="btnChgMap">地图面积</button>
+          <button type="button" class="btn btn-compact" id="btnChgTerr" title="更换底板：草地 / 沙地（与游戏「更换地形」相同）">更换地形</button>
+        </div>
+      </main>
+
+      <aside class="rail rail-right">
+        <div class="drawer-cap mobile-only">
+          <span>文件与概览</span>
+          <button type="button" class="icon-x" data-drawer-close aria-label="关闭"></button>
+        </div>
+        <div class="rail-block">
+          <div class="rail-head">概览</div>
+        <canvas id="mini" class="mini-map" width="280" height="236"></canvas>
+        </div>
+        <div class="rail-block rail-block-files">
+          <div class="rail-head">文件</div>
+          <div class="file-grid">
+            <button type="button" class="btn btn-compact" id="btnSaveLocal" title="保存到本机，刷新不会丢">保存</button>
+            <button type="button" class="btn btn-compact" id="btnHistory">历史</button>
+            <button type="button" class="btn btn-compact" id="btnOpenTerr">导入地形</button>
+            <button type="button" class="btn btn-compact" id="btnSaveTerr">导出地形</button>
+            <button type="button" class="btn btn-compact" id="btnOpenBld">导入建筑</button>
+            <button type="button" class="btn btn-compact" id="btnSaveBld">导出建筑</button>
+            <button type="button" class="btn btn-compact btn-wide" id="btnSavePng">导出图片</button>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>地形描述</span>
+          <input class="input" id="desc" maxlength="40" placeholder="导出时用作文件名" />
+        </label>
+
+        <div class="cost-card">
+          <div class="cost-row">
+            <span>基础费用</span>
+            <strong id="basemoney">0</strong>
+          </div>
+          <div class="cost-row">
+            <span>材料费用</span>
+            <strong id="matemoney">0</strong>
+          </div>
+        </div>
+
+        <label class="check">
+          <input type="checkbox" id="showBuild" checked />
+          <span>显示建筑模型</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="showGrid" checked />
+          <span>显示地块网格</span>
+        </label>
+
+        <button type="button" class="btn btn-block" id="btnMatList">材料与地基</button>
+      </aside>
+    </div>
+    <div class="drawer-mask" id="drawerMask" hidden></div>
+  </div>
+
+  <div class="modal" id="dlgSize" hidden>
+    <div class="modal-card">
+      <div class="modal-cap">
+        <span>选择地图面积</span>
+        <button type="button" class="icon-x" data-close="dlgSize" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <div class="size-list" id="sizeList"></div>
+        <p class="dlg-desc" id="sizeDesc"></p>
+        <button type="button" class="btn btn-primary" id="btnSizeOk">开始设计</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgMat" hidden>
+    <div class="modal-card modal-narrow">
+      <div class="modal-cap">
+        <span>材料与地基</span>
+        <button type="button" class="icon-x" data-close="dlgMat" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <div id="matCount" class="mat-count"></div>
+        <div class="section-lab">建筑地基</div>
+        <div id="bases" class="palette"></div>
+        <label class="field inline">
+          <span>物品 ID</span>
+          <input type="number" class="input" id="itemId" value="0" min="0" />
+        </label>
+        <label class="field inline">
+          <span>朝向</span>
+          <select class="input" id="itemDir">
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+          </select>
+        </label>
+        <div id="recentItems" class="recent-list"></div>
+        <div class="section-lab">未对照种类</div>
+        <ul id="unknown"></ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgHistory" hidden>
+    <div class="modal-card">
+      <div class="modal-cap">
+        <span>历史版本</span>
+        <button type="button" class="icon-x" data-close="dlgHistory" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <p class="dlg-desc">自动保存约每 20 秒一次。点保存会再留一个可恢复的快照（最多 30 份）。</p>
+        <label class="field">
+          <span>快照名称</span>
+          <input class="input" id="snapName" maxlength="40" placeholder="例如 828庄园" />
+        </label>
+        <button type="button" class="btn btn-primary btn-block" id="btnSnapNow">保存当前为历史版本</button>
+        <div class="hist-list" id="histList"></div>
+      </div>
+    </div>
+  </div>
+  <select id="mapSize" hidden></select>
+  <div id="terrainPanel" hidden></div>
+  <div id="buildPanel" hidden></div>
+  <span id="cost" hidden></span>
+  <span id="stats" hidden></span>
+  <input type="file" id="fileTerr" accept=".txt,text/plain,*/*" hidden />
+  <input type="file" id="fileBld" accept=".txt,text/plain,*/*" hidden />
+
+  <script src="/web/codec.js?v=43"></script>
+  <script src="/web/app.js?v=152"></script>
+</body>
+</html>

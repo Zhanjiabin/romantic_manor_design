@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.local
+.cursor/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Machine-specific game path. Clone uses vendor/game instead.
+config.json
+game_root.txt
+
+# Research dumps, not needed to run the desk.
+data/_all_furn/
+data/_tieba/
+data/_actjs/
+data/_act.htm
+data/portal_probe/
+data/_score_imgs.py
+data/_mask_polarity.txt
+data/terrain_probe_metrics.json
+data/_*.png
+data/_*.jpg
+web/_debug*

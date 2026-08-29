@@ -1,0 +1,132 @@
+
+=== CreateWaterLayer(pwaterkindname,pmaskname,pimg1,pimg2) @0x5cd6a0 imm xrefs ['0x4c160d'] n=1 ===
+
+=== CreateWaterLayer @0x5cd6d8 imm xrefs ['0x4c15e9'] n=1 ===
+
+=== UpdateWaterMask @0x5cd878 imm xrefs ['0x4c3fa6', '0x4c4134', '0x4c558e', '0x4c6bf1', '0x4d2bf5'] n=5 ===
+
+=== UpdateWaterMask(pLink) @0x5d0c8c imm xrefs ['0x4d2c19'] n=1 ===
+
+=== SetWaterImg @0x5cda04 imm xrefs ['0x4c5538'] n=1 ===
+
+=== SetWaterImg(p1,p2)? @0x5d0ca4 imm xrefs ['0x4d2beb'] n=1 ===
+
+=== Can't get waterlayer tile14 @0x5cda1c imm xrefs [] n=0 ===
+
+=== GWaterLayer.cpp @0x5d0c38 imm xrefs ['0x4d28e9', '0x4d3993', '0x4d3bb9', '0x4d3d8d', '0x57b313', '0x57b45c'] n=6 ===
+
+----- context 0x4c160d (CreateWaterLayer string push) -----
+0x4c158d: pop      esp
+0x4c158e: add      byte ptr [ebx + ebp*4 + 0x5a], bl
+0x4c1592: add      bh, al
+0x4c1594: add      eax, 0x5cce88
+0x4c1599: add      al, 0xd7
+0x4c159b: pop      esp
+0x4c159c: add      byte ptr [ecx + 0x5cce900d], cl
+0x4c15a2: add      byte ptr [ecx + 0x5cce940d], cl
+0x4c15a8: add      bh, al
+0x4c15aa: add      eax, 0x5cce98
+0x4c15af: hlt      
+0x4c15b0: cmpsd    dword ptr [esi], dword ptr es:[edi]
+0x4c15b1: pop      edx
+0x4c15b2: add      byte ptr [ecx + 0x5ccea41d], cl
+0x4c15b8: add      byte ptr [ebx + 0x5cceac], ah
+0x4c15be: mov      dword ptr [0x5cceb0], eax
+0x4c15c3: mov      dword ptr [0x5cceb4], 0x5aacdc
+0x4c15cd: mov      dword ptr [0x5cceb8], 0x5cd6ec
+0x4c15d7: mov      dword ptr [0x5ccec0], ecx
+0x4c15dd: mov      dword ptr [0x5ccec4], ecx
+0x4c15e3: mov      dword ptr [0x5ccec8], 0x5cd6d8
+0x4c15ed: mov      dword ptr [0x5cced4], ebx
+0x4c15f3: mov      dword ptr [0x5ccedc], eax
+0x4c15f8: mov      dword ptr [0x5ccee0], eax
+0x4c15fd: mov      dword ptr [0x5ccee4], 0x5aded8
+0x4c1607: mov      dword ptr [0x5ccee8], 0x5cd6a0
+0x4c1611: mov      dword ptr [0x5ccef0], ecx
+0x4c1617: mov      dword ptr [0x5ccef4], ecx
+0x4c161d: mov      dword ptr [0x5ccef8], 0x5cd694
+0x4c1627: mov      dword ptr [0x5ccf04], ebx
+0x4c162d: mov      dword ptr [0x5ccf0c], eax
+0x4c1632: mov      dword ptr [0x5ccf10], eax
+0x4c1637: mov      dword ptr [0x5ccf14], 0x5ae5e4
+0x4c1641: mov      dword ptr [0x5ccf18], 0x5cd668
+0x4c164b: mov      dword ptr [0x5ccf20], ecx
+0x4c1651: mov      dword ptr [0x5ccf24], ecx
+0x4c1657: mov      dword ptr [0x5ccf28], 0x5cd65c
+0x4c1661: mov      dword ptr [esp + 0x10], eax
+0x4c1665: mov      dword ptr [0x5ccf34], ebx
+0x4c166b: mov      dword ptr [0x5ccf38], edi
+0x4c1671: mov      dword ptr [0x5ccf3c], eax
+0x4c1676: mov      dword ptr [0x5ccf40], eax
+0x4c167b: mov      dword ptr [0x5ccf44], 0x5cd654
+0x4c1685: mov      dword ptr [0x5ccf48], 0x5cd630
+0x4c168f: mov      dword ptr [0x5ccf50], ecx
+0x4c1695: mov      edi, 0x4c2490
+0x4c169a: mov      dword ptr [esp + 0x10], eax
+0x4c169e: mov      dword ptr [0x5ccf60], edi
+0x4c16a4: xor      edi, edi
+0x4c16a6: mov      dword ptr [0x5ccf68], edi
+0x4c16ac: mov      edi, 0x4c41b0
+0x4c16b1: mov      dword ptr [0x5ccf90], edi
+0x4c16b7: xor      edi, edi
+0x4c16b9: mov      dword ptr [0x5ccf98], edi
+0x4c16bf: mov      edi, 0x4c6190
+0x4c16c4: mov      dword ptr [0x5ccfc0], edi
+0x4c16ca: xor      edi, edi
+0x4c16cc: mov      dword ptr [0x5ccfc8], edi
+0x4c16d2: mov      edi, 0x4c3030
+0x4c16d7: mov      dword ptr [0x5ccff0], edi
+0x4c16dd: xor      edi, edi
+0x4c16df: mov      dword ptr [0x5ccff8], edi
+0x4c16e5: mov      edi, 0x4c3370
+0x4c16ea: mov      dword ptr [0x5cd020], edi
+0x4c16f0: xor      edi, edi
+0x4c16f2: mov      dword ptr [0x5cd028], edi
+0x4c16f8: mov      edi, 0x4c27c0
+0x4c16fd: mov      dword ptr [esp + 0x10], eax
+0x4c1701: mov      dword ptr [0x5cd050], edi
+0x4c1707: mov      dword ptr [esp + 0x10], eax
+0x4c170b: xor      edi, edi
+0x4c170d: mov      dword ptr [esp + 0x10], eax
+0x4c1711: mov      dword ptr [esp + 0x10], eax
+0x4c1715: mov      dword ptr [0x5cd058], edi
+0x4c171b: mov      dword ptr [0x5ccf54], ecx
+0x4c1721: mov      dword ptr [0x5ccf58], 0x5cd620
+0x4c172b: mov      dword ptr [0x5ccf64], ebx
+0x4c1731: mov      dword ptr [0x5ccf6c], eax
+0x4c1736: mov      dword ptr [0x5ccf70], eax
+0x4c173b: mov      dword ptr [0x5ccf74], esi
+
+----- UpdateWaterMask(pLink) push @0x4d2c19 -----
+0x4d2bd9: pop      ebp
+0x4d2bda: add      bh, al
+0x4d2bdc: add      eax, 0x5d0b9c
+0x4d2be1: test     al, 0xaa
+0x4d2be3: pop      edx
+0x4d2be4: add      bh, al
+0x4d2be6: add      eax, 0x5d0ba0
+0x4d2beb: movsb    byte ptr es:[edi], byte ptr [esi]
+0x4d2bec: or       al, 0x5d
+0x4d2bee: add      bh, al
+0x4d2bf0: add      eax, 0x5d0bb0
+0x4d2bf5: js       0x4d2bcf
+0x4d2bf7: pop      esp
+0x4d2bf8: add      byte ptr [ebx + 0x5d0bbc], ah
+0x4d2bfe: mov      dword ptr [0x5d0bc0], edx
+0x4d2c04: mov      dword ptr [0x5d0bc8], eax
+0x4d2c09: mov      dword ptr [0x5d0bcc], 0x5b2330
+0x4d2c13: mov      dword ptr [0x5d0bd0], 0x5d0c8c
+0x4d2c1d: mov      dword ptr [0x5d0be0], 0x5cb0c8
+0x4d2c27: mov      dword ptr [0x5d0bec], eax
+0x4d2c2c: mov      dword ptr [0x5d0bf0], edx
+0x4d2c32: mov      dword ptr [0x5d0bf8], eax
+0x4d2c37: mov      dword ptr [0x5d0bfc], 0x5ab0f0
+0x4d2c41: mov      dword ptr [0x5d0c00], 0x5d0c78
+0x4d2c4b: mov      dword ptr [0x5d0c08], 0xffff
+0x4d2c55: mov      dword ptr [0x5d0c0c], eax
+0x4d2c5a: mov      dword ptr [0x5d0c18], eax
+0x4d2c5f: mov      dword ptr [0x5d0c1c], ecx
+0x4d2c65: mov      dword ptr [0x5d0c20], edx
+0x4d2c6b: mov      dword ptr [0x5d0c28], eax
+0x4d2c70: pop      esi
+0x4d2c71: ret      

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>建筑设计桌</title>
+  <link rel="stylesheet" href="/web/app.css?v=40" />
+  <link rel="stylesheet" href="/web/building.css?v=1" />
+</head>
+<body>
+  <div class="stage">
+    <div class="desk-scale" id="buildingScale">
+      <main class="desk building-desk">
+        <div class="caption">
+          <span class="caption-title">设计桌</span>
+          <button type="button" class="winbtn win-max" id="btnBuildingMax" title="最大化"></button>
+          <button type="button" class="winbtn win-close" id="btnBuildingClose" title="关闭"></button>
+        </div>
+
+        <section class="design-side">
+          <canvas id="buildingView" width="570" height="550"></canvas>
+          <div class="building-notice"><b>注意！</b> 超出亮光部分会被剪裁</div>
+          <div class="base-meta">
+            <span>名　　称：</span><strong id="buildingName">无</strong>
+            <span>占　　地：</span><strong id="buildingPut">0×0</strong>
+            <span>室内空间：</span><strong id="buildingSpace">0</strong>
+            <span>室外影响：</span><strong id="buildingOutside">0</strong>
+          </div>
+          <div class="layer-tools" aria-label="图层工具">
+            <button type="button" data-command="bottom" title="到底层">⇊</button>
+            <button type="button" data-command="down" title="到下层">↓</button>
+            <button type="button" data-command="up" title="到上层">↑</button>
+            <button type="button" data-command="top" title="到顶层">⇈</button>
+            <button type="button" data-command="flip" title="转向">↔</button>
+            <button type="button" data-command="delete" title="删除">×</button>
+            <button type="button" data-command="break" title="拆散套件">拆</button>
+          </div>
+          <div class="selection-caption">当前选择：<span id="selectedComponent">无</span></div>
+          <div class="current-materials" id="currentMaterials"></div>
+        </section>
+
+        <aside class="material-side">
+          <fieldset class="base-group">
+            <legend>当前户型：</legend>
+            <strong id="currentBase">无</strong>
+            <button type="button" class="gbtn compact" id="btnChooseBase">更换户型</button>
+          </fieldset>
+          <div class="class-labels">
+            <span>按组件分类：</span>
+            <span>按主题分类：</span>
+          </div>
+          <div class="material-browser">
+            <div class="component-kinds" id="componentKinds"></div>
+            <div class="theme-list" id="themeList"></div>
+            <div class="component-list" id="componentList"></div>
+            <div class="template-list" id="templateList" hidden></div>
+          </div>
+          <button type="button" class="gbtn compact import-design" id="btnImportDesign">导入设计</button>
+          <button type="button" class="gbtn compact save-design" id="btnSaveDesign">保存设计</button>
+        </aside>
+
+        <button type="button" class="gbtn all-materials" id="btnAllMaterials">所有材料</button>
+        <div class="all-material-strip" id="allMaterials"></div>
+        <button type="button" class="gbtn make-building" id="btnMakeBuilding">生成图纸</button>
+        <button type="button" class="gbtn close-building" id="btnCloseBuilding">关闭</button>
+
+        <div class="dlg building-base-dialog" id="baseDialog" hidden>
+          <div class="dlg-cap">选择户型<button type="button" class="winbtn win-close dlg-x" id="btnBaseDialogClose"></button></div>
+          <div class="base-dialog-list" id="baseDialogList"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <input type="file" id="buildingFile" accept=".txt" hidden />
+  <script src="/web/codec.js?v=43"></script>
+  <script src="/web/building.js?v=6"></script>
+</body>
+</html>

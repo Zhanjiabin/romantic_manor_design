@@ -1,0 +1,562 @@
+PaintTileEx @ 0x4c3ff0 callers: []
+paint-core 0x4c2c40 callers: ['0x4c3f42', '0x4c4091', '0x4c6b66', '0x4c6b82']
+lookup 0x520fc0 callers n=8
+
+======================================================================
+GBkTile::PaintTileEx @ 0x4c3ff0
+======================================================================
+0x4c3ff0: mov      eax, dword ptr fs:[0]
+0x4c3ff6: push     -1
+0x4c3ff8: push     0x579f28
+0x4c3ffd: push     eax
+0x4c3ffe: mov      dword ptr fs:[0], esp
+0x4c4005: sub      esp, 0x20
+0x4c4008: push     ebx
+0x4c4009: push     ebp
+0x4c400a: mov      ebp, dword ptr [esp + 0x48]
+0x4c400e: push     esi
+0x4c400f: push     edi
+0x4c4010: mov      edi, dword ptr [esp + 0x40]
+0x4c4014: push     ebp
+0x4c4015: mov      ecx, dword ptr [edi + 0xf0]
+0x4c401b: call     0x520fc0  ; CALL
+0x4c4020: mov      esi, eax
+0x4c4022: xor      ebx, ebx
+0x4c4024: cmp      esi, ebx
+0x4c4026: jge      0x4c4073
+0x4c4028: push     0x418
+0x4c402d: push     0x5cd43c  ; "E:\GBox\client\source\Map\GBkTile.cpp"
+0x4c4032: call     0x416c50  ; CALL
+0x4c4037: add      esp, 8
+0x4c403a: push     ebp
+0x4c403b: push     0x5cd888  ; "GBkTile::PaintTileEx Not find %s"
+0x4c4040: call     0x416da0  ; CALL
+0x4c4045: add      esp, 8
+0x4c4048: or       ebp, 0xffffffff
+0x4c404b: lea      ecx, [esp + 0x18]
+0x4c404f: push     ebp
+0x4c4050: call     0x419cb0  ; CALL
+0x4c4055: lea      eax, [esp + 0x18]
+0x4c4059: mov      dword ptr [esp + 0x38], ebx
+0x4c405d: push     eax
+0x4c405e: call     0x42f2c0  ; CALL
+0x4c4063: add      esp, 4
+0x4c4066: mov      dword ptr [esp + 0x38], ebp
+0x4c406a: lea      ecx, [esp + 0x18]
+0x4c406e: jmp      0x4c418a
+0x4c4073: mov      ecx, edi
+0x4c4075: call     0x4c61a0  ; CALL
+0x4c407a: mov      ecx, dword ptr [esp + 0x54]
+0x4c407e: mov      edx, dword ptr [esp + 0x4c]
+0x4c4082: mov      eax, dword ptr [esp + 0x48]
+0x4c4086: push     ecx
+0x4c4087: mov      ecx, dword ptr [esp + 0x48]
+0x4c408b: push     edx
+0x4c408c: push     esi
+0x4c408d: push     eax
+0x4c408e: push     ecx
+0x4c408f: mov      ecx, edi
+0x4c4091: call     0x4c2c40  ; CALL
+0x4c4096: cmp      eax, 1
+0x4c4099: jge      0x4c40cb
+0x4c409b: push     ebx
+0x4c409c: lea      ecx, [esp + 0x1c]
+0x4c40a0: call     0x419cb0  ; CALL
+0x4c40a5: lea      edx, [esp + 0x18]
+0x4c40a9: mov      dword ptr [esp + 0x38], 1
+0x4c40b1: push     edx
+0x4c40b2: call     0x42f2c0  ; CALL
+0x4c40b7: add      esp, 4
+0x4c40ba: mov      dword ptr [esp + 0x38], 0xffffffff
+0x4c40c2: lea      ecx, [esp + 0x18]
+0x4c40c6: jmp      0x4c418a
+0x4c40cb: mov      ecx, dword ptr [edi + 0x75a0]
+0x4c40d1: lea      esi, [edi + 0x75a0]
+0x4c40d7: or       ebp, 0xffffffff
+0x4c40da: cmp      ecx, ebx
+0x4c40dc: je       0x4c4162
+0x4c40e2: mov      edx, dword ptr [esi + 4]
+0x4c40e5: call     0x421330  ; CALL
+0x4c40ea: test     al, al
+0x4c40ec: je       0x4c4162
+0x4c40ee: mov      dword ptr [esp + 0x18], ebx
+0x4c40f2: mov      dword ptr [esp + 0x20], ebx
+0x4c40f6: mov      ebx, 2
+0x4c40fb: push     edi
+0x4c40fc: lea      ecx, [esp + 0x14]
+0x4c4100: mov      dword ptr [esp + 0x3c], ebx
+0x4c4104: call     0x4141b0  ; CALL
+0x4c4109: push     eax
+0x4c410a: lea      ecx, [esp + 0x28]
+0x4c410e: call     0x419d20  ; CALL
+0x4c4113: lea      eax, [esp + 0x24]
+0x4c4117: lea      ecx, [esp + 0x18]
+0x4c411b: push     eax
+0x4c411c: mov      byte ptr [esp + 0x3c], 3
+0x4c4121: call     0x41a1c0  ; CALL
+0x4c4126: lea      ecx, [esp + 0x24]
+0x4c412a: mov      byte ptr [esp + 0x38], bl
+0x4c412e: call     0x419fd0  ; CALL
+0x4c4133: push     0x5cd878  ; "UpdateWaterMask"
+0x4c4138: mov      ecx, esi
+0x4c413a: call     0x414580  ; CALL
+0x4c413f: mov      ecx, dword ptr [eax + 4]
+0x4c4142: test     ecx, ecx
+0x4c4144: je       0x4c4155
+0x4c4146: mov      eax, dword ptr [eax]
+0x4c4148: mov      edx, dword ptr [ecx]
+0x4c414a: lea      esi, [esp + 0x18]
+0x4c414e: push     1
+0x4c4150: push     esi
+0x4c4151: push     eax
+0x4c4152: call     dword ptr [edx + 0x30]  ; CALL
+0x4c4155: lea      ecx, [esp + 0x18]
+0x4c4159: mov      dword ptr [esp + 0x38], ebp
+0x4c415d: call     0x419fd0  ; CALL
+0x4c4162: push     1
+0x4c4164: lea      ecx, [esp + 0x28]
+0x4c4168: call     0x419cb0  ; CALL
+0x4c416d: lea      ecx, [esp + 0x24]
+0x4c4171: mov      dword ptr [esp + 0x38], 4
+0x4c4179: push     ecx
+0x4c417a: call     0x42f2c0  ; CALL
+0x4c417f: add      esp, 4
+0x4c4182: mov      dword ptr [esp + 0x38], ebp
+0x4c4186: lea      ecx, [esp + 0x24]
+0x4c418a: call     0x419fd0  ; CALL
+0x4c418f: mov      ecx, dword ptr [esp + 0x30]
+0x4c4193: pop      edi
+0x4c4194: pop      esi
+0x4c4195: pop      ebp
+0x4c4196: pop      ebx
+0x4c4197: mov      dword ptr fs:[0], ecx
+0x4c419e: add      esp, 0x2c
+0x4c41a1: ret      0x18
+
+======================================================================
+maybe_PaintTile_wrapper @ 0x4c3ed0
+======================================================================
+0x4c3ed0: mov      eax, dword ptr fs:[0]
+0x4c3ed6: push     -1
+0x4c3ed8: push     0x579ef0
+0x4c3edd: push     eax
+0x4c3ede: mov      dword ptr fs:[0], esp
+0x4c3ee5: sub      esp, 0x20
+0x4c3ee8: push     ebx
+0x4c3ee9: push     ebp
+0x4c3eea: push     esi
+0x4c3eeb: mov      esi, dword ptr [esp + 0x3c]
+0x4c3eef: push     edi
+0x4c3ef0: mov      ecx, esi
+0x4c3ef2: call     0x4c61a0  ; CALL
+0x4c3ef7: mov      eax, dword ptr [esp + 0x54]
+0x4c3efb: cmp      eax, 2
+0x4c3efe: jne      0x4c3f2b
+0x4c3f00: mov      edi, dword ptr [esp + 0x50]
+0x4c3f04: mov      ebx, dword ptr [esp + 0x4c]
+0x4c3f08: mov      ebp, dword ptr [esp + 0x48]
+0x4c3f0c: mov      eax, dword ptr [esp + 0x44]
+0x4c3f10: push     edi
+0x4c3f11: push     ebx
+0x4c3f12: push     ebp
+0x4c3f13: push     eax
+0x4c3f14: mov      ecx, esi
+0x4c3f16: call     0x4c2a80  ; CALL
+0x4c3f1b: test     al, al
+0x4c3f1d: je       0x4c3f47
+0x4c3f1f: mov      ecx, dword ptr [esp + 0x44]
+0x4c3f23: push     1
+0x4c3f25: push     edi
+0x4c3f26: push     ebx
+0x4c3f27: push     ebp
+0x4c3f28: push     ecx
+0x4c3f29: jmp      0x4c3f40
+0x4c3f2b: mov      edx, dword ptr [esp + 0x50]
+0x4c3f2f: mov      ecx, dword ptr [esp + 0x48]
+0x4c3f33: push     eax
+0x4c3f34: mov      eax, dword ptr [esp + 0x50]
+0x4c3f38: push     edx
+0x4c3f39: mov      edx, dword ptr [esp + 0x4c]
+0x4c3f3d: push     eax
+0x4c3f3e: push     ecx
+0x4c3f3f: push     edx
+0x4c3f40: mov      ecx, esi
+0x4c3f42: call     0x4c2c40  ; CALL
+0x4c3f47: mov      ecx, dword ptr [esi + 0x75a0]
+0x4c3f4d: lea      edi, [esi + 0x75a0]
+0x4c3f53: xor      ebx, ebx
+0x4c3f55: cmp      ecx, ebx
+0x4c3f57: je       0x4c3fd8
+0x4c3f59: mov      edx, dword ptr [edi + 4]
+0x4c3f5c: call     0x421330  ; CALL
+0x4c3f61: cmp      al, bl
+0x4c3f63: je       0x4c3fd8
+0x4c3f65: mov      dword ptr [esp + 0x18], ebx
+0x4c3f69: mov      dword ptr [esp + 0x20], ebx
+0x4c3f6d: push     esi
+0x4c3f6e: lea      ecx, [esp + 0x14]
+0x4c3f72: mov      dword ptr [esp + 0x3c], ebx
+0x4c3f76: call     0x4141b0  ; CALL
+0x4c3f7b: push     eax
+0x4c3f7c: lea      ecx, [esp + 0x28]
+0x4c3f80: call     0x419d20  ; CALL
+0x4c3f85: lea      eax, [esp + 0x24]
+0x4c3f89: lea      ecx, [esp + 0x18]
+0x4c3f8d: push     eax
+0x4c3f8e: mov      byte ptr [esp + 0x3c], 1
+0x4c3f93: call     0x41a1c0  ; CALL
+0x4c3f98: lea      ecx, [esp + 0x24]
+0x4c3f9c: mov      byte ptr [esp + 0x38], bl
+0x4c3fa0: call     0x419fd0  ; CALL
+0x4c3fa5: push     0x5cd878  ; "UpdateWaterMask"
+0x4c3faa: mov      ecx, edi
+0x4c3fac: call     0x414580  ; CALL
+0x4c3fb1: mov      ecx, dword ptr [eax + 4]
+0x4c3fb4: cmp      ecx, ebx
+0x4c3fb6: je       0x4c3fc7
+0x4c3fb8: mov      eax, dword ptr [eax]
+0x4c3fba: mov      edx, dword ptr [ecx]
+0x4c3fbc: lea      esi, [esp + 0x18]
+0x4c3fc0: push     1
+0x4c3fc2: push     esi
+0x4c3fc3: push     eax
+0x4c3fc4: call     dword ptr [edx + 0x30]  ; CALL
+0x4c3fc7: lea      ecx, [esp + 0x18]
+0x4c3fcb: mov      dword ptr [esp + 0x38], 0xffffffff
+0x4c3fd3: call     0x419fd0  ; CALL
+0x4c3fd8: mov      ecx, dword ptr [esp + 0x30]
+0x4c3fdc: pop      edi
+0x4c3fdd: pop      esi
+0x4c3fde: pop      ebp
+0x4c3fdf: pop      ebx
+0x4c3fe0: mov      dword ptr fs:[0], ecx
+0x4c3fe7: add      esp, 0x2c
+0x4c3fea: ret      0x18
+
+======================================================================
+GBkTile_paint_core @ 0x4c2c40
+======================================================================
+0x4c2c40: sub      esp, 0x10
+0x4c2c43: push     ebx
+0x4c2c44: push     edi
+0x4c2c45: mov      edi, ecx
+0x4c2c47: mov      dword ptr [esp + 8], 0
+0x4c2c4f: mov      eax, dword ptr [edi + 0xf0]
+0x4c2c55: test     eax, eax
+0x4c2c57: je       0x4c2e55
+0x4c2c5d: mov      ebx, dword ptr [esp + 0x24]
+0x4c2c61: test     ebx, ebx
+0x4c2c63: jl       0x4c2e55
+0x4c2c69: cmp      ebx, dword ptr [eax + 0x20]
+0x4c2c6c: jge      0x4c2e55
+0x4c2c72: lea      ecx, [ebx + ebx*4]
+0x4c2c75: lea      edx, [ebx + ecx*2]
+0x4c2c78: shl      edx, 5
+0x4c2c7b: cmp      dword ptr [edx + eax + 0x40], 1
+0x4c2c80: jl       0x4c2e55
+0x4c2c86: push     ebp
+0x4c2c87: mov      ebp, dword ptr [esp + 0x24]
+0x4c2c8b: push     esi
+0x4c2c8c: mov      esi, dword ptr [esp + 0x24]
+0x4c2c90: push     ebp
+0x4c2c91: push     esi
+0x4c2c92: mov      ecx, edi
+0x4c2c94: call     0x4c2230  ; CALL
+0x4c2c99: lea      ebp, [ebp + ebp + 0x20]
+0x4c2c9d: lea      eax, [esi + ebp]
+0x4c2ca0: cdq      
+0x4c2ca1: and      edx, 0x3f
+0x4c2ca4: add      eax, edx
+0x4c2ca6: mov      ecx, eax
+0x4c2ca8: mov      eax, ebp
+0x4c2caa: sar      ecx, 6
+0x4c2cad: cmp      esi, ebp
+0x4c2caf: mov      dword ptr [esp + 0x2c], ecx
+0x4c2cb3: jle      0x4c2cc9
+0x4c2cb5: sub      eax, esi
+0x4c2cb7: cdq      
+0x4c2cb8: and      edx, 0x3f
+0x4c2cbb: add      eax, edx
+0x4c2cbd: mov      ebp, eax
+0x4c2cbf: sar      ebp, 6
+0x4c2cc2: dec      ebp
+0x4c2cc3: mov      dword ptr [esp + 0x28], ebp
+0x4c2cc7: jmp      0x4c2cda
+0x4c2cc9: sub      eax, esi
+0x4c2ccb: cdq      
+0x4c2ccc: and      edx, 0x3f
+0x4c2ccf: add      eax, edx
+0x4c2cd1: sar      eax, 6
+0x4c2cd4: mov      dword ptr [esp + 0x28], eax
+0x4c2cd8: mov      ebp, eax
+0x4c2cda: mov      eax, dword ptr [esp + 0x30]
+0x4c2cde: dec      eax
+0x4c2cdf: cdq      
+0x4c2ce0: sub      eax, edx
+0x4c2ce2: mov      esi, eax
+0x4c2ce4: mov      eax, dword ptr [esp + 0x34]
+0x4c2ce8: sar      esi, 1
+0x4c2cea: cmp      eax, 1
+0x4c2ced: jne      0x4c2d51
+0x4c2cef: mov      edx, ebp
+0x4c2cf1: sub      ecx, esi
+0x4c2cf3: sub      edx, esi
+0x4c2cf5: push     4
+0x4c2cf7: dec      ecx
+0x4c2cf8: push     ebx
+0x4c2cf9: lea      eax, [edx - 1]
+0x4c2cfc: mov      dword ptr [esp + 0x24], ecx
+0x4c2d00: push     eax
+0x4c2d01: push     ecx
+0x4c2d02: mov      ecx, edi
+0x4c2d04: mov      dword ptr [esp + 0x34], eax
+0x4c2d08: call     0x4c2590  ; CALL
+0x4c2d0d: mov      ecx, dword ptr [esp + 0x2c]
+0x4c2d11: lea      eax, [esi + ebp + 1]
+0x4c2d15: push     1
+0x4c2d17: push     ebx
+0x4c2d18: lea      ecx, [ecx + esi + 1]
+0x4c2d1c: push     eax
+0x4c2d1d: mov      dword ptr [esp + 0x3c], ecx
+0x4c2d21: push     ecx
+0x4c2d22: mov      ecx, edi
+0x4c2d24: call     0x4c2590  ; CALL
+0x4c2d29: mov      edx, dword ptr [esp + 0x24]
+0x4c2d2d: mov      eax, dword ptr [esp + 0x30]
+0x4c2d31: push     8
+0x4c2d33: push     ebx
+0x4c2d34: push     edx
+0x4c2d35: push     eax
+0x4c2d36: mov      ecx, edi
+0x4c2d38: call     0x4c2590  ; CALL
+0x4c2d3d: mov      ecx, dword ptr [esp + 0x1c]
+0x4c2d41: push     2
+0x4c2d43: lea      eax, [esi + ebp + 1]
+0x4c2d47: push     ebx
+0x4c2d48: push     eax
+0x4c2d49: push     ecx
+0x4c2d4a: mov      ecx, edi
+0x4c2d4c: call     0x4c2590  ; CALL
+0x4c2d51: mov      ecx, esi
+0x4c2d53: neg      ecx
+0x4c2d55: cmp      ecx, esi
+0x4c2d57: mov      dword ptr [esp + 0x30], ecx
+0x4c2d5b: jg       0x4c2e3f
+0x4c2d61: mov      eax, dword ptr [esp + 0x2c]
+0x4c2d65: mov      edx, dword ptr [esp + 0x28]
+0x4c2d69: sub      eax, edx
+0x4c2d6b: add      ebp, ecx
+0x4c2d6d: mov      dword ptr [esp + 0x18], eax
+0x4c2d71: mov      eax, esi
+0x4c2d73: sub      eax, ecx
+0x4c2d75: inc      eax
+0x4c2d76: mov      dword ptr [esp + 0x1c], eax
+0x4c2d7a: cmp      dword ptr [esp + 0x34], 1
+0x4c2d7f: jne      0x4c2db1
+0x4c2d81: mov      edx, dword ptr [esp + 0x2c]
+0x4c2d85: push     6
+0x4c2d87: sub      edx, esi
+0x4c2d89: push     ebx
+0x4c2d8a: dec      edx
+0x4c2d8b: push     ebp
+0x4c2d8c: push     edx
+0x4c2d8d: mov      ecx, edi
+0x4c2d8f: call     0x4c2590  ; CALL
+0x4c2d94: mov      eax, dword ptr [esp + 0x28]
+0x4c2d98: mov      ecx, dword ptr [esp + 0x18]
+0x4c2d9c: sub      eax, esi
+0x4c2d9e: push     0xc
+0x4c2da0: dec      eax
+0x4c2da1: push     ebx
+0x4c2da2: add      ecx, ebp
+0x4c2da4: push     eax
+0x4c2da5: push     ecx
+0x4c2da6: mov      ecx, edi
+0x4c2da8: call     0x4c2590  ; CALL
+0x4c2dad: mov      ecx, dword ptr [esp + 0x30]
+0x4c2db1: cmp      ecx, esi
+0x4c2db3: jg       0x4c2df6
+0x4c2db5: mov      edx, dword ptr [esp + 0x2c]
+0x4c2db9: mov      eax, esi
+0x4c2dbb: sub      eax, ecx
+0x4c2dbd: add      edx, ecx
+0x4c2dbf: inc      eax
+0x4c2dc0: mov      dword ptr [esp + 0x24], edx
+0x4c2dc4: mov      dword ptr [esp + 0x14], eax
+0x4c2dc8: mov      eax, dword ptr [esp + 0x24]
+0x4c2dcc: push     ebx
+0x4c2dcd: push     ebp
+0x4c2dce: push     eax
+0x4c2dcf: mov      ecx, edi
+0x4c2dd1: call     0x4c2640  ; CALL
+0x4c2dd6: test     eax, eax
+0x4c2dd8: je       0x4c2dde
+0x4c2dda: inc      dword ptr [esp + 0x10]
+0x4c2dde: mov      ecx, dword ptr [esp + 0x24]
+0x4c2de2: mov      eax, dword ptr [esp + 0x14]
+0x4c2de6: inc      ecx
+0x4c2de7: dec      eax
+0x4c2de8: mov      dword ptr [esp + 0x24], ecx
+0x4c2dec: mov      dword ptr [esp + 0x14], eax
+0x4c2df0: jne      0x4c2dc8
+0x4c2df2: mov      ecx, dword ptr [esp + 0x30]
+0x4c2df6: cmp      dword ptr [esp + 0x34], 1
+0x4c2dfb: jne      0x4c2e2f
+0x4c2dfd: mov      ecx, dword ptr [esp + 0x2c]
+0x4c2e01: push     9
+0x4c2e03: push     ebx
+0x4c2e04: push     ebp
+0x4c2e05: lea      edx, [ecx + esi + 1]
+0x4c2e09: mov      ecx, edi
+0x4c2e0b: push     edx
+0x4c2e0c: call     0x4c2590  ; CALL
+0x4c2e11: mov      eax, dword ptr [esp + 0x28]
+0x4c2e15: mov      edx, dword ptr [esp + 0x18]
+0x4c2e19: push     3
+0x4c2e1b: push     ebx
+0x4c2e1c: lea      ecx, [esi + eax + 1]
+0x4c2e20: add      edx, ebp
+0x4c2e22: push     ecx
+0x4c2e23: push     edx
+0x4c2e24: mov      ecx, edi
+0x4c2e26: call     0x4c2590  ; CALL
+0x4c2e2b: mov      ecx, dword ptr [esp + 0x30]
+0x4c2e2f: mov      eax, dword ptr [esp + 0x1c]
+0x4c2e33: inc      ebp
+0x4c2e34: dec      eax
+0x4c2e35: mov      dword ptr [esp + 0x1c], eax
+0x4c2e39: jne      0x4c2d7a
+0x4c2e3f: mov      eax, dword ptr [edi + 0x70]
+0x4c2e42: pop      esi
+0x4c2e43: or       al, 1
+0x4c2e45: pop      ebp
+0x4c2e46: mov      dword ptr [edi + 0x70], eax
+0x4c2e49: mov      eax, dword ptr [esp + 8]
+0x4c2e4d: pop      edi
+0x4c2e4e: pop      ebx
+0x4c2e4f: add      esp, 0x10
+0x4c2e52: ret      0x14
+
+======================================================================
+GBkTile_prepaint_4c61a0 @ 0x4c61a0
+======================================================================
+0x4c61a0: sub      esp, 0x10
+0x4c61a3: push     esi
+0x4c61a4: mov      esi, ecx
+0x4c61a6: mov      al, byte ptr [esi + 0x120]
+0x4c61ac: test     al, al
+0x4c61ae: je       0x4c6285
+0x4c61b4: mov      eax, dword ptr [esi + 0xfc]
+0x4c61ba: xor      edx, edx
+0x4c61bc: imul     eax, dword ptr [esi + 0x100]
+0x4c61c3: test     eax, eax
+0x4c61c5: mov      byte ptr [esi + 0x120], 0
+0x4c61cc: jle      0x4c6203
+0x4c61ce: xor      eax, eax
+0x4c61d0: mov      ecx, dword ptr [esi + 0xec]
+0x4c61d6: or       byte ptr [eax + ecx + 8], 0x40
+0x4c61db: lea      ecx, [eax + ecx + 8]
+0x4c61df: mov      ecx, dword ptr [esi + 0xec]
+0x4c61e5: and      byte ptr [eax + ecx + 8], 0xfb
+0x4c61ea: inc      edx
+0x4c61eb: lea      ecx, [eax + ecx + 8]
+0x4c61ef: add      eax, 9
+0x4c61f2: mov      ecx, dword ptr [esi + 0xfc]
+0x4c61f8: imul     ecx, dword ptr [esi + 0x100]
+0x4c61ff: cmp      edx, ecx
+0x4c6201: jl       0x4c61d0
+0x4c6203: mov      edx, dword ptr [esi + 0x9c]
+0x4c6209: push     edi
+0x4c620a: mov      edi, dword ptr [edx + 0xa8]
+0x4c6210: test     edi, edi
+0x4c6212: je       0x4c627d
+0x4c6214: mov      eax, dword ptr [edi]
+0x4c6216: lea      ecx, [esp + 8]
+0x4c621a: push     esi
+0x4c621b: lea      edx, [esp + 0x10]
+0x4c621f: push     ecx
+0x4c6220: push     edx
+0x4c6221: push     0x1e
+0x4c6223: mov      ecx, edi
+0x4c6225: call     dword ptr [eax + 0xe0]  ; CALL
+0x4c622b: cmp      eax, 1
+0x4c622e: jne      0x4c6273
+0x4c6230: mov      eax, dword ptr [esp + 0xc]
+0x4c6234: test     eax, eax
+0x4c6236: jle      0x4c6273
+0x4c6238: mov      eax, dword ptr [esp + 8]
+0x4c623c: test     eax, eax
+0x4c623e: jle      0x4c6273
+0x4c6240: lea      eax, [esp + 0x10]
+0x4c6244: lea      ecx, [esp + 0x14]
+0x4c6248: push     eax
+0x4c6249: push     ecx
+0x4c624a: mov      ecx, edi
+0x4c624c: call     0x422a10  ; CALL
+0x4c6251: mov      edx, dword ptr [esp + 8]
+0x4c6255: mov      eax, dword ptr [esp + 0xc]
+0x4c6259: mov      ecx, dword ptr [esp + 0x10]
+0x4c625d: push     edx
+0x4c625e: mov      edx, dword ptr [esp + 0x18]
+0x4c6262: push     eax
+0x4c6263: push     0
+0x4c6265: push     0xbf
+0x4c626a: push     ecx
+0x4c626b: push     edx
+0x4c626c: mov      ecx, esi
+0x4c626e: call     0x4c29e0  ; CALL
+0x4c6273: mov      edi, dword ptr [edi + 0xa4]
+0x4c6279: test     edi, edi
+0x4c627b: jne      0x4c6214
+0x4c627d: mov      byte ptr [esi + 0x120], 0
+0x4c6284: pop      edi
+0x4c6285: pop      esi
+0x4c6286: add      esp, 0x10
+0x4c6289: ret      
+
+======================================================================
+tile_name_lookup_520fc0 @ 0x520fc0
+======================================================================
+0x520fc0: mov      eax, dword ptr [esp + 4]
+0x520fc4: push     esi
+0x520fc5: push     edi
+0x520fc6: mov      esi, ecx
+0x520fc8: push     eax
+0x520fc9: call     0x417020  ; CALL
+0x520fce: mov      ecx, dword ptr [esi + 0x20]
+0x520fd1: mov      edi, eax
+0x520fd3: add      esp, 4
+0x520fd6: xor      eax, eax
+0x520fd8: test     ecx, ecx
+0x520fda: jle      0x520fee
+0x520fdc: lea      edx, [esi + 0x28]
+0x520fdf: cmp      dword ptr [edx], edi
+0x520fe1: je       0x520ff1
+0x520fe3: inc      eax
+0x520fe4: add      edx, 0x160
+0x520fea: cmp      eax, ecx
+0x520fec: jl       0x520fdf
+0x520fee: or       eax, 0xffffffff
+0x520ff1: pop      edi
+0x520ff2: pop      esi
+0x520ff3: ret      4
+
+======================================================================
+GBkTile_4c37d0 @ 0x4c37d0
+======================================================================
+0x4c37d0: sub      esp, 0x4c
+0x4c37d3: mov      eax, dword ptr [ecx + 0xf0]
+0x4c37d9: push     ebx
+0x4c37da: push     ebp
+0x4c37db: push     esi
+0x4c37dc: test     eax, eax
+0x4c37de: push     edi
+0x4c37df: mov      dword ptr [esp + 0x10], ecx
+0x4c37e3: jne      0x4c37f1
+0x4c37e5: pop      edi
+0x4c37e6: pop      esi
+0x4c37e7: pop      ebp
+0x4c37e8: xor      al, al
+0x4c37ea: pop      ebx
+0x4c37eb: add      esp, 0x4c
+0x4c37ee: ret      8

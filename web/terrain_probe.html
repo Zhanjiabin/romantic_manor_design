@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>草地渲染验证台</title>
+  <link rel="stylesheet" href="/web/terrain_probe.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div>
+      <h1>草地渲染验证台</h1>
+      <p>固定相机 · 同尺寸视口 · 不修改主设计桌</p>
+    </div>
+    <div class="controls" aria-label="渲染控制">
+      <label>缩放
+        <select id="zoom">
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+          <option value="3">3×</option>
+        </select>
+      </label>
+      <label class="check">
+        <input id="smoothing" type="checkbox" />
+        平滑采样
+      </label>
+      <button id="reset" type="button">复位固定相机</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="reference-grid" aria-label="输入基准">
+      <article class="card reference">
+        <div class="card-title">
+          <h2>原版截图草地基准</h2>
+          <span>裁去边框与底栏；相机固定</span>
+        </div>
+        <div class="canvas-shell"><canvas id="reference" width="512" height="320"></canvas></div>
+      </article>
+      <article class="card source">
+        <div class="card-title">
+          <h2>原始 c01</h2>
+          <span>256×129，原生 1:1</span>
+        </div>
+        <div class="source-shell"><canvas id="source" width="256" height="129"></canvas></div>
+      </article>
+    </section>
+
+    <section class="candidate-grid" aria-label="候选渲染模型">
+      <article class="card">
+        <div class="card-title">
+          <h2>A · 1:1 矩形连续平铺</h2>
+          <span>256×129 周期，不切格</span>
+        </div>
+        <div class="canvas-shell"><canvas id="continuous" width="512" height="320"></canvas></div>
+      </article>
+      <article class="card">
+        <div class="card-title">
+          <h2>B · 等距扫描线重建</h2>
+          <span>64×32 逻辑步长 / 65×33 包络</span>
+        </div>
+        <div class="canvas-shell"><canvas id="scanline" width="512" height="320"></canvas></div>
+      </article>
+      <article class="card">
+        <div class="card-title">
+          <h2>C · 导入坐标缓存重建</h2>
+          <span>21 个 64/16 交错菱形变体 · 实测稀疏装饰</span>
+        </div>
+        <div class="canvas-shell"><canvas id="importCache" width="512" height="320"></canvas></div>
+      </article>
+    </section>
+
+    <section class="metrics card">
+      <div class="card-title">
+        <h2>机器分析</h2>
+        <span id="metricsStatus">读取 terrain_probe_metrics.json…</span>
+      </div>
+      <div id="metricsBody" class="metrics-body"></div>
+    </section>
+  </main>
+
+  <template id="metricTemplate">
+    <div class="metric">
+      <strong></strong>
+      <span></span>
+    </div>
+  </template>
+  <script src="/web/terrain_probe.js"></script>
+</body>
+</html>

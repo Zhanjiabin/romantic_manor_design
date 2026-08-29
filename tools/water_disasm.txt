@@ -1,0 +1,75 @@
+=== string hits ===
+  b'UpdateWaterMask' va=0x5cd878  ointnum])...sd(1)d(64)..GBkTileBufImg...UpdateWaterMask.GBkTile::PaintTileEx Not find %s....................pEditLayer..
+  b'UpdateWaterMask' va=0x5d0c8c  ....::GWaterLayer...SetSunLight(light)..UpdateWaterMask(pLink)..SetWaterImg(p1,p2)?....GWaterLayer..Update..GWaterLayer 
+  b'WaterMask' va=0x5cd513  arAllDrakArea()..ClearAllDrakArea....GetWaterMaskImg(pImg)...GetWaterMaskImg.FindNearGoPos(fx,fy,tx,ty)..AddEditModiDlg(
+  b'WaterMask' va=0x5cd52b  lDrakArea....GetWaterMaskImg(pImg)...GetWaterMaskImg.FindNearGoPos(fx,fy,tx,ty)..AddEditModiDlg(ptab,pEditLayer).GetTile
+  b'WaterMask' va=0x5cd87e  m])...sd(1)d(64)..GBkTileBufImg...UpdateWaterMask.GBkTile::PaintTileEx Not find %s....................pEditLayer..indexd
+  b'WaterMask' va=0x5d0c92  GWaterLayer...SetSunLight(light)..UpdateWaterMask(pLink)..SetWaterImg(p1,p2)?....GWaterLayer..Update..GWaterLayer BufImg
+  b'Water' va=0x5b93a1  .......:GAtomSys...........:GObjRipple.GWaterLayer.:GWaterLayer....GSysObjImgRec...:GSysObjImgRec..GSysLightImg....:GSys
+  b'Water' va=0x5b93ae  Sys...........:GObjRipple.GWaterLayer.:GWaterLayer....GSysObjImgRec...:GSysObjImgRec..GSysLightImg....:GSysLightImg.....
+  b'Water' va=0x5cd513  arAllDrakArea()..ClearAllDrakArea....GetWaterMaskImg(pImg)...GetWaterMaskImg.FindNearGoPos(fx,fy,tx,ty)..AddEditModiDlg(
+  b'Water' va=0x5cd52b  lDrakArea....GetWaterMaskImg(pImg)...GetWaterMaskImg.FindNearGoPos(fx,fy,tx,ty)..AddEditModiDlg(ptab,pEditLayer).GetTile
+  b'Water' va=0x5cd6a6  e,mode)?..............PaintTile...CreateWaterLayer(pwaterkindname,pmaskname,pimg1,pimg2)..CreateWaterLayer....Init(pdefi
+  b'Water' va=0x5cd6de  rkindname,pmaskname,pimg1,pimg2)..CreateWaterLayer....Init(pdefininame,w,h)...CreateIndex(w,h,defkind)....CreateIndex.Bk
+  b'Water' va=0x5cd87e  m])...sd(1)d(64)..GBkTileBufImg...UpdateWaterMask.GBkTile::PaintTileEx Not find %s....................pEditLayer..indexd
+  b'Water' va=0x5cda07  gv err!..ssd(0)d(0)d(0)d(0)v()v()....SetWaterImg.Can't get waterlayer tile14.ssddddv.S1..GBkTile sub flag err!...SubAni 
+  b'Water' va=0x5d0c56  ..........E:\GBox\client\source\AdvObj\GWaterLayer.cpp....::GWaterLayer...SetSunLight(light)..UpdateWaterMask(pLink)..Se
+  b'Water' va=0x5d0c6b  ent\source\AdvObj\GWaterLayer.cpp....::GWaterLayer...SetSunLight(light)..UpdateWaterMask(pLink)..SetWaterImg(p1,p2)?....
+  b'Water' va=0x5d0c92  GWaterLayer...SetSunLight(light)..UpdateWaterMask(pLink)..SetWaterImg(p1,p2)?....GWaterLayer..Update..GWaterLayer BufImg
+  b'Water' va=0x5d0ca7  ight(light)..UpdateWaterMask(pLink)..SetWaterImg(p1,p2)?....GWaterLayer..Update..GWaterLayer BufImg%03d............]....
+  b'Water' va=0x5d0cbc  terMask(pLink)..SetWaterImg(p1,p2)?....GWaterLayer..Update..GWaterLayer BufImg%03d............].......[...Z...].........
+  b'Water' va=0x5d0cd1  terImg(p1,p2)?....GWaterLayer..Update..GWaterLayer BufImg%03d............].......[...Z...]...............]..............
+  b'linkall' va=0x5dbaf8  Import Img Err!.Load Mask err!..........linkall err.linkall err not find:%s.linkall.light...AddTileKind %s:%s err...addk
+  b'linkall' va=0x5dbb04  rr!.Load Mask err!..........linkall err.linkall err not find:%s.linkall.light...AddTileKind %s:%s err...addkind.__mask.j
+  b'linkall' va=0x5dbb1c  ....linkall err.linkall err not find:%s.linkall.light...AddTileKind %s:%s err...addkind.__mask.jpg..Can't GTileStore::De
+  b'wlink' va=0x5d9fde  s()...ReCalTabPos.RepaceLinkObj(psub,pnewlink)....RepaceLinkObj...GetActiveLable()....GetActiveLable..GetActivePageNo().
+  b'MakeSp' va=0x5db708  20;size,80;width,30;height,30;....,200..MakeSp not line var at %d...MakeSp Add err at %d,%s=%X..CmpSp not line var at %d
+  b'MakeSp' va=0x5db724  0;....,200..MakeSp not line var at %d...MakeSp Add err at %d,%s=%X..CmpSp not line var at %d....%s->%s..E:%s->%s....Pssv
+  b'GBkTile' va=0x5b90fc  GMapEdit_SubModi....:GMapEdit_SubModi...GBkTileFlagSub..:GBkTileFlagSub.GSMapEdit_Sub...:GSMapEdit_Sub..GSMapEdit_Layer.
+  b'GBkTile' va=0x5b910d  ...:GMapEdit_SubModi...GBkTileFlagSub..:GBkTileFlagSub.GSMapEdit_Sub...:GSMapEdit_Sub..GSMapEdit_Layer.:GSMapEdit_Layer.
+  b'GBkTile' va=0x5b9280  tem.:GSysMapItem....GSysMap.:GSysMap....GBkTile.:GBkTile....GSysMEveObj.:GSysMEveObj....:GAutoCacheDown.:GDirCheckObj...
+  b'GBkTile' va=0x5b9289  MapItem....GSysMap.:GSysMap....GBkTile.:GBkTile....GSysMEveObj.:GSysMEveObj....:GAutoCacheDown.:GDirCheckObj...GSysWeb.:
+  b'GBkTile' va=0x5c8e5d  rder(100)..subflag=....(100,100);....('!GBkTileFlagSub');SetZorder(1)..setbtn=....(8,4);....(80,20);....(#00F000);....('
+  b'GBkTile' va=0x5c90e2  ..............E:\GBox\client\source\Map\GBkTileFlagSub.cpp....SetPutSize..::GBkTileFlagSub....SetPutSize(w,h).........H.
+  b'GBkTile' va=0x5c9106  Map\GBkTileFlagSub.cpp....SetPutSize..::GBkTileFlagSub....SetPutSize(w,h).........H.\.......[...Z.L.\.L...........|.\...
+  b'GBkTile' va=0x5cd456  moteCreate....E:\GBox\client\source\Map\GBkTile.cpp...GObjPathFinder..::GBkTile...IsDrakArea(x,y).IsDrakArea..PaintDrakA
+  b'GBkTile' va=0x5cd476  rce\Map\GBkTile.cpp...GObjPathFinder..::GBkTile...IsDrakArea(x,y).IsDrakArea..PaintDrakArea(x,y,size).PaintDrakArea...Xo
+  b'GBkTile' va=0x5cd7b0  ....bShowLine...%d,%d,[%d*%d],Buf:%d....GBkTile::CreateIndex y over %d>%d...GBkTile::CreateIndex x over %d>%d...GBkTile:
+  b'GBkTile' va=0x5cd7d4  ....GBkTile::CreateIndex y over %d>%d...GBkTile::CreateIndex x over %d>%d...GBkTile::GetFlagRandPos Not find %s.GBkTile:
+  b'GBkTile' va=0x5cd7f8  d...GBkTile::CreateIndex x over %d>%d...GBkTile::GetFlagRandPos Not find %s.GBkTile::GetFlagRandPos agv err must(flagnam
+  b'GBkTile' va=0x5cd81c  d...GBkTile::GetFlagRandPos Not find %s.GBkTile::GetFlagRandPos agv err must(flagname[,needpointnum])...sd(1)d(64)..GBkT
+  b'GBkTile' va=0x5cd868  (flagname[,needpointnum])...sd(1)d(64)..GBkTileBufImg...UpdateWaterMask.GBkTile::PaintTileEx Not find %s................
+  b'GBkTile' va=0x5cd888  )d(64)..GBkTileBufImg...UpdateWaterMask.GBkTile::PaintTileEx Not find %s....................pEditLayer..indexdata len %d
+  b'GBkTile' va=0x5cd8ec  er..indexdata len %d err!(must >= %d)...GBkTile::SetIndexBinData GZip::LZWUnPack catch err..Z101 len %d err!(must be %d)
+  b'GBkTile' va=0x5cd98c  Z100 len %d err!(must be %d)....Z100....GBkTile::SetIndexBinData GZip::LZWPack catch err....ani/....GBkTile::SetCreateAg
+  b'GBkTile' va=0x5cd9c8  Data GZip::LZWPack catch err....ani/....GBkTile::SetCreateAgv agv err!..ssd(0)d(0)d(0)d(0)v()v()....SetWaterImg.Can't ge
+  b'GBkTile' va=0x5cda38  Can't get waterlayer tile14.ssddddv.S1..GBkTile sub flag err!...SubAni pos %d>=%d err!..GBkTile::OnMapSizeChged(%d,%d)->
+  b'GBkTile' va=0x5cda68  sub flag err!...SubAni pos %d>=%d err!..GBkTile::OnMapSizeChged(%d,%d)->(%d,%d).::GNetBkTile....RemoteCreate(v).RemoteCr
+  b'GBkTile' va=0x5dc1ca  lor(#F2FCFD)..E:\GBox\client\source\Map\GBkTileSubEdit.cpp....GBkTileSubEdit..::GBkTileSubEdit....bRandFrame..OnSelectFr
+  b'GBkTile' va=0x5dc1e0  client\source\Map\GBkTileSubEdit.cpp....GBkTileSubEdit..::GBkTileSubEdit....bRandFrame..OnSelectFrame(f)....OnSelectFram
+  b'GBkTile' va=0x5dc1f2  GBkTileSubEdit.cpp....GBkTileSubEdit..::GBkTileSubEdit....bRandFrame..OnSelectFrame(f)....OnSelectFrame...........:%d.fr
+  b'GBkTile' va=0x5dc562  ..............E:\GBox\client\source\Map\GBkTileEditObj.cpp....GBkTileEditObj..nDrawTileSize...::GBkTileEditObj....OnRedo
+  b'GBkTile' va=0x5dc578  client\source\Map\GBkTileEditObj.cpp....GBkTileEditObj..nDrawTileSize...::GBkTileEditObj....OnRedo()....OnUndo()....PerU
+  b'GBkTile' va=0x5dc59a  pp....GBkTileEditObj..nDrawTileSize...::GBkTileEditObj....OnRedo()....OnUndo()....PerUndo()...SetPutFlag(and,or)..SetPut
+=== GBK 水动画 n=1 ===
+  va=0x5dbaf0 hex=727221004c6f6164204d61736b20657272210000cbaeb6afbbad00006c696e6b616c6c20657272006c696e6b616c6c20657272206e6f742066696e643a2573006c696e6b616c6c006c69676874000000
+=== GBK 水/ n=0 ===
+
+UpdateWaterMask string va=0x5cd878
+imm xrefs: ['0x4c3fa6', '0x4c4134', '0x4c558e', '0x4c6bf1', '0x4d2bf5']
+
+=== C++ names with Water ===
+  0x5b93a0  GWaterLayer
+  0x5b93ac  :GWaterLayer
+  0x5cd510  GetWaterMaskImg(pImg)
+  0x5cd528  GetWaterMaskImg
+  0x5cd6a0  CreateWaterLayer(pwaterkindname,pmaskname,pimg1,pimg2)
+  0x5cd6d8  CreateWaterLayer
+  0x5cd878  UpdateWaterMask
+  0x5cda04  SetWaterImg
+  0x5d0c38  E:\GBox\client\source\AdvObj\GWaterLayer.cpp
+  0x5d0c68  ::GWaterLayer
+  0x5d0c8c  UpdateWaterMask(pLink)
+  0x5d0ca4  SetWaterImg(p1,p2)?
+  0x5d0cbb  GWaterLayer
+  0x5d0cd0  GWaterLayer BufImg%03d

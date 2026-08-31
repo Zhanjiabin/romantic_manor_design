@@ -60,6 +60,11 @@ const CORNER_MASK_SLOTS = [13, 12, 10, 6];
 const MASK_SRC = "/tiles/mask/989802.jpg";
 // GBkTile::CreateWaterLayer(kind, mask, img1, img2) ← 水动画=水/河水,189800,180100,180201
 const WATER_MASK_SRC = "/tiles/water/189800.jpg";
+// GWaterLayer::SetWaterImg(p1,p2): both 00changgui and 01shamo animate 水/河水
+// by flipping between these two plates; the addkind still (189902/189901) is
+// only the palette texture, not what the live map shows.
+const WATER_ANIM_SRCS = ["/tiles/water/180100.jpg", "/tiles/water/180201.jpg"];
+const WATER_ANIM_MS = 640;
 
 function buildIsoSpan() {
   const widths = new Uint16Array(TILE_DH);
@@ -130,9 +135,13 @@ const state = {
   future: [],
   unknown: new Set(),
   fillDefault: true,
-  // Link ALEs are transition source assets, not finished overlays. Keep the
-  // experimental compositor opt-in until the native four-edge mask pass is cloned.
-  terrainEffects: /[?&]terrainEffects=1/.test(location.search),
+  // 00changgui.ini `light=maptexture/990000.jpg` (01shamo: 990200) is a
+  // permanent map layer, not an effect toggle. Validated against the in-game
+  // screenshot (terrain_probe_metrics.json: darken 0.12, additive gain 0.28).
+  // ?terrainLight=0 keeps a debugging escape hatch.
+  terrainLight: !/[?&]terrainLight=0/.test(location.search),
+  waterFrame: 0,
+  hasWaterTiles: false,
   stampAt: new Map(),
   stampByCell: new Map(),
   cornerTiles: new Map(),
@@ -182,6 +191,7 @@ async function boot() {
     });
     preload(MASK_SRC);
     preload(WATER_MASK_SRC);
+    WATER_ANIM_SRCS.forEach(preload);
   }
   preloadAllTiles();
   preload(TERRAIN_LIGHT_SRC);
@@ -217,6 +227,11 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
+  setInterval(() => {
+    if (!state.hasWaterTiles || document.hidden) return;
+    state.waterFrame ^= 1;
+    draw();
+  }, WATER_ANIM_MS);
 }
 
 async function consumePendingBuildingImport() {
@@ -591,6 +606,16 @@ function scaleDesk() {
   state.uiScale = 1;
 }
 
+let resizeRaf = 0;
+
+function requestResize() {
+  if (resizeRaf) return;
+  resizeRaf = requestAnimationFrame(() => {
+    resizeRaf = 0;
+    resize();
+  });
+}
+
 function resize() {
   const stage = document.querySelector(".map-stage") || document.getElementById("mapHost");
   const w = Math.max(280, Math.floor(stage?.clientWidth || window.innerWidth));
@@ -598,8 +623,7 @@ function resize() {
   if (view.width !== w || view.height !== h) {
     view.width = w;
     view.height = h;
-    terrainScreenKey = "";
-    gridScreenKey = "";
+    invalidateScreenCaches();
     gridPixels = null;
   }
   syncMiniCanvas();
@@ -939,6 +963,7 @@ function rebuildStampIndex() {
     return tileDrawRank(a) - tileDrawRank(b) || pa.row - pb.row || pa.col - pb.col;
   });
   state.drawTiles = drawTiles;
+  state.hasWaterTiles = drawTiles.some((tile) => tile.corners.some(isWaterTerrain));
   pruneSynthCache();
   state.paintPreview = new Map();
   state.strokeNeedsRebuild = false;
@@ -946,8 +971,17 @@ function rebuildStampIndex() {
 }
 
 function pruneSynthCache(limit = 3600) {
-  if (state.synthCache.size <= limit) return;
-  state.synthCache = new Map();
+  // Evict the oldest half instead of wiping: a full clear forced every visible
+  // seam tile through synthesizeTerrainTile again on the next frame (a visible
+  // hitch on big maps). Map preserves insertion order, so the front is oldest.
+  const cache = state.synthCache;
+  if (cache.size <= limit) return;
+  const drop = cache.size - (limit >> 1);
+  let dropped = 0;
+  for (const key of cache.keys()) {
+    if (dropped++ >= drop) break;
+    cache.delete(key);
+  }
 }
 
 function uvFromColRow(col, row) {
@@ -1115,28 +1149,102 @@ const terrainScreenCache = document.createElement("canvas");
 const gridScreenCache = document.createElement("canvas");
 const miniStampCache = document.createElement("canvas");
 const miniSrcCanvas = document.createElement("canvas");
-let terrainScreenKey = "";
-let gridScreenKey = "";
+// World-anchored caches: pan only re-blits; a re-render happens when zoom,
+// terrain revision, water frame, or viewport size changes, or when the camera
+// leaves the padded margin. Continuous zooming renders unpadded (same cost as
+// an uncached frame); the first stable-k miss afterwards restores the margin.
+const TERRAIN_CACHE_PAD = 256;
+let terrainCacheMeta = null;
+let gridCacheMeta = null;
+let lastTerrainRenderK = null;
 let miniStampKey = "";
 let gridPixels = null;
 let lastStatsAt = 0;
 
-function camDrawKey() {
+function terrainStaticKey() {
   return (
     (state.terrainRev || 0) +
     "|" +
     (state.mapflag || 0) +
+    "|wf" +
+    (state.waterFrame & 1) +
     "|" +
     view.width +
     "x" +
     view.height +
     "|" +
-    state.cam.k +
-    "|" +
-    Math.round(state.cam.x * 100) / 100 +
-    "|" +
-    Math.round(state.cam.y * 100) / 100
+    state.cam.k
   );
+}
+
+function worldCacheHit(meta, key) {
+  return (
+    !!meta &&
+    meta.key === key &&
+    Math.abs(state.cam.x - meta.camX) <= meta.pad &&
+    Math.abs(state.cam.y - meta.camY) <= meta.pad
+  );
+}
+
+function blitWorldCache(cache, meta) {
+  const prevSmoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    cache,
+    Math.round(state.cam.x - meta.camX) - meta.pad,
+    Math.round(state.cam.y - meta.camY) - meta.pad
+  );
+  ctx.imageSmoothingEnabled = prevSmoothing;
+}
+
+function renderTerrainWorldCache(key) {
+  const pad = lastTerrainRenderK === state.cam.k ? TERRAIN_CACHE_PAD : 0;
+  lastTerrainRenderK = state.cam.k;
+  ensureBuf(terrainScreenCache, view.width + pad * 2, view.height + pad * 2);
+  const camX = state.cam.x;
+  const camY = state.cam.y;
+  withDrawTarget(
+    terrainScreenCache,
+    { x: camX + pad, y: camY + pad, k: state.cam.k },
+    () => {
+      ctx.fillStyle = deskChrome();
+      ctx.fillRect(0, 0, view.width, view.height);
+      ctx.save();
+      clipMap();
+      ctx.fillStyle = planeBackdrop();
+      ctx.fillRect(0, 0, view.width, view.height);
+      drawTerrainCells();
+      ctx.restore();
+    }
+  );
+  terrainCacheMeta = { key, camX, camY, pad };
+}
+
+function gridStaticKey() {
+  return view.width + "x" + view.height + "|" + state.cam.k;
+}
+
+function renderGridWorldCache(key) {
+  const pad = terrainCacheMeta ? terrainCacheMeta.pad : TERRAIN_CACHE_PAD;
+  ensureBuf(gridScreenCache, view.width + pad * 2, view.height + pad * 2);
+  const gctx = gridScreenCache.getContext("2d");
+  gctx.clearRect(0, 0, gridScreenCache.width, gridScreenCache.height);
+  const camX = state.cam.x;
+  const camY = state.cam.y;
+  state.cam.x = camX + pad;
+  state.cam.y = camY + pad;
+  try {
+    paintGrid(gctx);
+  } finally {
+    state.cam.x = camX;
+    state.cam.y = camY;
+  }
+  gridCacheMeta = { key, camX, camY, pad };
+}
+
+function invalidateScreenCaches() {
+  terrainCacheMeta = null;
+  gridCacheMeta = null;
 }
 
 function ensureBuf(canvas, w, h) {
@@ -1168,12 +1276,12 @@ function drawNow() {
 
 function paintFrame() {
   if (view.width < 8 || view.height < 8) return;
-  const tKey = camDrawKey();
   const fillSrc = terrainTexturePath(baseChar());
   const fillIm = fillSrc ? state.images.get(fillSrc) : null;
   const terrainReady = !!(fillIm && fillIm.complete && fillIm.naturalWidth);
-  const canUseCache = terrainReady && tKey === terrainScreenKey && terrainScreenCache.width === view.width;
-  if (!canUseCache) {
+  if (!terrainReady) {
+    // Textures still loading: draw direct, nothing worth caching yet.
+    invalidateScreenCaches();
     ctx.clearRect(0, 0, view.width, view.height);
     ctx.fillStyle = deskChrome();
     ctx.fillRect(0, 0, view.width, view.height);
@@ -1183,18 +1291,12 @@ function paintFrame() {
     ctx.fillRect(0, 0, view.width, view.height);
     drawTerrainCells();
     ctx.restore();
-    if (terrainReady) {
-      ensureBuf(terrainScreenCache, view.width, view.height);
-      const tctx = terrainScreenCache.getContext("2d");
-      tctx.clearRect(0, 0, view.width, view.height);
-      tctx.drawImage(view, 0, 0);
-      terrainScreenKey = tKey;
-    } else {
-      terrainScreenKey = "";
-    }
   } else {
-    ctx.clearRect(0, 0, view.width, view.height);
-    ctx.drawImage(terrainScreenCache, 0, 0);
+    const tKey = terrainStaticKey();
+    if (!worldCacheHit(terrainCacheMeta, tKey)) renderTerrainWorldCache(tKey);
+    ctx.fillStyle = deskChrome();
+    ctx.fillRect(0, 0, view.width, view.height);
+    blitWorldCache(terrainScreenCache, terrainCacheMeta);
   }
   drawPaintPreview();
   ctx.save();
@@ -1202,16 +1304,11 @@ function paintFrame() {
   drawPortal();
   ctx.restore();
   if (document.getElementById("showGrid")?.checked) {
-    if (tKey !== gridScreenKey || gridScreenCache.width !== view.width) {
-      ensureBuf(gridScreenCache, view.width, view.height);
-      const gctx = gridScreenCache.getContext("2d");
-      gctx.clearRect(0, 0, view.width, view.height);
-      paintGrid(gctx);
-      gridScreenKey = tKey;
-    }
+    const gKey = gridStaticKey();
+    if (!worldCacheHit(gridCacheMeta, gKey)) renderGridWorldCache(gKey);
     ctx.save();
     clipMap();
-    ctx.drawImage(gridScreenCache, 0, 0);
+    blitWorldCache(gridScreenCache, gridCacheMeta);
     ctx.restore();
   }
   drawSceneObjects();
@@ -1411,7 +1508,7 @@ function drawTerrainPlane(im, sparseDecorations) {
 }
 
 function drawTerrainLight() {
-  if (!state.terrainEffects) return;
+  if (!state.terrainLight) return;
   const lightSrc = terrainLightSrc();
   preload(lightSrc);
   const im = state.images.get(lightSrc);
@@ -1510,6 +1607,9 @@ function drawTerrainCells() {
 function terrainTexturePath(kind) {
   const tile = tileByChar(kind);
   if (!tile) return null;
+  // GWaterLayer replaces the water addkind still with the animated pair on
+  // both bases; everything sampling water (fill, shores, previews) follows.
+  if (isWaterTerrain(kind)) return WATER_ANIM_SRCS[state.waterFrame & 1];
   const tex = (isSandBase() && tile.code && SAND_TILESET[tile.code]) || tile.texture;
   return tex ? "/tiles/" + tex : null;
 }
@@ -2572,12 +2672,41 @@ function synthesizeTwoWay(tile, col, row) {
   if ((watery || snowy) && !waterOnlyOnSand) {
     return synthesizeLayeredTile(tile, col, row);
   }
+  if (kinds.length >= 3) {
+    const junction = synthesizeJunctionTile(tile, col, row);
+    if (junction) return junction;
+  }
   const relation = linkRelationForTile(tile);
   if (!relation) {
     const ranked = rankedKinds(tile);
     return terrainVariant(ranked[0][0], col, row);
   }
   return synthesizedLinkTile(tile, relation, col, row);
+}
+
+function synthesizeJunctionTile(tile, col, row) {
+  // rc3.exe 0x5DBA5C: when three or more kinds meet in one cell there is no
+  // single 1–14 pattern slot. The native pass beds the dominant kind and then
+  // covers each foreign corner with a per-direction 989802 cover mask
+  // (top/right/bottom/left → atlas slots 13/12/10/6).
+  if (!groundMaskReady()) return null;
+  const implicit = baseChar();
+  const ranked = rankedKinds(tile);
+  let baseKind = ranked[0][0];
+  const implicitEntry = ranked.find((entry) => entry[0] === implicit);
+  if (implicitEntry && implicitEntry[1] >= ranked[0][1]) baseKind = implicit;
+  const baseSprite = terrainVariant(baseKind, col, row);
+  if (!baseSprite) return null;
+  let result = baseSprite;
+  for (let corner = 0; corner < 4; corner++) {
+    const kind = tile.corners[corner];
+    if (kind === baseKind) continue;
+    const sprite = terrainVariant(kind, col, row);
+    const weights = maskWeights(CORNER_MASK_SLOTS[corner]);
+    if (!sprite || !weights) return null;
+    result = blendRgb565Style(sprite, result, weights);
+  }
+  return result;
 }
 
 const NEIGHBOR_EDGE_BITS = [
@@ -2815,6 +2944,9 @@ function synthesisReady(tile) {
     }
     return true;
   }
+  if (kinds.length >= 3) {
+    return groundMaskReady() && kinds.every((kind) => !!terrainVariant(kind, 0, 0));
+  }
   const relation = linkRelationForTile({ u: tile.u, v: tile.v, corners });
   if (!relation) return true;
   if (relation.mode === "soft" || relation.mode === "flat") {
@@ -2851,6 +2983,9 @@ function cachedTerrainSprite(tile) {
   const position = logicalToNative(tile.u, tile.v);
   const corners = displayCorners(tile);
   let key = (state.mapflag || 0) + ":" + corners.join("") + "@" + position.col + "," + position.row;
+  if (corners.some(isWaterTerrain) || tile.corners.some(isWaterTerrain)) {
+    key = "wf" + (state.waterFrame & 1) + ":" + key;
+  }
   const self = tile.corners[0];
   if (
     isSolidKind(tile, self) &&
@@ -4061,10 +4196,21 @@ function paintCells(cells, erase) {
 function drawShapePreview() {
   if (!state.shapeDrag || !isShapeTool(state.tool)) return;
   const d = state.shapeDrag;
-  const cells = collectShapeCells(state.tool, d.u0, d.v0, d.u1, d.v1, {
-    mode: currentShapeMode(),
-    square: state.shapeShift,
-  });
+  // The drag endpoints only change on cell boundaries; camera pans and water
+  // frames redraw far more often. Memoize the cell walk between changes.
+  const memoKey =
+    state.tool + "|" + d.u0 + "," + d.v0 + "," + d.u1 + "," + d.v1 + "|" + currentShapeMode() + "|" + state.shapeShift;
+  let cells;
+  if (drawShapePreview.memoKey === memoKey) {
+    cells = drawShapePreview.memoCells;
+  } else {
+    cells = collectShapeCells(state.tool, d.u0, d.v0, d.u1, d.v1, {
+      mode: currentShapeMode(),
+      square: state.shapeShift,
+    });
+    drawShapePreview.memoKey = memoKey;
+    drawShapePreview.memoCells = cells;
+  }
   if (!cells.length) return;
   ctx.save();
   clipMap();
@@ -4853,7 +4999,7 @@ function adoptBaseTerrain(sand) {
   state.grassKeep = new Set();
   state.mapflag = next;
   state.synthCache = new Map();
-  terrainScreenKey = "";
+  invalidateScreenCaches();
   miniStampKey = "";
   syncChgTerrButton();
   rebuildStampIndex();
@@ -4880,9 +5026,7 @@ function bind() {
   });
   setTerrainMobilePane(state.mobileTerrainPane);
   setTerrainProjectTab(state.mobileProjectTab);
-  window.addEventListener("resize", () => {
-    resize();
-  });
+  window.addEventListener("resize", requestResize);
   wireClick("btnUndo", undo);
   wireClick("btnRedo", redo);
   const saveLocal = async () => {
@@ -5127,7 +5271,7 @@ function bind() {
   view.addEventListener("wheel", onWheel, { passive: false });
   window.addEventListener("keydown", onKey);
   if (window.visualViewport) {
-    visualViewport.addEventListener("resize", () => resize());
+    visualViewport.addEventListener("resize", requestResize);
   }
   setInterval(() => {
     if (state.dirty) saveDraft();
@@ -5501,7 +5645,7 @@ function onMove(e) {
       entity.anchorY = Math.max(0, Math.min(1, (y - rect.y) / Math.max(1, rect.height)));
     }
     interaction.changed = true;
-    updatePreviewBuildingUi();
+    schedulePreviewBuildingUi();
     draw();
     return;
   }
@@ -6421,6 +6565,18 @@ function previewThumbnail(entity) {
   return runtime.thumb;
 }
 
+let previewUiTimer = 0;
+
+function schedulePreviewBuildingUi() {
+  // Drag/resize fires per pointermove; rebuilding the whole list DOM at that
+  // rate causes layout thrash. Coalesce to a trailing update.
+  if (previewUiTimer) return;
+  previewUiTimer = setTimeout(() => {
+    previewUiTimer = 0;
+    updatePreviewBuildingUi();
+  }, 120);
+}
+
 function updatePreviewBuildingUi() {
   const list = document.getElementById("previewBuildingList");
   const empty = document.getElementById("previewBuildingEmpty");
@@ -6618,16 +6774,14 @@ async function exportTerrainPng() {
   } catch (err) {
     console.warn(err);
     gridPixels = null;
-    gridScreenKey = "";
-    terrainScreenKey = "";
+    invalidateScreenCaches();
     setSaveStatus("导出失败");
     await appAlert("导出图片失败。", { title: "导出失败" });
     draw();
     return;
   }
   gridPixels = null;
-  gridScreenKey = "";
-  terrainScreenKey = "";
+  invalidateScreenCaches();
   const filename = exportFileName("map.png");
   const blob = await new Promise((resolve) => out.toBlob(resolve, "image/png"));
   if (blob) fallbackDownload(blob, filename);

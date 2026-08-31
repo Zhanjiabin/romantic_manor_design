@@ -27,13 +27,25 @@
     return { width, height, coarse, mobile, tablet, orientation };
   }
 
+  let lastViewportKey = "";
+
   function syncViewport(root = document.documentElement) {
     const mode = modeForViewport();
     const viewport = global.visualViewport;
+    const offsetTop = Math.round(viewport?.offsetTop || 0);
+    const offsetLeft = Math.round(viewport?.offsetLeft || 0);
+    // iOS fires visualViewport scroll continuously; skip the style writes
+    // (each one dirties layout) when nothing actually changed.
+    const viewportKey = `${mode.width}x${mode.height}@${offsetTop},${offsetLeft}`;
+    if (viewportKey === lastViewportKey && root.dataset.workspaceMode) {
+      const sameMode = `${mode.mobile}:${mode.tablet}:${mode.orientation}` === lastModeKey;
+      if (sameMode) return mode;
+    }
+    lastViewportKey = viewportKey;
     root.style.setProperty("--visual-vh", `${mode.height}px`);
     root.style.setProperty("--visual-vw", `${mode.width}px`);
-    root.style.setProperty("--visual-offset-top", `${Math.round(viewport?.offsetTop || 0)}px`);
-    root.style.setProperty("--visual-offset-left", `${Math.round(viewport?.offsetLeft || 0)}px`);
+    root.style.setProperty("--visual-offset-top", `${offsetTop}px`);
+    root.style.setProperty("--visual-offset-left", `${offsetLeft}px`);
     root.classList.toggle("is-mobile-workspace", mode.mobile);
     root.classList.toggle("is-touch-workspace", mode.coarse);
     root.classList.toggle("is-tablet-workspace", mode.tablet);
@@ -228,10 +240,18 @@
     orientationTimer = global.setTimeout(() => syncViewport(root), 280);
   }
 
+  let syncRaf = 0;
+
   function init(options = {}) {
     if (initialized) return syncViewport(options.root);
     initialized = true;
-    const sync = () => syncViewport(options.root);
+    const sync = () => {
+      if (syncRaf) return;
+      syncRaf = global.requestAnimationFrame(() => {
+        syncRaf = 0;
+        syncViewport(options.root);
+      });
+    };
     global.addEventListener("resize", sync, { passive: true });
     global.addEventListener("orientationchange", () => scheduleSync(options.root), { passive: true });
     global.matchMedia?.("(orientation: landscape)")?.addEventListener?.("change", () => scheduleSync(options.root));
@@ -240,7 +260,7 @@
     document.addEventListener("focusin", scrollFocusedInput);
     document.addEventListener("keydown", trapTab, true);
     enhanceModals();
-    return sync();
+    return syncViewport(options.root);
   }
 
   function onModeChange(listener) {

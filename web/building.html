@@ -11,7 +11,7 @@
   <title>建筑设计桌</title>
   <link rel="stylesheet" href="/web/app.css?v=79" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=4" />
-  <link rel="stylesheet" href="/web/building.css?v=144" />
+  <link rel="stylesheet" href="/web/building.css?v=145" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=10" />
 </head>
 <body>
@@ -227,6 +227,7 @@
           </div>
           <div class="hud-stack" id="hudStack">
             <div class="base-meta" id="baseMeta">
+              <div id="paperFileRow" hidden><span>图纸</span><strong id="paperFileName"></strong></div>
               <div><span>名称</span><strong id="buildingName">无</strong></div>
               <div><span>占地</span><strong id="buildingPut">0×0</strong></div>
               <div><span>室内空间</span><strong id="buildingSpace">无</strong></div>
@@ -389,7 +390,8 @@
               <span>保留地基</span>
             </label>
             <div class="panel-actions">
-              <button type="button" class="btn btn-primary btn-wide" id="btnMakeBuilding">生成图纸</button>
+              <button type="button" class="btn" id="btnSaveDesign" title="立即保存当前设计到服务器，下次打开自动恢复 (Ctrl+S)">保存设计</button>
+              <button type="button" class="btn btn-primary" id="btnMakeBuilding">生成图纸</button>
               <button type="button" class="btn btn-wide" id="btnPlaceOnTerrain" title="把当前建筑和户型一起放到地形设计桌预览">放到地形桌</button>
               <button type="button" class="btn" id="btnImportDesign" title="清空当前内容后导入图纸">覆盖导入</button>
               <button type="button" class="btn" id="btnMergeDesign" title="保留当前内容，将另一张图纸合并进来">合并导入</button>
@@ -403,17 +405,18 @@
         <header class="paper-library-bar">
           <div class="paper-library-title">
             <strong id="paperLibraryTitle">本地图纸库</strong>
-            <div class="paper-batch-status" id="paperBatchStatus">还没有载入图纸。选择文件夹后会一直留在这里，关掉再开不用重新解析。</div>
+            <div class="paper-batch-status" id="paperBatchStatus">还没有载入图纸。上传过的图纸保存在服务器，打开图纸库会自动载入。</div>
           </div>
           <div class="paper-library-tools">
             <input class="input" id="paperBatchSearch" type="search" placeholder="搜索文件名…" autocomplete="off" />
-            <button type="button" class="btn" id="btnPaperLibraryFolder" title="重新选择文件夹并解析">更换文件夹</button>
+            <button type="button" class="btn" id="btnPaperLibraryFolder" title="重新选择文件夹并解析（会替换服务器上的存档）">更换文件夹</button>
+            <button type="button" class="btn" id="btnPaperLibraryClear" title="删除服务器上保存的全部图纸">清空图纸库</button>
             <button type="button" class="btn btn-primary" id="btnPaperLibraryClose">返回设计桌</button>
           </div>
         </header>
         <div class="paper-library-empty" id="paperLibraryEmpty">
-          <strong>图纸会留在这一页</strong>
-          <p>选择一个包含建筑图纸的文件夹。解析完成后关掉图纸库也不会卸载，再打开不用重新加载。</p>
+          <strong>图纸会存到服务器</strong>
+          <p>选择一个包含建筑图纸的文件夹。解析后自动保存到服务器，下次打开图纸库直接载入，不用重新上传。</p>
           <button type="button" class="btn btn-primary" id="btnPaperLibraryPick">选择文件夹</button>
         </div>
         <div class="paper-preview-grid" id="paperPreviewGrid" hidden></div>
@@ -559,9 +562,9 @@
   <input type="file" id="buildingFolder" accept=".txt,text/plain" multiple webkitdirectory directory hidden />
   <script src="/web/codec.js?v=43"></script>
   <script src="/web/app-dialog.js?v=1"></script>
-  <script src="/web/mobile-workspace.js?v=8"></script>
+  <script src="/web/mobile-workspace.js?v=9"></script>
   <script src="/web/building-interactions.js?v=11"></script>
   <script src="/web/building-preview.js?v=3"></script>
-  <script src="/web/building.js?v=167"></script>
+  <script src="/web/building.js?v=169"></script>
 </body>
 </html>

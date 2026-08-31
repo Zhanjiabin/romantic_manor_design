@@ -74,12 +74,12 @@ const STAMP_CAP = 360;
 const STAMP_PREVIEW_MAX = 80;
 const PLACE_TOOLS = new Set(["paint", "stamp", "tile", "rect", "line", "circle", "triangle", "diamond", "ring"]);
 const TOOL_INFO = {
-  select: { label: "选择", hint: "拖动圈选 · 左侧切换碰到 / 包含" },
+  select: { label: "选择", hint: "点击选中 · Space+拖动移动素材 · 空白处拖动圈选" },
   paint: { label: "纯笔刷", hint: "只铺不选 · 点到哪画到哪" },
   stamp: { label: "点刷", hint: "点击盖一枚，拖着连续盖" },
   tile: { label: "平铺", hint: "拖出区域错缝铺满 · Shift 整齐网格" },
   rect: { label: "矩形", hint: "拖出矩形铺满 · Shift 正方形" },
-  line: { label: "直线", hint: "沿线铺放 · Shift 锁定 45° 斜线" },
+  line: { label: "直线", hint: "拖任意角度的线，素材精确吸附排在线上 · Shift 锁 45°" },
   circle: { label: "圆形", hint: "拖出圆形铺放 · Shift 正圆" },
   triangle: { label: "三角", hint: "拖出三角形区域铺放" },
   diamond: { label: "菱形", hint: "斜向菱形铺满，贴地块 · Shift 正菱" },
@@ -157,6 +157,7 @@ const state = {
   assetFavorites: new Set(),
   assetRecent: [],
   sessionDirty: false,
+  designName: "",
 };
 
 const canvas = document.getElementById("buildingView");
@@ -660,6 +661,17 @@ function syncDesignResetButtons() {
   }
 }
 
+function updatePaperFileLabel() {
+  const row = document.getElementById("paperFileRow");
+  const label = document.getElementById("paperFileName");
+  if (!row || !label) return;
+  const full = String(state.designName || "");
+  const short = full.replace(/\\/g, "/").split("/").pop() || "";
+  row.hidden = !short;
+  label.textContent = short;
+  label.title = full;
+}
+
 async function clearCurrentDesign({ ask = false } = {}) {
   const count = placedDesignCount();
   if (count < 1) {
@@ -681,6 +693,8 @@ async function clearCurrentDesign({ ask = false } = {}) {
   state.paperOrigin = null;
   state.source = null;
   state.baseAnchor = null;
+  state.designName = "";
+  updatePaperFileLabel();
   state.redo = [];
   invalidateBaseLayout();
   cancelPick();
@@ -786,7 +800,10 @@ function isStampLike(tool = state.tool) {
 }
 
 function armPaintBrush() {
-  if (state.tool === "select") setActiveTool("paint");
+  // 点选素材默认停留在“选择”工具：点空白处放一件并选中它，点已有素材则
+  // 直接选中。连续笔刷要显式切到点刷（B）等铺放工具。
+  if (isPlaceTool()) return;
+  if (state.tool !== "select") setActiveTool("select");
 }
 
 function stampTemplate() {
@@ -842,7 +859,9 @@ function lineStampStep(stroke) {
   // height is not footprint depth; using it creates huge gaps for lamps.
   const groundWidth = Math.max(12, Math.min(64, (Number(geometry.width) || 24) * 0.5));
   const groundDepth = Math.max(8, groundWidth * 0.5);
-  return Math.max(8, (ux * groundWidth + uy * groundDepth) * 1.08);
+  // 沿线铺放要贴紧成串（栅栏、灯柱），步长就取素材在该方向上的投影脚印，
+  // 不再额外放大留缝。
+  return Math.max(6, ux * groundWidth + uy * groundDepth);
 }
 
 function depthSortedStampPoints(points, tool) {
@@ -882,6 +901,10 @@ function updateToolHint() {
   if (!hint) return;
   hint.hidden = false;
   if (state.phase !== "design") return;
+  if (state.tool === "select" && hasBrush()) {
+    hint.textContent = "点空白处放一件并选中 · 连续铺放按 B 切点刷";
+    return;
+  }
   if (isPlaceTool() && !stampTemplate()) {
     hint.textContent = "先点右侧素材，或先点选一件";
     return;
@@ -2457,6 +2480,25 @@ function recordBox(record) {
   };
 }
 
+let grassPlaneCache = null;
+let grassPlaneKey = "";
+
+function drawGrassPlane(grass) {
+  // The grass backdrop is identical between frames; tiling it per paint was a
+  // few hundred drawImage calls on every ghost move / drag frame. Cache the
+  // composed plane and re-tile only when the plane size or source changes.
+  const ready = !!(grass?.complete && grass.naturalWidth);
+  const key = (ready ? grass.src : "pending") + "|" + canvas.width + "x" + canvas.height;
+  if (grassPlaneKey !== key) {
+    if (!grassPlaneCache) grassPlaneCache = document.createElement("canvas");
+    grassPlaneCache.width = canvas.width;
+    grassPlaneCache.height = canvas.height;
+    fillGrassPattern(grassPlaneCache.getContext("2d"), grass, canvas.width, canvas.height, false);
+    grassPlaneKey = key;
+  }
+  ctx.drawImage(grassPlaneCache, 0, 0);
+}
+
 function drawBase() {
   const grass = loadImage("/bdesign/imgs/glsbg.gif");
   const base = state.base;
@@ -2468,14 +2510,14 @@ function drawBase() {
   if (!isBaseLayoutReady()) {
     const layout = state.baseLayout || { planeW: DESIGN_W, planeH: DESIGN_H };
     ensureDesignPlane(layout.planeW, layout.planeH);
-    fillGrassPattern(ctx, grass, canvas.width, canvas.height, false);
+    drawGrassPlane(grass);
     return;
   }
 
   const layout = computeBaseLayout(base, floor, mask);
   state.baseLayout = layout;
   ensureDesignPlane(layout.planeW, layout.planeH);
-  fillGrassPattern(ctx, grass, canvas.width, canvas.height, false);
+  drawGrassPlane(grass);
 
   if (mask?.complete && mask.naturalWidth) {
     const volume = roomMaskLayer(mask, grass, layout.maskX, layout.maskY);
@@ -2708,8 +2750,20 @@ function paintBuilding() {
     drawUnlitCover();
   }
   if (canvas.width !== prevW || canvas.height !== prevH || state.base) afterBaseDrawn();
-  if (!state.dragging && !state.marquee) updateAllMaterials();
+  if (!state.dragging && !state.marquee) scheduleMaterials();
   syncViewportOverlays();
+}
+
+let materialsTimer = 0;
+
+function scheduleMaterials() {
+  // Ghost moves repaint at pointer rate; the material report is O(records)
+  // plus a DOM rebuild and never needs to track the cursor. Trail it.
+  if (materialsTimer) return;
+  materialsTimer = setTimeout(() => {
+    materialsTimer = 0;
+    updateAllMaterials();
+  }, 250);
 }
 
 function renderBuilding() {
@@ -3036,6 +3090,14 @@ function syncShapeOverlay() {
   svg.hidden = false;
 }
 
+let refGuidesActive = false;
+
+function setRefGuidesActive(active) {
+  if (refGuidesActive === active) return;
+  refGuidesActive = active;
+  syncViewportOverlays();
+}
+
 function syncViewportOverlays() {
   syncMarqueeOverlay();
   syncShapeOverlay();
@@ -3118,6 +3180,165 @@ function syncViewportOverlays() {
       line.style.width = `${frame?.clientWidth || shell.clientWidth}px`;
     }
     guideLayer.appendChild(line);
+    if ((guide.type === "v" || guide.type === "h") && guide.from != null && guide.to != null) {
+      // 对齐区段加粗高亮：这段才是真正“贴上”的两个盒子的范围。
+      const core = document.createElement("i");
+      core.className = `snap-guide is-core ${guide.type === "v" ? "is-vertical" : "is-horizontal"}`;
+      if (guide.type === "v") {
+        const a = scenePointToFrame(guide.pos, guide.from, transform);
+        const b = scenePointToFrame(guide.pos, guide.to, transform);
+        core.style.left = `${a.x}px`;
+        core.style.top = `${a.y}px`;
+        core.style.height = `${Math.max(1, b.y - a.y)}px`;
+      } else {
+        const a = scenePointToFrame(guide.from, guide.pos, transform);
+        const b = scenePointToFrame(guide.to, guide.pos, transform);
+        core.style.left = `${a.x}px`;
+        core.style.top = `${a.y}px`;
+        core.style.width = `${Math.max(1, b.x - a.x)}px`;
+      }
+      guideLayer.appendChild(core);
+      if (guide.gap && guide.gapAt != null) {
+        const badge = document.createElement("span");
+        badge.className = "snap-gap-badge";
+        badge.textContent = `${guide.gap}`;
+        const at =
+          guide.type === "v"
+            ? scenePointToFrame(guide.pos, guide.gapAt, transform)
+            : scenePointToFrame(guide.gapAt, guide.pos, transform);
+        badge.style.left = `${at.x}px`;
+        badge.style.top = `${at.y}px`;
+        guideLayer.appendChild(badge);
+      }
+    }
+  });
+  if (refGuidesActive && state.phase === "design" && state.selected.length && !state.marquee) {
+    appendNeighborRefGuides(guideLayer, transform);
+  }
+}
+
+function selectionSceneBounds() {
+  const ox = state.dragging?.offsetX || 0;
+  const oy = state.dragging?.offsetY || 0;
+  const boxes = [];
+  state.selected.forEach((index) => {
+    const record = state.records[index];
+    if (!isCanvasRecord(record)) return;
+    const box = recordHitBox(record);
+    boxes.push({ box: { x: box.x + ox, y: box.y + oy, width: box.width, height: box.height } });
+  });
+  return unionBox(boxes);
+}
+
+const REF_GUIDE_RANGE = 360;
+const REF_GUIDE_NEIGHBORS = 4;
+
+function appendNeighborRefGuides(guideLayer, transform) {
+  // 按住 Ctrl：以选区为基准，找最近的几件素材，画出它们的中线/近对齐边
+  // 和两者的间距，作为手动对齐的参考。
+  const bounds = selectionSceneBounds();
+  if (!bounds) return;
+  const selectedSet = new Set(state.selected);
+  const rows = [];
+  state.records.forEach((record, index) => {
+    if (selectedSet.has(index) || !isCanvasRecord(record) || record.hidden) return;
+    const box = BI.normalizeRect(recordHitBox(record));
+    const dx = Math.max(box.left - bounds.right, bounds.left - box.right, 0);
+    const dy = Math.max(box.top - bounds.bottom, bounds.top - box.bottom, 0);
+    const dist = Math.hypot(dx, dy);
+    if (dist <= REF_GUIDE_RANGE) rows.push({ box, dist });
+  });
+  rows.sort((a, b) => a.dist - b.dist);
+  const s = {
+    left: bounds.left,
+    right: bounds.right,
+    top: bounds.top,
+    bottom: bounds.bottom,
+    cx: (bounds.left + bounds.right) / 2,
+    cy: (bounds.top + bounds.bottom) / 2,
+  };
+  const addLine = (vertical, pos, lo, hi, aligned) => {
+    const line = document.createElement("i");
+    line.className =
+      `ref-guide ${vertical ? "is-vertical" : "is-horizontal"}` + (aligned ? " is-aligned" : "");
+    const a = vertical ? scenePointToFrame(pos, lo, transform) : scenePointToFrame(lo, pos, transform);
+    const b = vertical ? scenePointToFrame(pos, hi, transform) : scenePointToFrame(hi, pos, transform);
+    line.style.left = `${a.x}px`;
+    line.style.top = `${a.y}px`;
+    if (vertical) line.style.height = `${Math.max(1, b.y - a.y)}px`;
+    else line.style.width = `${Math.max(1, b.x - a.x)}px`;
+    guideLayer.appendChild(line);
+  };
+  const addBadge = (x, y, text) => {
+    const badge = document.createElement("span");
+    badge.className = "ref-gap-badge";
+    badge.textContent = text;
+    const at = scenePointToFrame(x, y, transform);
+    badge.style.left = `${at.x}px`;
+    badge.style.top = `${at.y}px`;
+    guideLayer.appendChild(badge);
+  };
+  rows.slice(0, REF_GUIDE_NEIGHBORS).forEach(({ box }) => {
+    const n = {
+      left: box.left,
+      right: box.right,
+      top: box.top,
+      bottom: box.bottom,
+      cx: (box.left + box.right) / 2,
+      cy: (box.top + box.bottom) / 2,
+    };
+    const outline = document.createElement("i");
+    outline.className = "ref-box";
+    const a = scenePointToFrame(n.left, n.top, transform);
+    const b = scenePointToFrame(n.right, n.bottom, transform);
+    outline.style.left = `${a.x}px`;
+    outline.style.top = `${a.y}px`;
+    outline.style.width = `${Math.max(1, b.x - a.x)}px`;
+    outline.style.height = `${Math.max(1, b.y - a.y)}px`;
+    guideLayer.appendChild(outline);
+    const spanY = [Math.min(n.top, s.top) - 12, Math.max(n.bottom, s.bottom) + 12];
+    const spanX = [Math.min(n.left, s.left) - 12, Math.max(n.right, s.right) + 12];
+    const vFeatures = [
+      [n.cx, [s.cx]],
+      [n.left, [s.left, s.right]],
+      [n.right, [s.left, s.right]],
+    ];
+    vFeatures.forEach(([pos, mine], featureIndex) => {
+      const delta = Math.min(...mine.map((value) => Math.abs(value - pos)));
+      const aligned = delta <= 0.75;
+      // 中线永远画，边线只在接近对齐时出现，避免满屏都是线。
+      if (featureIndex === 0 || delta <= 8) addLine(true, pos, spanY[0], spanY[1], aligned);
+    });
+    const hFeatures = [
+      [n.cy, [s.cy]],
+      [n.top, [s.top, s.bottom]],
+      [n.bottom, [s.top, s.bottom]],
+    ];
+    hFeatures.forEach(([pos, mine], featureIndex) => {
+      const delta = Math.min(...mine.map((value) => Math.abs(value - pos)));
+      const aligned = delta <= 0.75;
+      if (featureIndex === 0 || delta <= 8) addLine(false, pos, spanX[0], spanX[1], aligned);
+    });
+    const overlapY = Math.min(n.bottom, s.bottom) - Math.max(n.top, s.top);
+    const overlapX = Math.min(n.right, s.right) - Math.max(n.left, s.left);
+    if (overlapY > 0) {
+      const gap = n.left > s.right ? n.left - s.right : s.left > n.right ? s.left - n.right : 0;
+      if (gap > 0.5) {
+        const y = (Math.max(n.top, s.top) + Math.min(n.bottom, s.bottom)) / 2;
+        const lo = n.left > s.right ? s.right : n.right;
+        addLine(false, y, lo, lo + gap, false);
+        addBadge(lo + gap / 2, y, `${Math.round(gap)}`);
+      }
+    }
+    if (overlapX > 0) {
+      const gap = n.top > s.bottom ? n.top - s.bottom : s.top > n.bottom ? s.top - n.bottom : 0;
+      if (gap > 0.5) {
+        const x = (Math.max(n.left, s.left) + Math.min(n.right, s.right)) / 2;
+        const lo = n.top > s.bottom ? s.bottom : n.bottom;
+        addLine(true, x, lo, lo + gap, false);
+        addBadge(x, lo + gap / 2, `${Math.round(gap)}`);
+      }
+    }
   });
 }
 
@@ -3627,6 +3848,7 @@ function buildingSessionSnapshot() {
     paperBaseHint: state.paperBaseHint || "",
     baseOverridden: !!state.baseOverridden,
     baseAnchor: state.baseAnchor ? { ...state.baseAnchor } : null,
+    designName: state.designName || "",
   };
 }
 
@@ -3639,6 +3861,47 @@ function saveBuildingSession() {
     console.warn("建筑会话保存失败", error);
   }
   putBuildingSaves({ session: snap }, true).catch((error) => console.warn(error));
+}
+
+async function saveDesignNow() {
+  // 手动保存：立即快照并等服务器确认，按钮上给出结果反馈。
+  const btn = document.getElementById("btnSaveDesign");
+  if (sessionSaveTimer) {
+    clearTimeout(sessionSaveTimer);
+    sessionSaveTimer = null;
+  }
+  const snap = buildingSessionSnapshot();
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(snap));
+  } catch (error) {
+    console.warn("建筑会话保存失败", error);
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "保存中…";
+  }
+  let ok = true;
+  try {
+    await putBuildingSaves({ session: snap });
+    state.sessionDirty = false;
+  } catch (error) {
+    ok = false;
+    console.warn("保存设计到服务器失败", error);
+  }
+  if (btn) {
+    btn.textContent = ok ? "已保存" : "保存失败";
+    btn.classList.toggle("danger", !ok);
+    setTimeout(() => {
+      btn.textContent = "保存设计";
+      btn.classList.remove("danger");
+      btn.disabled = false;
+    }, 1600);
+  }
+  if (!ok) {
+    await appAlert("设计已存到本机浏览器，但服务器没有响应；换设备打开可能不是最新的。", {
+      title: "保存设计",
+    });
+  }
 }
 
 function findBaseFromSession(snap) {
@@ -3697,6 +3960,8 @@ function restoreBuildingSession(remoteSnap) {
     state.paperBaseHint = snap.paperBaseHint || "";
     state.baseOverridden = !!snap.baseOverridden;
     state.baseAnchor = null;
+    state.designName = String(snap.designName || "");
+    updatePaperFileLabel();
     state.layerFilter = snap.layerFilter || "";
     state.railWidth = Math.max(300, Math.min(520, Number(snap.railWidth) || 340));
     state.railCollapsed = !!snap.railCollapsed;
@@ -3865,6 +4130,42 @@ function buildDragLayer(indices) {
   return { bounds, movingSet, sheet: allReady ? sheet : null };
 }
 
+function decorateSnapGuides(guides, bounds, dx, dy, targets) {
+  // 原始 guide 只有一个坐标值，画出来是贯穿全屏的细线，看不出到底和谁
+  // 对齐。这里回查命中的目标盒，补上对齐区段（from/to）和两盒间距（gap），
+  // 渲染层据此画出高亮段和距离标注。
+  const moved = {
+    left: bounds.left + dx,
+    right: bounds.right + dx,
+    top: bounds.top + dy,
+    bottom: bounds.bottom + dy,
+  };
+  return guides.map((guide) => {
+    if (guide.type !== "v" && guide.type !== "h") return guide;
+    const vertical = guide.type === "v";
+    let best = null;
+    (targets || []).forEach((target) => {
+      const box = BI.normalizeRect(target.rect || target);
+      const features = vertical
+        ? [box.left, (box.left + box.right) / 2, box.right]
+        : [box.top, (box.top + box.bottom) / 2, box.bottom];
+      if (!features.some((value) => Math.abs(value - guide.pos) <= 0.75)) return;
+      const gap = vertical
+        ? Math.max(box.top - moved.bottom, moved.top - box.bottom, 0)
+        : Math.max(box.left - moved.right, moved.left - box.right, 0);
+      if (!best || gap < best.gap) best = { box, gap };
+    });
+    if (!best) return guide;
+    const box = best.box;
+    const from = vertical ? Math.min(moved.top, box.top) : Math.min(moved.left, box.left);
+    const to = vertical ? Math.max(moved.bottom, box.bottom) : Math.max(moved.right, box.right);
+    const gapLo = vertical ? Math.min(moved.bottom, box.bottom) : Math.min(moved.right, box.right);
+    const gapHi = vertical ? Math.max(moved.top, box.top) : Math.max(moved.left, box.left);
+    const gap = best.gap > 0.5 ? Math.round(best.gap) : 0;
+    return { ...guide, from, to, gap, gapAt: gap ? (gapLo + gapHi) / 2 : null };
+  });
+}
+
 function applyDragPositions(pointerX, pointerY, modifiers = {}) {
   if (!state.dragging) return;
   let rawDx = pointerX - state.dragging.x;
@@ -3907,7 +4208,7 @@ function applyDragPositions(pointerX, pointerY, modifiers = {}) {
     dx = snapped.x;
     dy = snapped.y;
     drag.snapLatch = snapped.latch;
-    state.guides = snapped.guides;
+    state.guides = decorateSnapGuides(snapped.guides, drag.bounds, dx, dy, targets);
   } else {
     drag.snapLatch = { x: null, y: null };
     state.guides = [];
@@ -3969,14 +4270,14 @@ function addComponent(x, y) {
   renderBuilding();
 }
 
-function appendSpriteStamp(component, pack, face, cx, cy, seen) {
+function appendSpriteStamp(component, pack, face, cx, cy, seen, { gridSnap = true } = {}) {
   const usePack = pack || component?._pack || state.pack;
   const uid = componentUid(component?.id, usePack);
   if (uid == null || !component) return -1;
   const geometry = frameGeometry(component, face);
   let px = cx - geometry.width / 2;
   let py = cy - geometry.height / 2;
-  if (state.snap.enabled) {
+  if (gridSnap && state.snap.enabled) {
     const snapped = snapGridPoint(px, py);
     px = snapped.x;
     py = snapped.y;
@@ -4005,6 +4306,9 @@ function placeStampBatch(points, tool = state.tool) {
   const seen = new Set();
   const indices = [];
   const historyLen = state.history.length;
+  // 直线铺放的落点已经精确落在用户画的线上；再逐点吸附网格会把线抖成
+  // 锯齿、间距忽大忽小，所以直线跳过网格吸附。
+  const stampOptions = { gridSnap: tool !== "line" };
   depthSortedStampPoints(points, tool).forEach((point) => {
     if (template.type === "sprite") {
       const index = appendSpriteStamp(
@@ -4013,7 +4317,8 @@ function placeStampBatch(points, tool = state.tool) {
         facingAbsolute(template.component),
         point.x,
         point.y,
-        seen
+        seen,
+        stampOptions
       );
       if (index >= 0) indices.push(index);
       return;
@@ -4027,7 +4332,8 @@ function placeStampBatch(points, tool = state.tool) {
         record.state ?? record.flip ?? 0,
         point.x,
         point.y,
-        seen
+        seen,
+        stampOptions
       );
       if (index >= 0) indices.push(index);
       return;
@@ -4043,8 +4349,8 @@ function placeStampBatch(points, tool = state.tool) {
     state.history.pop();
     return;
   }
-  if (state.tool === "paint") clearSelection({ layers: false });
-  else setSelection(indices);
+  // 铺放完成后选中刚放下的素材，方便立刻微调或对齐。
+  setSelection(indices);
   renderBuilding();
 }
 
@@ -4696,7 +5002,30 @@ function beginCanvasPointer(event, shell) {
     return;
   }
 
-  if (event.button === 1 || state.spacePan || state.mobilePan) {
+  if (event.button === 1 || state.mobilePan) {
+    interaction.mode = "pan";
+    interaction.startScroll = { x: shell.scrollLeft, y: shell.scrollTop };
+    shell.classList.add("is-panning");
+    return;
+  }
+
+  if (state.spacePan) {
+    // 长按空格 + 左键拖动 = 移动素材；空格落在空白处仍然平移画布。
+    const spaceHit = hitRecord(startScene.x, startScene.y, { solid: true, includeLocked: true });
+    const inUnion = spaceHit < 0 && pointInSelectionUnion(startScene.x, startScene.y);
+    if (spaceHit >= 0 || inUnion) {
+      clearBrushHighlight();
+      if (spaceHit >= 0 && !baseSelection.includes(spaceHit)) {
+        setSelection([spaceHit], { expandGroup: true });
+      }
+      const movable = state.selected.filter((index) => !state.records[index]?.locked);
+      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform)
+        ? "move"
+        : "select";
+      updateSelectionCaption();
+      renderBuilding();
+      return;
+    }
     interaction.mode = "pan";
     interaction.startScroll = { x: shell.scrollLeft, y: shell.scrollTop };
     shell.classList.add("is-panning");
@@ -4726,7 +5055,8 @@ function beginCanvasPointer(event, shell) {
   }
 
   const hit = hitRecord(startScene.x, startScene.y, { solid: true, includeLocked: true });
-  const operation = event.ctrlKey || event.metaKey ? "toggle" : event.shiftKey ? "add" : "replace";
+  // Ctrl（Mac 上 Cmd）承担多选；Shift 保留给拖动轴向锁定与画笔约束。
+  const operation = event.ctrlKey || event.metaKey ? "toggle" : "replace";
   if (hit >= 0) {
     clearBrushHighlight();
     if (operation !== "replace") {
@@ -4739,8 +5069,14 @@ function beginCanvasPointer(event, shell) {
       interaction.mode = "select";
     } else {
       if (!baseSelection.includes(hit)) setSelection([hit], { expandGroup: true });
-      const movable = state.selected.filter((index) => !state.records[index]?.locked);
-      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
+      // 桌面端拖动素材需要长按空格（防止点选时误拖）；触屏没有键盘，
+      // 保留手指直接拖动。
+      if (event.pointerType === "touch") {
+        const movable = state.selected.filter((index) => !state.records[index]?.locked);
+        interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
+      } else {
+        interaction.mode = "select";
+      }
     }
     updateSelectionCaption();
     renderBuilding();
@@ -4749,8 +5085,12 @@ function beginCanvasPointer(event, shell) {
 
   if (operation === "replace" && pointInSelectionUnion(startScene.x, startScene.y)) {
     clearBrushHighlight();
-    const movable = state.selected.filter((index) => !state.records[index]?.locked);
-    interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
+    if (event.pointerType === "touch") {
+      const movable = state.selected.filter((index) => !state.records[index]?.locked);
+      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
+    } else {
+      interaction.mode = "select";
+    }
     renderBuilding();
     return;
   }
@@ -5618,6 +5958,7 @@ function appendLayerRow(list, index, selectedSet, filterText, asChild) {
   });
 
   row.append(eye, thumb, name, lock);
+  row.title = "点击选中这件素材 · 方向键微调（Shift 大步 10px）· Ctrl+点击多选";
   row.onclick = (event) => {
     if (event.target.closest("button")) return;
     selectLayerIndex(index, event);
@@ -5915,12 +6256,21 @@ const COMMANDS = [
   { id: "copy", label: "复制到剪贴工作集", shortcut: "Ctrl+C", run: copySelected },
   { id: "paste", label: "粘贴工作集", shortcut: "Ctrl+V", run: pasteClipboard },
   { id: "batchPreview", label: "打开图纸库", shortcut: "", run: () => togglePaperLibrary() },
+  {
+    id: "saveDesign",
+    label: "保存设计到服务器",
+    shortcut: "Ctrl+S",
+    run: () => saveDesignNow().catch((error) => console.warn(error)),
+  },
 ];
 const SHORTCUT_NOTES = [
+  { label: "多选 / 取消多选", shortcut: "Ctrl+点击" },
+  { label: "选中后看邻近参考线", shortcut: "按住 Ctrl" },
   { label: "选中素材微移", shortcut: "方向键" },
   { label: "大步微移", shortcut: "Shift+方向键" },
+  { label: "拖动素材（先选中或直接按住拖）", shortcut: "Space+左键拖" },
   { label: "右键拖：平移画布；单击：菜单", shortcut: "右键" },
-  { label: "按住平移画布", shortcut: "Space / 中键" },
+  { label: "平移画布（空白处）", shortcut: "Space / 中键" },
   { label: "圈选碰到 / 完整包含", shortcut: "M / Shift+M" },
   { label: "点刷 / 平铺 / 矩形 / 直线", shortcut: "B / T / U / L" },
   { label: "圆 / 三角 / 菱形 / 描边", shortcut: "O / I / C / G" },
@@ -6648,7 +6998,7 @@ function updateBatchPreviewButton() {
     btn.title = "图纸正在解析，打开可查看进度";
   } else {
     btn.textContent = "图纸库";
-    btn.title = "打开常驻图纸库；第一次会选择本地文件夹";
+    btn.title = "打开图纸库；上传过的图纸会自动从服务器载入";
   }
   btn.classList.toggle("on", isPaperLibraryOpen());
 }
@@ -6688,7 +7038,30 @@ function togglePaperLibrary() {
     setPaperLibraryOpen(true);
     return;
   }
-  document.getElementById("buildingFolder")?.click();
+  openServerPaperLibrary().catch((error) => console.warn(error));
+}
+
+async function clearServerPaperLibrary() {
+  const ok = await appConfirm("删除服务器上保存的全部图纸？本地文件不受影响。", {
+    title: "清空图纸库",
+    okLabel: "清空",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await fetch("/api/saves/building/papers", { method: "DELETE", credentials: "same-origin" });
+  } catch (error) {
+    console.warn(error);
+  }
+  batchLibrary.generation += 1;
+  batchLibrary.loading = false;
+  batchLibrary.entries = [];
+  batchLibrary.failed = 0;
+  batchLibrary.folderLabel = "";
+  document.getElementById("paperPreviewGrid")?.replaceChildren();
+  syncPaperLibraryEmpty();
+  updatePaperLibraryStatus("已清空服务器图纸库。");
+  updateBatchPreviewButton();
 }
 
 function folderLabelFromFiles(files) {
@@ -6740,7 +7113,7 @@ function updatePaperLibraryStatus(message = "") {
   if (!total) {
     status.textContent = batchLibrary.failed
       ? `${batchLibrary.failed} 张文件无法读取。`
-      : "还没有载入图纸。选择文件夹后会一直留在这里，关掉再开不用重新解析。";
+      : "还没有载入图纸。上传过的图纸保存在服务器，打开图纸库会自动载入。";
     return;
   }
   const filterNote = batchLibrary.query && shown !== total ? ` · 显示 ${shown} 张` : "";
@@ -7124,8 +7497,75 @@ async function openPaperInspect(entry) {
   });
 }
 
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(text) {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function persistPaperLibrary(uploads, replace) {
+  // 上传原始图纸字节到服务器；分批发送避免超过服务端 8MB 请求上限。
+  const CHUNK = 80;
+  let saved = 0;
+  for (let i = 0; i < uploads.length; i += CHUNK) {
+    const response = await fetch("/api/saves/building/papers", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ replace: replace && i === 0, papers: uploads.slice(i, i + CHUNK) }),
+    });
+    if (!response.ok) throw new Error(`图纸库同步失败 (${response.status})`);
+    saved += Number((await response.json())?.saved || 0);
+  }
+  return saved;
+}
+
 async function openBatchPaperPreview(files) {
   const candidates = [...files].filter((file) => /\.txt$/i.test(file.name));
+  // 手选文件夹 = 替换服务器上的图纸库存档。
+  await loadPaperLibraryFiles(candidates, { persist: true });
+}
+
+async function openServerPaperLibrary() {
+  // 图纸库为空时先看服务器：上传过的图纸都存在服务端，不用重新选文件夹。
+  setPaperLibraryOpen(true);
+  updatePaperLibraryStatus("正在从服务器读取图纸库…");
+  let papers = [];
+  try {
+    const response = await fetch("/api/saves/building/papers", { credentials: "same-origin" });
+    if (response.ok) {
+      const data = await response.json();
+      if (Array.isArray(data?.papers)) papers = data.papers;
+    }
+  } catch (error) {
+    console.warn("读取服务器图纸库失败", error);
+  }
+  if (batchLibrary.entries.length || batchLibrary.loading) return;
+  if (!papers.length) {
+    updatePaperLibraryStatus("服务器上还没有存过图纸，先选择一个本地文件夹。");
+    return;
+  }
+  const files = papers.map((paper) => {
+    try {
+      return new File([base64ToBytes(paper.data)], String(paper.name || "图纸.txt"));
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+  await loadPaperLibraryFiles(files, { persist: false, sourceLabel: "服务器存档" });
+}
+
+async function loadPaperLibraryFiles(candidates, { persist = false, sourceLabel = "" } = {}) {
   const grid = document.getElementById("paperPreviewGrid");
   const search = document.getElementById("paperBatchSearch");
   if (!grid) return;
@@ -7136,7 +7576,7 @@ async function openBatchPaperPreview(files) {
   batchLibrary.loading = true;
   batchLibrary.entries = [];
   batchLibrary.failed = 0;
-  batchLibrary.folderLabel = candidates.length ? folderLabelFromFiles(candidates) : "";
+  batchLibrary.folderLabel = sourceLabel || (candidates.length ? folderLabelFromFiles(candidates) : "");
   grid.replaceChildren();
   setPaperLibraryOpen(true);
   syncPaperLibraryEmpty();
@@ -7149,15 +7589,17 @@ async function openBatchPaperPreview(files) {
   updatePaperLibraryStatus(`正在读取 ${candidates.length} 张图纸…`);
   updateBatchPreviewButton();
   let unresolvedTotal = 0;
+  const uploads = [];
   for (const [index, file] of candidates.entries()) {
     try {
-      const { documentData } = await parseBuildingFile(file);
+      const { buffer, documentData } = await parseBuildingFile(file);
       if (gen !== batchLibrary.generation) return;
       const records = documentData.records || [];
       const paperRows = records.filter((record) => Number(record.mat));
       const { materialTotals, unresolved } = paperLibraryMaterials(records);
       unresolvedTotal += unresolved;
       const relative = String(file.webkitRelativePath || file.name).replace(/\\/g, "/");
+      if (persist) uploads.push({ name: relative, data: bytesToBase64(new Uint8Array(buffer)) });
       const entry = {
         id: `${gen}-${index}`,
         file,
@@ -7198,6 +7640,21 @@ async function openBatchPaperPreview(files) {
   syncPaperLibraryEmpty();
   updatePaperLibraryStatus();
   updateBatchPreviewButton();
+  if (persist && uploads.length) {
+    try {
+      const saved = await persistPaperLibrary(uploads, true);
+      if (gen === batchLibrary.generation) {
+        updatePaperLibraryStatus(
+          `已解析 ${batchLibrary.entries.length} 张 · 已存到服务器 ${saved} 张，下次打开自动载入`
+        );
+      }
+    } catch (error) {
+      console.warn(error);
+      if (gen === batchLibrary.generation) {
+        updatePaperLibraryStatus("图纸已载入，但保存到服务器失败，下次可能需要重新选择文件夹。");
+      }
+    }
+  }
 }
 
 function importedPaperRows(records) {
@@ -7283,6 +7740,10 @@ async function importDesign(file, options = {}) {
     });
     state.layerCollapsed.add(group);
     setSelection(body.map((_, index) => first + index), { expandGroup: true });
+    if (!state.designName) {
+      state.designName = String(file.webkitRelativePath || file.name || "");
+      updatePaperFileLabel();
+    }
     updateSelectionCaption();
     fillLayers();
     syncDesignResetButtons();
@@ -7296,6 +7757,9 @@ async function importDesign(file, options = {}) {
     encoding: documentData._source?.encoding || "gbk",
   };
   state.paperLayout = true;
+  // 左上角显示打开的是哪张图纸，防止忘记当前文件。
+  state.designName = String(file.webkitRelativePath || file.name || "");
+  updatePaperFileLabel();
   state.records = imported.rows;
   state.baseAnchor = null;
   state.paperOrigin = null;
@@ -7542,6 +8006,9 @@ function bindBuilding() {
   };
   document.getElementById("btnBatchPreview").onclick = () => togglePaperLibrary();
   document.getElementById("btnPaperLibraryClose")?.addEventListener("click", () => setPaperLibraryOpen(false));
+  document.getElementById("btnPaperLibraryClear")?.addEventListener("click", () => {
+    clearServerPaperLibrary().catch((error) => console.warn(error));
+  });
   document.getElementById("btnPaperLibraryFolder")?.addEventListener("click", () => {
     document.getElementById("buildingFolder")?.click();
   });
@@ -7589,6 +8056,9 @@ function bindBuilding() {
     pendingImportMode = "replace";
     event.target.value = "";
   };
+  document.getElementById("btnSaveDesign")?.addEventListener("click", () => {
+    saveDesignNow().catch((error) => console.warn(error));
+  });
   document.getElementById("btnMakeBuilding").onclick = () => {
     openCurrentPaperPreview();
   };
@@ -7888,9 +8358,17 @@ function bindBuilding() {
     }
     if (state.interaction) cancelCanvasInteraction();
     state.spacePan = false;
+    setRefGuidesActive(false);
+  });
+
+  window.addEventListener("keyup", (event) => {
+    if (event.key === "Control") setRefGuidesActive(false);
   });
 
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Control" && !event.repeat && state.phase === "design" && state.selected.length) {
+      setRefGuidesActive(true);
+    }
     if (typeof isAppDialogOpen === "function" && isAppDialogOpen()) return;
     const commandDialog = document.getElementById("dlgCommands");
     const shortcutDialog = document.getElementById("dlgShortcuts");
@@ -8067,6 +8545,9 @@ function bindBuilding() {
     } else if ((event.ctrlKey || event.metaKey) && key === "y") {
       event.preventDefault();
       executeCommand("redo");
+    } else if ((event.ctrlKey || event.metaKey) && key === "s") {
+      event.preventDefault();
+      executeCommand("saveDesign");
     } else if ((event.ctrlKey || event.metaKey) && key === "d") {
       event.preventDefault();
       executeCommand("duplicate");

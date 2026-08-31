@@ -72,6 +72,21 @@ tile(column,row)
   相邻时的连接图生成；纯草地不得覆盖该图。
 - ALE `linkall` 仍由相邻地形触发，纯草地基准不绘制连接层。
 
+## 网页端已克隆的原生层（2026-08-31）
+
+- **光照层常驻**：`00changgui.ini` `light=maptexture/990000.jpg`、`01shamo.ini`
+  `light=maptexture/990200.jpg` 是地图配置，不是特效开关。网页默认绘制
+  （darken 0.12 + 加法 0.28，即 terrain_probe_metrics.json 验收通过的模型），
+  `?terrainLight=0` 仅作调试逃生口。
+- **GWaterLayer 双帧水动画**：两份 ini 均声明
+  `水动画=水/河水,water/189800.jpg,water/180100.jpg,water/180201.jpg`。
+  水地形取样 180100/180201 交替（640ms），189800 仍是岸线占位 mask；
+  addkind 里的 189902/189901 只是调色板贴图。屏幕缓存与合成缓存的 key
+  都带水帧位。
+- **0x5DBA5C 三/四向交汇**：一格内 ≥3 种地形没有单一 1–14 图案槽。
+  以占多数的种类铺底，再按 top/right/bottom/left 用 989802 图集
+  槽位 13/12/10/6 的 cover mask 逐角混入异种（`synthesizeJunctionTile`）。
+
 ## 可重复验证
 
 ```powershell

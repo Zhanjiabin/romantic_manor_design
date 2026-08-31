@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import hmac
 import json
@@ -32,11 +33,15 @@ from codec.terrain import dumps_document as dumps_terrain_document
 from codec.terrain import dumps_gbk as dumps_terrain
 from codec.terrain import loads_gbk as loads_terrain
 from saves import (
+    clear_building_papers,
+    delete_building_paper,
     delete_terrain_version,
     load_building_bundle,
+    load_building_papers,
     load_terrain_asset,
     load_terrain_bundle,
     save_building_bundle,
+    save_building_papers,
     save_terrain_asset,
     save_terrain_draft,
     save_terrain_version,
@@ -238,12 +243,17 @@ class Handler(SimpleHTTPRequestHandler):
             pass
         return True
 
-    def _send(self, code, body: bytes, ctype="application/octet-stream", cache="no-cache"):
+    def _send(self, code, body: bytes, ctype="application/octet-stream", cache="no-cache", etag=None, encoding=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", cache)
+        if etag:
+            self.send_header("ETag", etag)
+            self.send_header("Vary", "Accept-Encoding")
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -271,8 +281,7 @@ class Handler(SimpleHTTPRequestHandler):
         path = unquote(request.path)
         query = parse_qs(request.query)
         if path in ("/", "/index.html"):
-            data = (WEB / "index.html").read_bytes()
-            return self._send(200, data, "text/html; charset=utf-8")
+            return self._file(WEB / "index.html", guess=True)
         if path.startswith("/data/"):
             return self._file(DATA / path[len("/data/") :].replace("\\", "/"), guess=True)
         if path.startswith("/web/"):
@@ -363,6 +372,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(200, body, content_type)
         if path == "/api/saves/building":
             body = json.dumps(load_building_bundle(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
+        if path == "/api/saves/building/papers":
+            body = json.dumps(load_building_papers(), ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
         return self._send(404, b"not found", "text/plain")
 
@@ -476,6 +488,12 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/saves/building":
                 body = json.dumps(save_building_bundle(obj), ensure_ascii=False).encode("utf-8")
                 return self._send(200, body, "application/json; charset=utf-8")
+            if path == "/api/saves/building/papers":
+                if obj.get("replace"):
+                    clear_building_papers()
+                saved = save_building_papers(obj.get("papers") or [])
+                payload = json.dumps({"ok": True, "saved": saved}).encode("utf-8")
+                return self._send(200, payload, "application/json")
         except Exception as e:
             return self._send(400, str(e).encode("utf-8", errors="replace"), "text/plain; charset=utf-8")
         return self._send(404, b"not found", "text/plain")
@@ -487,6 +505,15 @@ class Handler(SimpleHTTPRequestHandler):
         prefix = "/api/saves/terrain/version/"
         if path.startswith(prefix):
             if delete_terrain_version(path[len(prefix) :]):
+                return self._send(200, b'{"ok":true}', "application/json")
+            return self._send(404, b"missing", "text/plain")
+        if path == "/api/saves/building/papers":
+            removed = clear_building_papers()
+            payload = json.dumps({"ok": True, "removed": removed}).encode("utf-8")
+            return self._send(200, payload, "application/json")
+        paper_prefix = "/api/saves/building/papers/"
+        if path.startswith(paper_prefix):
+            if delete_building_paper(path[len(paper_prefix) :]):
                 return self._send(200, b'{"ok":true}', "application/json")
             return self._send(404, b"missing", "text/plain")
         return self._send(404, b"not found", "text/plain")
@@ -594,9 +621,40 @@ class Handler(SimpleHTTPRequestHandler):
         )
         if not any(_is_under(path, root) for root in allowed) or not path.is_file():
             return self._send(404, b"missing", "text/plain")
+        stat = path.stat()
+        etag = f'W/"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+        # Game asset trees never change at runtime; editor files (web/data)
+        # revalidate with ETag so deploys show up immediately but unchanged
+        # files cost a 304 instead of a re-transfer.
+        immutable_roots = (TILE.resolve(), BDESIGN_RES.resolve(), BDESIGN_IMGS.resolve(), RCITEM.resolve())
+        cache = (
+            "public, max-age=604800, immutable"
+            if any(_is_under(path, root) for root in immutable_roots)
+            else "no-cache"
+        )
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", cache)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Vary", "Accept-Encoding")
+            self.end_headers()
+            return
         data = path.read_bytes()
         ctype = _ctype(path) if guess else "application/octet-stream"
-        return self._send(200, data, ctype)
+        encoding = None
+        compressible = ctype.split(";")[0] in {
+            "text/html",
+            "text/javascript",
+            "text/css",
+            "text/plain",
+            "application/json",
+            "image/svg+xml",
+        }
+        if compressible and len(data) > 2048 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            data = gzip.compress(data, 6)
+            encoding = "gzip"
+        return self._send(200, data, ctype, cache=cache, etag=etag, encoding=encoding)
 
 
 def _is_under(path: Path, root: Path) -> bool:

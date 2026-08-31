@@ -278,11 +278,13 @@ test("locked rendering invariants stay explicit in building.js", () => {
   assert.match(source, /PLACE_TOOLS = new Set\(\["paint"/);
   assert.match(source, /function isStampLike/);
   assert.match(source, /function armPaintBrush/);
-  assert.match(source, /if \(state\.tool === "select"\) setActiveTool\("paint"\)/);
+  // Picking a palette asset stays on the select tool; only the explicit
+  // "use as brush" action (pickRecordAsBrush) still switches to paint.
+  assert.doesNotMatch(source, /if \(state\.tool === "select"\) setActiveTool\("paint"\)/);
   assert.match(source, /if \(state\.tool === "paint"\)/);
   assert.match(source, /id: "paintTool"/);
   assert.match(source, /if \(!isPlaceTool\(\)\) setActiveTool\("paint"\)/);
-  assert.match(source, /if \(state\.tool === "paint"\) clearSelection/);
+  assert.doesNotMatch(source, /if \(state\.tool === "paint"\) clearSelection/);
   assert.doesNotMatch(source, /ASSET_LIST_CAP/);
   assert.doesNotMatch(source, /已显示前/);
   assert.match(source, /function paintAssetWindow/);
@@ -435,6 +437,101 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   );
   assert.doesNotMatch(selectionRenderer, /#ffe14a|setLineDash|strokeRect\(image/);
   assert.doesNotMatch(renderer, /packFrames|packFrameOwners|frameBorrow/);
+});
+
+test("terrain renderer clones the native water/light/junction passes", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
+  // GWaterLayer: 水动画=水/河水,189800,180100,180201 — two flipping plates.
+  assert.match(source, /const WATER_ANIM_SRCS = \["\/tiles\/water\/180100\.jpg", "\/tiles\/water\/180201\.jpg"\]/);
+  assert.match(source, /state\.waterFrame \^= 1/);
+  assert.match(source, /if \(isWaterTerrain\(kind\)\) return WATER_ANIM_SRCS\[state\.waterFrame & 1\]/);
+  assert.match(source, /state\.hasWaterTiles = drawTiles\.some/);
+  // Water frame participates in both screen and synth cache keys.
+  assert.match(source, /"\|wf" \+\s*\(state\.waterFrame & 1\)/);
+  assert.match(source, /key = "wf" \+ \(state\.waterFrame & 1\) \+ ":" \+ key/);
+  // ini light= is a permanent layer, no longer an opt-in effect flag.
+  assert.match(source, /terrainLight: !\/\[\?&\]terrainLight=0\//);
+  assert.match(source, /if \(!state\.terrainLight\) return;/);
+  assert.doesNotMatch(source, /terrainEffects/);
+  // rc3.exe 0x5DBA5C: 3+/4-way junction cover masks are wired in.
+  assert.match(source, /function synthesizeJunctionTile/);
+  assert.match(source, /maskWeights\(CORNER_MASK_SLOTS\[corner\]\)/);
+  assert.match(source, /const junction = synthesizeJunctionTile\(tile, col, row\)/);
+});
+
+test("both desks keep interactive frames off the expensive render paths", () => {
+  const terrainJs = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
+  const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  const mobileJs = fs.readFileSync(path.join(__dirname, "../web/mobile-workspace.js"), "utf8");
+  const serverPy = fs.readFileSync(path.join(__dirname, "../server.py"), "utf8");
+  // Terrain: pan re-blits a world-anchored cache instead of re-rendering.
+  assert.match(terrainJs, /const TERRAIN_CACHE_PAD = \d+/);
+  assert.match(terrainJs, /function terrainStaticKey/);
+  assert.match(terrainJs, /function worldCacheHit/);
+  assert.match(terrainJs, /function renderTerrainWorldCache/);
+  // The static key must not depend on continuous camera position.
+  const staticKey = terrainJs.slice(
+    terrainJs.indexOf("function terrainStaticKey"),
+    terrainJs.indexOf("function worldCacheHit")
+  );
+  assert.doesNotMatch(staticKey, /cam\.x|cam\.y/);
+  // Synth cache evicts instead of wiping inside pruneSynthCache.
+  const prune = terrainJs.slice(
+    terrainJs.indexOf("function pruneSynthCache"),
+    terrainJs.indexOf("function uvFromColRow")
+  );
+  assert.match(prune, /cache\.delete\(key\)/);
+  assert.doesNotMatch(prune, /new Map\(\)/);
+  assert.match(terrainJs, /drawShapePreview\.memoKey/);
+  assert.match(terrainJs, /function schedulePreviewBuildingUi/);
+  assert.match(terrainJs, /function requestResize/);
+  // Building: grass plane is cached, material report is trailed.
+  assert.match(buildingJs, /function drawGrassPlane/);
+  assert.match(buildingJs, /function scheduleMaterials/);
+  assert.doesNotMatch(buildingJs, /if \(!state\.dragging && !state\.marquee\) updateAllMaterials\(\)/);
+  // Mobile viewport sync dedupes writes and coalesces to animation frames.
+  assert.match(mobileJs, /lastViewportKey/);
+  assert.match(mobileJs, /requestAnimationFrame/);
+  // Server: static files revalidate via ETag, game assets are immutable,
+  // text assets can compress.
+  assert.match(serverPy, /If-None-Match/);
+  assert.match(serverPy, /max-age=604800, immutable/);
+  assert.match(serverPy, /gzip\.compress/);
+});
+
+test("building desk selection, line brush, and guide affordances follow the ctrl-first workflow", () => {
+  const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  // Canvas multi-select rides on Ctrl/Cmd only; Shift stays reserved for
+  // axis-lock and brush constraints.
+  assert.match(
+    buildingJs,
+    /const operation = event\.ctrlKey \|\| event\.metaKey \? "toggle" : "replace";/
+  );
+  // Picking a palette asset keeps the select tool armed instead of switching
+  // to the continuous paint brush.
+  const arm = buildingJs.slice(
+    buildingJs.indexOf("function armPaintBrush"),
+    buildingJs.indexOf("function stampTemplate")
+  );
+  assert.doesNotMatch(arm, /setActiveTool\("paint"\)/);
+  // Line placements keep their exact positions on the drawn line (no
+  // per-point grid snap) and stamp batches select what they placed.
+  assert.match(buildingJs, /gridSnap: tool !== "line"/);
+  assert.match(buildingJs, /function appendSpriteStamp\([^)]*\{ gridSnap = true \}/);
+  const lineStep = buildingJs.slice(
+    buildingJs.indexOf("function lineStampStep"),
+    buildingJs.indexOf("function depthSortedStampPoints")
+  );
+  assert.doesNotMatch(lineStep, /1\.08/);
+  // Snap guides carry alignment spans and gap distances; Ctrl shows
+  // neighbor reference guides for the current selection.
+  assert.match(buildingJs, /function decorateSnapGuides/);
+  assert.match(buildingJs, /snap-gap-badge/);
+  assert.match(buildingJs, /function appendNeighborRefGuides/);
+  assert.match(buildingJs, /setRefGuidesActive\(true\)/);
+  const css = fs.readFileSync(path.join(__dirname, "../web/building.css"), "utf8");
+  assert.match(css, /\.ref-guide\.is-aligned/);
+  assert.match(css, /\.snap-guide\.is-core/);
 });
 
 test("scene preview entities persist in project v2 but stay out of game exports", () => {

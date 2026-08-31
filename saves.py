@@ -2,11 +2,13 @@
 """Disk-backed desk saves (terrain drafts/versions + building session)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from game_paths import ROOT
@@ -153,6 +155,73 @@ def load_terrain_asset(ident: str) -> tuple[bytes, str] | None:
         return None
     meta = _read_json(root / f"{ident}.meta.json") or {}
     return payload, str(meta.get("contentType") or "application/octet-stream")
+
+
+def _papers_root() -> Path:
+    root = saves_root() / "building-papers"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def load_building_papers() -> dict:
+    papers = []
+    for path in _papers_root().glob("*.json"):
+        item = _read_json(path)
+        if isinstance(item, dict) and item.get("data") and item.get("name"):
+            papers.append(item)
+    papers.sort(key=lambda item: str(item.get("name") or ""))
+    return {"papers": papers}
+
+
+def save_building_papers(items) -> int:
+    """Upsert uploaded paper files (base64 bytes); id is the content hash so
+    re-uploading the same folder dedupes instead of duplicating."""
+    if not isinstance(items, list):
+        raise ValueError("papers must be a list")
+    saved = 0
+    now = int(time.time() * 1000)
+    with _LOCK:
+        root = _papers_root()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip().replace("\\", "/")[:240]
+            data = item.get("data")
+            if not name or not isinstance(data, str) or not data:
+                continue
+            if len(data) > 4 * 1024 * 1024:
+                continue
+            ident = hashlib.sha1(data.encode("ascii", "ignore")).hexdigest()[:24]
+            _atomic_write(
+                root / f"{ident}.json",
+                {"id": ident, "name": name, "data": data, "savedAt": now},
+            )
+            saved += 1
+    return saved
+
+
+def clear_building_papers() -> int:
+    removed = 0
+    with _LOCK:
+        for path in _papers_root().glob("*.json"):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+def delete_building_paper(ident: str) -> bool:
+    ident = safe_save_id(ident)
+    if not ident:
+        return False
+    path = _papers_root() / f"{ident}.json"
+    with _LOCK:
+        if not path.is_file():
+            return False
+        path.unlink()
+    return True
 
 
 def load_building_bundle() -> dict:

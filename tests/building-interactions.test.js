@@ -181,6 +181,40 @@ test("fill object-fit maps the whole CSS box as canvas", () => {
   assert.ok(Math.abs(far.y - 540) < 1e-6);
 });
 
+test("desk coordinates sign-extend 15-bit values the way rc3.exe does", () => {
+  const decodeS15 = (value) => {
+    value &= 0x7fff;
+    return value > 0x3fff ? value - 0x8000 : value;
+  };
+  assert.equal(decodeS15(0), 0);
+  assert.equal(decodeS15(16383), 16383);
+  assert.equal(decodeS15(16384), -16384);
+  assert.equal(decodeS15(32767), -1);
+  assert.equal(decodeS15(32700), -68);
+  assert.equal(decodeS15(-1), -1);
+});
+
+test("headerless 11x11 native floor origin follows the rc3 TxtInsert chain", () => {
+  const maskW = 755;
+  const maskH = 627;
+  const cx = 61;
+  const cy = 440;
+  const anchorX = -87;
+  const anchorY = -190;
+  const nativeHalf = (a, b) => Math.trunc((a - b) / 2);
+  // TxtExport/TxtInsert use live layer coords. Maximized 1920×1080 → 1690×1030.
+  const maskX = nativeHalf(1690, maskW);
+  const maskY = nativeHalf(1030, maskH);
+  assert.equal(maskX, 467);
+  assert.equal(maskY, 201);
+  assert.deepEqual(
+    { x: maskX + cx + anchorX, y: maskY + cy + anchorY },
+    { x: 441, y: 451 }
+  );
+  assert.equal(nativeHalf(570, 570), 0);
+  assert.equal(nativeHalf(1690, 570), 560);
+});
+
 test("locked rendering invariants stay explicit in building.js", () => {
   const source = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
   assert.match(source, /function expandPlaneToShell/);
@@ -194,10 +228,24 @@ test("locked rendering invariants stay explicit in building.js", () => {
   assert.doesNotMatch(source, /packFrames|packFrameOwners|roomHexagon|roomVolumeLayer|floorOpaqueDiamond/);
   assert.match(source, /state\.baseAnchor = null;/);
   assert.match(source, /const origin = paperNativeOrigin\(\);/);
-  assert.match(source, /dx: Math\.round\(frameX - origin\.x\)/);
-  assert.match(source, /dy: Math\.round\(frameY - origin\.y\)/);
+  assert.match(source, /function decodeS15/);
+  assert.match(source, /mat=0 is GDesignSubUser/);
+  assert.doesNotMatch(source, /Papers with mat=0 explicitly carry their authored ChgBaseMask origin/);
+  assert.doesNotMatch(source, /dx: Math\.round\(frameX - origin\.x\)/);
+  assert.doesNotMatch(source, /dy: Math\.round\(frameY - origin\.y\)/);
+  assert.match(source, /const NATIVE_PAPER_W = 1690;/);
+  assert.match(source, /const NATIVE_PAPER_H = 1030;/);
+  assert.doesNotMatch(source, /NATIVE_LAYER_CANDIDATES/);
+  assert.doesNotMatch(source, /function inferredNativeLayer/);
+  assert.doesNotMatch(source, /const NATIVE_PAPER_W = 1691;/);
+  assert.match(source, /function nativePaperFloorOrigin/);
+  assert.match(source, /maskOrigin\.x \+ Number\(anchor\[0\]\) \+ Number\(frame\.anchorX\)/);
+  assert.match(source, /layout\.floorX - nativeFloor\.x/);
+  assert.match(source, /layout\.floorY - nativeFloor\.y/);
+  assert.doesNotMatch(source, /front\.x - \(layout\.frontX - layout\.maskX\)/);
+  assert.doesNotMatch(source, /layout\.frontX - front\.x/);
   assert.match(source, /isCanvasRecord/);
-  assert.match(source, /x >= 32000 \|\| y >= 32000/);
+  assert.doesNotMatch(source, /x >= 32000 \|\| y >= 32000/);
   assert.doesNotMatch(source, /x >= 0 && y >= 0 && x <= MAX_CONTENT_COORD && y <= MAX_CONTENT_COORD/);
   assert.match(source, /function isSelectableRecord/);
   assert.match(source, /selectAllRecords[\s\S]*isSelectableRecord/);
@@ -246,22 +294,35 @@ test("locked rendering invariants stay explicit in building.js", () => {
   assert.match(source, /async function groupSelected\(\)[\s\S]*updateSelectionCaption\(\);[\s\S]*fillLayers\(\);/);
   assert.match(source, /function commitDragPositions\(\)[\s\S]*record\.x = clamped\.x;[\s\S]*record\.y = clamped\.y;[\s\S]*\n\}/);
   assert.match(source, /function buildExportRecords/);
-  assert.match(source, /return \[exportHeaderRecord\(\), \.\.\.body\]/);
-  assert.match(source, /state: Number\(state\.base\?\.kind\) \|\| 0/);
+  assert.match(source, /function existingUserReferences/);
+  assert.match(source, /return \[\.\.\.existingUserReferences\(\), \.\.\.body\]/);
+  assert.doesNotMatch(source, /function exportHeaderRecord/);
+  assert.doesNotMatch(source, /state: Number\(state\.base\?\.kind\) \|\| 0/);
   assert.match(source, /function pruneCollapsedLayerGroups/);
   const css = fs.readFileSync(path.join(__dirname, "../web/building.css"), "utf8");
   assert.match(css, /\.component-list \.asset-pad/);
   assert.match(css, /\.select-modes/);
+  assert.match(css, /\.paper-library/);
+  assert.match(css, /\.paper-inspect-viewport/);
+  assert.match(css, /\.paper-inspect\[hidden\]/);
   assert.match(html, /id="snapAxis"/);
   assert.match(html, /id="dlgPaperPreview"/);
+  assert.match(html, /id="paperLibrary"/);
+  assert.match(html, /id="paperInspect"/);
+  assert.match(html, /id="paperInspectCanvas"/);
   assert.match(html, /id="buildingFolder"[^>]*webkitdirectory/);
   assert.match(html, /id="paperPreviewMaterials"/);
   assert.match(html, /id="btnMergeDesign"/);
   assert.doesNotMatch(html, /id="localPaperPack"/);
+  assert.doesNotMatch(html, /id="paperBatchPreview"/);
   assert.match(source, /axis: "iso"/);
   assert.match(source, /function snapAxis/);
   assert.match(source, /function openCurrentPaperPreview/);
   assert.match(source, /async function openBatchPaperPreview/);
+  assert.match(source, /function setPaperLibraryOpen/);
+  assert.match(source, /function togglePaperLibrary/);
+  assert.match(source, /async function openPaperInspect/);
+  assert.match(source, /function zoomPaperInspectAt/);
   assert.match(source, /async function importDesign\(file, options = \{\}\)/);
   assert.match(source, /options\.mode === "merge"/);
   assert.match(source, /item\.kind === "group" && item\.groupId === focusGroup/);
@@ -314,13 +375,20 @@ test("shift constrains lines to 45 degrees and circles/triangles to squares", ()
   assert.equal(triangle.y, 10);
 });
 
-test("terrain desk exposes image-to-terrain and planning overlays", () => {
+test("terrain desk exposes persistent real-building scene previews", () => {
   const source = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
   const html = fs.readFileSync(path.join(__dirname, "../web/index.html"), "utf8");
+  const renderer = fs.readFileSync(path.join(__dirname, "../web/building-preview.js"), "utf8");
   assert.match(html, /id="btnImageTerrain"/);
   assert.match(html, /id="dlgImageTerrain"/);
   assert.match(html, /id="btnPlanOverlay"/);
-  assert.match(html, /id="showPlanFoundation"/);
+  assert.match(html, /id="btnOpenDeskPaper"/);
+  assert.match(html, /id="previewBuildingList"/);
+  assert.match(html, /id="previewBuildingInspector"/);
+  assert.doesNotMatch(html, /id="showPlanFoundation"/);
+  assert.match(html, /放置建筑图片/);
+  assert.doesNotMatch(html, /id="btnMatList"/);
+  assert.doesNotMatch(html, /材料与地基/);
   assert.match(html, /id="imageTerrainProjection"/);
   assert.match(html, /正面（横平竖直）/);
   assert.match(source, /function renderImageTerrainMapping/);
@@ -333,13 +401,99 @@ test("terrain desk exposes image-to-terrain and planning overlays", () => {
   assert.match(source, /function planOverlayHitScreen/);
   assert.match(source, /function resolveManorBase/);
   assert.match(source, /Math\.floor\(raw \/ 1_000_000\)/);
-  assert.match(source, /state\.planOverlayDrag/);
+  assert.match(source, /state\.previewInteraction/);
+  assert.match(source, /previewBuildings: \[\]/);
+  assert.match(source, /previewBuildings: state\.previewBuildings\.map\(serializePreviewEntity\)/);
+  assert.match(source, /function previewResizeHandles/);
+  assert.match(source, /function drawSceneObjects/);
   assert.match(source, /function openDeskBuildingCode/);
-  assert.match(source, /nativePixels: true/);
+  assert.match(source, /BuildingPreview\.renderPaper/);
   assert.match(source, /setLayer\("build"\)/);
   assert.match(source, /fetch\("\/api\/parse-building"/);
+  assert.match(source, /fetch\("\/api\/parse-building-desk"/);
   assert.doesNotMatch(source, /fetch\("\/api\/parse-manor"/);
-  assert.doesNotMatch(html, /planOverlayOpacity/);
+  assert.match(html, /planOverlayOpacity/);
   assert.doesNotMatch(html, /planCodePack/);
-  assert.match(html, /直接拖动建筑本体即可移动/);
+  assert.match(html, /原生像素比例透明裁切/);
+  assert.match(renderer, /const NATIVE_LAYER_W = 1690/);
+  assert.match(renderer, /const NATIVE_LAYER_H = 1030/);
+  assert.match(renderer, /function floorSnugInMask/);
+  assert.match(renderer, /function nativeMaskOriginForLayer/);
+  assert.match(renderer, /function nativePaperFloorOrigin/);
+  assert.match(renderer, /groundAnchor:/);
+  assert.match(renderer, /rawGroundAnchor\.x - bounds\.left/);
+  assert.match(renderer, /function prepareImageBitmap/);
+  assert.match(renderer, /function removeConnectedBackground/);
+  assert.match(renderer, /options\.purpose !== "terrain"/);
+  assert.match(source, /purpose: "terrain"/);
+  assert.match(source, /pixelSizing: "native"/);
+  assert.match(source, /prepared\.bitmap\.width/);
+  assert.doesNotMatch(source, /const pixelWidth = width \* TILE_W/);
+  const selectionRenderer = source.slice(
+    source.indexOf("function drawPreviewSelection()"),
+    source.indexOf("function drawPlanOverlay()")
+  );
+  assert.doesNotMatch(selectionRenderer, /#ffe14a|setLineDash|strokeRect\(image/);
+  assert.doesNotMatch(renderer, /packFrames|packFrameOwners|frameBorrow/);
+});
+
+test("scene preview entities persist in project v2 but stay out of game exports", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
+  assert.match(source, /function projectSnapshot[\s\S]*v: 2,[\s\S]*previewBuildings:/);
+  assert.match(source, /function snapshotHist[\s\S]*previewBuildings:/);
+  assert.match(source, /function storePreviewAsset/);
+  assert.match(source, /function loadPreviewAsset/);
+  const terrainExport = source.slice(source.indexOf("async function exportTerrain()"), source.indexOf("async function exportBuild()"));
+  const buildingExport = source.slice(source.indexOf("async function exportBuild()"));
+  assert.doesNotMatch(terrainExport, /previewBuildings/);
+  assert.doesNotMatch(buildingExport, /previewBuildings/);
+});
+
+test("both desks expose the shared mobile-first workspace", () => {
+  const terrainHtml = fs.readFileSync(path.join(__dirname, "../web/index.html"), "utf8");
+  const buildingHtml = fs.readFileSync(path.join(__dirname, "../web/building.html"), "utf8");
+  const terrainJs = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
+  const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  const mobileCss = fs.readFileSync(path.join(__dirname, "../web/mobile-workspace.css"), "utf8");
+  const mobileJs = fs.readFileSync(path.join(__dirname, "../web/mobile-workspace.js"), "utf8");
+
+  for (const html of [terrainHtml, buildingHtml]) {
+    assert.match(html, /mobile-workspace\.css/);
+    assert.match(html, /mobile-workspace\.js/);
+    assert.match(html, /viewport-fit=cover/);
+    assert.doesNotMatch(html, /maximum-scale|user-scalable=no/);
+    assert.match(html, /mobile-bottom-dock/);
+  }
+  assert.match(terrainHtml, /id="btnMobileTerrainTools"/);
+  assert.match(buildingHtml, /id="btnBuildingMobileAssets"/);
+  assert.match(buildingHtml, /id="btnBuildingMobileTools"/);
+  assert.match(buildingHtml, /id="btnBuildingToolsClose"/);
+  assert.match(buildingHtml, /id="buildingMobileAssetsLabel"/);
+  assert.match(buildingHtml, /id="buildingRailBackdrop"/);
+  assert.match(buildingHtml, /id="buildingProjectPane"/);
+  assert.match(buildingHtml, /data-mobile-tool-family="select"/);
+  assert.match(buildingHtml, /id="mobileSelectionBar"/);
+  assert.match(buildingJs, /function syncMobileBuildingPanels/);
+  assert.match(buildingJs, /openBuildingRail\("project"\)/);
+  assert.doesNotMatch(buildingJs, /scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(terrainHtml, /data-mobile-terrain-pane="palette"/);
+  assert.match(terrainHtml, /data-mobile-project-tab="files"/);
+  assert.match(terrainJs, /function setTerrainMobilePane/);
+  assert.match(terrainJs, /function setTerrainProjectTab/);
+  assert.doesNotMatch(terrainJs, /setPaintMode\(state\.paintMode === "brush" \? "erase" : "brush"\)/);
+  assert.match(mobileCss, /--mobile-hit:\s*44px/);
+  assert.match(mobileCss, /html\.is-mobile-workspace/);
+  assert.match(mobileCss, /env\(safe-area-inset-bottom/);
+  assert.match(mobileJs, /visualViewport/);
+  assert.match(mobileJs, /function trapTab/);
+  assert.match(mobileJs, /\.inert =/);
+  assert.match(mobileJs, /function registerSheet/);
+  assert.match(mobileJs, /function openSheet/);
+  assert.match(terrainJs, /function onTerrainPointerDown/);
+  assert.match(terrainJs, /function beginTerrainPinch/);
+  assert.doesNotMatch(terrainJs, /view\.addEventListener\("touchstart"/);
+  assert.match(buildingJs, /state\.activePointers/);
+  assert.match(buildingJs, /state\.mobilePan/);
+  assert.match(buildingJs, /function setMobileToolsOpen/);
+  assert.match(buildingJs, /paperInspectView\.pinch/);
 });

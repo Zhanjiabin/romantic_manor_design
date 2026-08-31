@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from codec.building import DESK_COORD_MASK, dumps_gbk, loads_gbk  # noqa: E402
+from codec.building import DESK_COORD_MAX, DESK_COORD_MIN, dumps_gbk, loads_gbk  # noqa: E402
 
 MAX_LAYOUT_COORD = 2047
 
@@ -50,7 +50,7 @@ def header_from_spec(spec: dict, spec_path: Path) -> dict:
         doc = loads_gbk(seed.read_bytes(), kind="desk")
         header = next((row for row in doc["records"] if int(row.get("mat", -1)) == 0), None)
         if not header:
-            raise ValueError(f"seed paper has no mat=0 header: {seed}")
+            return None
         return {
             "mode": "desk",
             "x": int(header["x"]),
@@ -59,12 +59,14 @@ def header_from_spec(spec: dict, spec_path: Path) -> dict:
             "state": int(header.get("state", 0)),
         }
     raw = spec.get("header")
+    if not raw:
+        return None
     if not isinstance(raw, dict):
-        raise ValueError("game-ready specs require header or seedPaper")
+        raise ValueError("header must be an object when provided")
     return {
         "mode": "desk",
-        "x": checked_int(raw.get("x"), "header.x", 0, DESK_COORD_MASK),
-        "y": checked_int(raw.get("y"), "header.y", 0, DESK_COORD_MASK),
+        "x": checked_int(raw.get("x"), "header.x", DESK_COORD_MIN, DESK_COORD_MAX),
+        "y": checked_int(raw.get("y"), "header.y", DESK_COORD_MIN, DESK_COORD_MAX),
         "mat": 0,
         "state": checked_int(raw.get("state"), "header.state", 0, 63),
     }
@@ -124,7 +126,8 @@ def records_from_spec(spec: dict, spec_path: Path) -> list[dict]:
     for row in rows:
         row.pop("_depth", None)
         row.pop("_index", None)
-    return [header_from_spec(spec, spec_path), *rows]
+    header = header_from_spec(spec, spec_path)
+    return [header, *rows] if header else rows
 
 
 def validate_round_trip(records: list[dict], payload: bytes) -> dict:
@@ -136,7 +139,7 @@ def validate_round_trip(records: list[dict], payload: bytes) -> dict:
     duplicates = len(actual) - len(set(actual))
     return {
         "records": len(actual),
-        "materials": max(0, len(actual) - 1),
+        "materials": sum(1 for row in actual if row[2]),
         "duplicates": duplicates,
         "bytes": len(payload),
     }

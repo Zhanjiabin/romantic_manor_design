@@ -51,11 +51,11 @@ Turn a design brief or reference image into:
 
 ## Layout rules
 
-- A game-ready layout must preserve a real `mat=0` header from a compatible
-  seed paper or provide its verified native `x`, `y`, and `state`.
+- `mat=0` is a `GDesignSubUser` person reference, not a room origin. Copy one
+  from a seed paper only when that seed already has it; never invent `mat=0`.
 - Keep authored visible record coordinates in `0..2047` and states in `0..63`.
-  The codec can hold uint15 values, but wrapped/off-screen coordinates are not
-  valid layout evidence.
+  The codec stores signed 15-bit values (`-16384..16383`); leftover `327xx`
+  bits decode as negatives and are not layout evidence.
 - For mapped packs, encode `mat = uid * 1000 + local`.
 - An unmapped pack may use local IDs only when it is the single declared
   `localPack`; never mix several unmapped packs.

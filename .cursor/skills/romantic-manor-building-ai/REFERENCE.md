@@ -22,10 +22,10 @@
 
 ## Fields
 
-- `header`: verified native `mat=0` room header. Prefer `seedPaper` instead of
-  typing this manually.
+- `header`: optional `GDesignSubUser` person record (`mat=0`). Omit it unless
+  the seed paper already has one. Prefer `seedPaper` instead of typing this.
 - `seedPaper`: repository-relative path to an existing compatible building
-  paper. The generator copies its first `mat=0` record.
+  paper. The generator copies its first `mat=0` person record when present.
 - `localPack`: the only pack allowed to emit bare local IDs when that pack has
   no locked UID. Omit it for mapped or mixed-theme layouts.
 - `sort`:

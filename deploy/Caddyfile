@@ -1,0 +1,4 @@
+{$MANOR_SITE:http://:80} {
+	encode gzip
+	reverse_proxy desk:8765
+}

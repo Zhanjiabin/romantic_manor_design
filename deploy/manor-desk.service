@@ -1,0 +1,14 @@
+[Unit]
+Description=Romantic Manor design desk
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/manor-desk
+EnvironmentFile=/opt/manor-desk/.env
+ExecStart=/opt/manor-desk/.venv/bin/python /opt/manor-desk/server.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

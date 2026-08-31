@@ -100,7 +100,9 @@ const state = {
   buildings: [],
   bldKind: "manor",
   buildingSource: null,
-  planOverlay: null,
+  previewBuildings: [],
+  previewRuntime: new Map(),
+  selectedPreviewId: null,
   cam: { x: 0, y: 0, k: 1 },
   uiScale: 1,
   images: new Map(),
@@ -116,7 +118,12 @@ const state = {
   panning: false,
   panFrom: null,
   buildingDrag: null,
-  planOverlayDrag: null,
+  previewInteraction: null,
+  activePointers: new Map(),
+  pointerGesture: null,
+  pointerPending: null,
+  mobileTerrainPane: "palette",
+  mobileProjectTab: "files",
   miniDrag: false,
   selectedBld: -1,
   history: [],
@@ -143,6 +150,11 @@ let planOverlayDraft = null;
 
 async function boot() {
   document.documentElement.classList.add("boot-pending");
+  window.MobileWorkspace?.init();
+  window.MobileWorkspace?.onModeChange(() => {
+    closeDrawers();
+    resize();
+  });
   const kinds = await (await fetch("/api/kinds")).json();
   state.kinds = kinds;
   fillListKind(kinds.brushes || []);
@@ -176,6 +188,8 @@ async function boot() {
   preload(PORTAL_SRC);
   initPortalPos();
   bind();
+  updatePlanOverlayMeta();
+  updatePreviewBuildingUi();
   const restored = /[?&]sample=1/.test(location.search) ? false : await restoreDraft();
   requestAnimationFrame(() => {
     resize();
@@ -196,10 +210,13 @@ async function boot() {
     draw();
   }
   await consumePendingBuildingImport();
-  requestAnimationFrame(() => {
+  await consumePendingPreviewBuilding();
+  const finishBoot = () => {
     document.documentElement.classList.remove("boot-pending");
     document.documentElement.classList.add("boot-ready");
-  });
+  };
+  requestAnimationFrame(finishBoot);
+  setTimeout(finishBoot, 500);
 }
 
 async function consumePendingBuildingImport() {
@@ -221,6 +238,28 @@ async function consumePendingBuildingImport() {
     await importFile(file, "build");
   } catch (err) {
     await appAlert(err.message || String(err), { title: "导入失败" });
+  }
+}
+
+async function consumePendingPreviewBuilding() {
+  if (!/[?&]placeBuilding=1/.test(location.search)) return;
+  let payload = null;
+  try {
+    payload = JSON.parse(sessionStorage.getItem("manor-pending-preview-building") || "null");
+  } catch {
+    payload = null;
+  }
+  sessionStorage.removeItem("manor-pending-preview-building");
+  history.replaceState({}, "", location.pathname);
+  if (!payload?.documentData?.records) return;
+  try {
+    await openDeskBuildingCode(payload.documentData, payload.name || "设计建筑", {
+      baseNo: payload.baseNo,
+      localPackKey: payload.localPackKey || "",
+      coordinateSpace: payload.coordinateSpace || "editor",
+    });
+  } catch (error) {
+    await appAlert(error.message || String(error), { title: "建筑预览失败" });
   }
 }
 
@@ -410,7 +449,18 @@ function setPaintMode(mode) {
   state.paintMode = mode === "erase" || mode === "pan" ? mode : "brush";
   document.querySelectorAll("#modeRow .tool").forEach((el) => {
     el.classList.toggle("on", el.dataset.mode === state.paintMode);
+    el.setAttribute("aria-pressed", String(el.dataset.mode === state.paintMode));
   });
+  const brushButton = document.getElementById("btnMobileBrush");
+  const panButton = document.getElementById("btnMobilePan");
+  if (brushButton) {
+    brushButton.classList.toggle("on", state.paintMode !== "pan");
+  }
+  if (panButton) {
+    panButton.classList.toggle("on", state.paintMode === "pan");
+    panButton.setAttribute("aria-pressed", String(state.paintMode === "pan"));
+  }
+  syncMobileTerrainToolLabel();
   setLayer("terrain");
 }
 
@@ -420,9 +470,32 @@ function setTool(tool) {
   state.shapeDrag = null;
   document.querySelectorAll("#toolRow .tool").forEach((el) => {
     el.classList.toggle("on", el.dataset.tool === state.tool);
+    el.setAttribute("aria-pressed", String(el.dataset.tool === state.tool));
   });
+  syncMobileTerrainToolLabel();
   setLayer("terrain");
   draw();
+}
+
+function syncMobileTerrainToolLabel() {
+  const label = document.getElementById("mobileBrushLabel");
+  if (!label) return;
+  if (state.paintMode === "erase") {
+    label.textContent = "橡皮";
+    return;
+  }
+  const names = {
+    free: "绘制",
+    fill: "填充",
+    line: "直线",
+    rect: "矩形",
+    ellipse: "圆形",
+    triangle: "三角",
+    diamond: "菱形",
+    heart: "心形",
+    star: "星形",
+  };
+  label.textContent = names[state.tool] || "工具";
 }
 
 function isShapeTool(tool) {
@@ -637,6 +710,8 @@ function planeBackdrop() {
 function useBrush(b) {
   state.brush = b;
   state.brushSize = b.stampSize || 1;
+  const button = document.getElementById("btnMobileBrush");
+  if (button) button.title = brushDisplayName(b) || "绘制";
 }
 
 function cellKey(x, y) {
@@ -1139,13 +1214,7 @@ function paintFrame() {
     ctx.drawImage(gridScreenCache, 0, 0);
     ctx.restore();
   }
-  drawPlanOverlay();
-  if (document.getElementById("showBuild")?.checked && !state.strokeNeedsRebuild) {
-    const order = state.buildings
-      .map((b, i) => ({ b, i }))
-      .sort((a, c) => a.b.x + a.b.y - (c.b.x + c.b.y));
-    for (const { b, i } of order) drawBuilding(b, i === state.selectedBld);
-  }
+  drawSceneObjects();
   drawShapePreview();
   const stroking = !!state.strokeNeedsRebuild;
   if (!stroking) {
@@ -3029,71 +3098,224 @@ function drawEdgeStrokes(cx, cy, tw, th, g, flags) {
   ctx.stroke();
 }
 
-function planOverlayDisplayRect(overlay = state.planOverlay) {
-  if (!overlay?.image) return null;
+function previewEntityById(id) {
+  return state.previewBuildings.find((entity) => entity.id === id) || null;
+}
+
+function previewBitmap(entity) {
+  const runtime = state.previewRuntime.get(entity?.id);
+  return runtime?.bitmap || runtime?.image || null;
+}
+
+async function ensurePreviewRuntime(entity) {
+  if (!entity) return null;
+  const old = state.previewRuntime.get(entity.id);
+  const cacheKey = entity.sourceType === "paper"
+    ? `terrain-v2|${entity.baseNo}|${entity.coordinateSpace || "paper"}|${entity.paperHash || ""}`
+    : `native-v2|${entity.assetId || ""}`;
+  if (old?.cacheKey === cacheKey && (old.bitmap || old.image || old.error)) return old;
+  state.previewRuntime.set(entity.id, { cacheKey, loading: true });
+  try {
+    let runtime;
+    if (entity.sourceType === "paper") {
+      const result = await BuildingPreview.renderPaper({
+        documentData: { kind: "desk", records: entity.records || [] },
+        baseNo: entity.baseNo,
+        localPackKey: entity.localPackKey || "",
+        coordinateSpace: entity.coordinateSpace || "paper",
+        purpose: "terrain",
+      });
+      runtime = { ...result, cacheKey, loading: false };
+      entity.footprint = [...result.footprint];
+      entity.groundAnchor = { ...result.groundAnchor };
+      entity.unresolved = [...result.unresolved];
+    } else {
+      const blob = await loadPreviewAsset(entity.assetId);
+      if (!blob) throw new Error("图片素材已丢失，请重新导入");
+      const url = URL.createObjectURL(blob);
+      const image = await BuildingPreview.loadImage(url);
+      if (!image) {
+        URL.revokeObjectURL(url);
+        throw new Error("图片素材无法读取");
+      }
+      const prepared = BuildingPreview.prepareImageBitmap(image, {
+        removeConnectedBackground: entity.removeConnectedBackground !== false,
+      });
+      if (!prepared?.bitmap?.width) {
+        URL.revokeObjectURL(url);
+        throw new Error("图片中没有可放置的建筑像素");
+      }
+      runtime = { ...prepared, url, cacheKey, loading: false };
+      if (entity.pixelSizing !== "native") {
+        entity.width = prepared.bitmap.width;
+        entity.height = prepared.bitmap.height;
+        entity.anchorX = prepared.groundAnchor.x / Math.max(1, prepared.bitmap.width);
+        entity.anchorY = prepared.groundAnchor.y / Math.max(1, prepared.bitmap.height);
+        entity.pixelSizing = "native";
+      }
+    }
+    const previous = state.previewRuntime.get(entity.id);
+    if (previous?.url && previous.url !== runtime.url) URL.revokeObjectURL(previous.url);
+    state.previewRuntime.set(entity.id, runtime);
+    updatePreviewBuildingUi();
+    draw();
+    return runtime;
+  } catch (error) {
+    const runtime = { cacheKey, loading: false, error: error.message || String(error) };
+    state.previewRuntime.set(entity.id, runtime);
+    updatePreviewBuildingUi();
+    draw();
+    return runtime;
+  }
+}
+
+function previewEntityLayout(entity) {
+  const bitmap = previewBitmap(entity);
+  if (!entity || !bitmap?.width) return null;
   const k = state.cam.k;
-  const center = worldToScreen(overlay.x, overlay.y);
-  const halfWidth = Math.max(1, overlay.footprint[0]) * TILE_W * k / 2;
-  const halfHeight = Math.max(1, overlay.footprint[1]) * TILE_H * k / 2;
-  const naturalWidth = Math.max(1, overlay.image.naturalWidth || overlay.image.width || 1);
-  const naturalHeight = Math.max(1, overlay.image.naturalHeight || overlay.image.height || 1);
-  const width = overlay.nativePixels ? naturalWidth * k : halfWidth * 2;
-  const height = overlay.nativePixels
-    ? naturalHeight * k
-    : width * (naturalHeight / naturalWidth);
-  return {
-    center,
-    halfWidth,
-    halfHeight,
-    image: {
-      x: center.x - width / 2,
-      y: center.y + halfHeight - height,
-      width,
-      height,
-    },
+  const center = worldToScreen(entity.x, entity.y);
+  const footprint = entity.footprint || [1, 1];
+  const halfWidth = Math.max(1, Number(footprint[0]) || 1) * TILE_W * k / 2;
+  const halfHeight = Math.max(1, Number(footprint[1]) || 1) * TILE_H * k / 2;
+  const ground = { x: center.x, y: center.y + halfHeight };
+  let width;
+  let height;
+  let anchor;
+  if (entity.sourceType === "paper") {
+    width = bitmap.width * k;
+    height = bitmap.height * k;
+    anchor = entity.groundAnchor || { x: bitmap.width / 2, y: bitmap.height };
+  } else {
+    width = Math.max(16, Number(entity.width) || bitmap.width) * k;
+    height = Math.max(16, Number(entity.height) || bitmap.height) * k;
+    anchor = {
+      x: Math.max(0, Math.min(1, Number(entity.anchorX ?? 0.5))) * (width / k),
+      y: Math.max(0, Math.min(1, Number(entity.anchorY ?? 1))) * (height / k),
+    };
+  }
+  const image = {
+    x: ground.x - anchor.x * k,
+    y: ground.y - anchor.y * k,
+    width,
+    height,
   };
+  return { entity, bitmap, center, ground, halfWidth, halfHeight, image };
+}
+
+function previewResizeHandles(layout) {
+  const r = layout?.image;
+  if (!r) return [];
+  return [
+    { key: "nw", x: r.x, y: r.y },
+    { key: "ne", x: r.x + r.width, y: r.y },
+    { key: "se", x: r.x + r.width, y: r.y + r.height },
+    { key: "sw", x: r.x, y: r.y + r.height },
+  ];
+}
+
+function previewTouchRadius() {
+  return window.MobileWorkspace?.modeForViewport().coarse ? 24 : 11;
+}
+
+function previewHitTest(x, y) {
+  if (!document.getElementById("showPlanOverlay")?.checked) return null;
+  const selected = previewEntityById(state.selectedPreviewId);
+  const selectedLayout = previewEntityLayout(selected);
+  if (selected?.sourceType === "image" && !selected.locked && selectedLayout) {
+    for (const handle of previewResizeHandles(selectedLayout)) {
+      if (Math.hypot(x - handle.x, y - handle.y) <= previewTouchRadius()) {
+        return { entity: selected, part: "resize", handle: handle.key, layout: selectedLayout };
+      }
+    }
+    if (Math.hypot(x - selectedLayout.ground.x, y - selectedLayout.ground.y) <= previewTouchRadius()) {
+      return { entity: selected, part: "anchor", layout: selectedLayout };
+    }
+  }
+  const ordered = [...state.previewBuildings].sort((a, b) => (a.x + a.y) - (b.x + b.y));
+  for (let i = ordered.length - 1; i >= 0; i -= 1) {
+    const entity = ordered[i];
+    if (entity.visible === false) continue;
+    const layout = previewEntityLayout(entity);
+    if (!layout) continue;
+    const r = layout.image;
+    if (x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) {
+      return { entity, part: "body", layout };
+    }
+  }
+  return null;
 }
 
 function planOverlayHitScreen(x, y) {
-  const layout = planOverlayDisplayRect();
-  if (!layout || !document.getElementById("showPlanOverlay")?.checked) return false;
-  const r = layout.image;
-  return x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
+  return !!previewHitTest(x, y);
+}
+
+function drawPreviewEntity(entity) {
+  if (entity.visible === false || !document.getElementById("showPlanOverlay")?.checked) return;
+  const layout = previewEntityLayout(entity);
+  if (!layout) return;
+  const { image, bitmap } = layout;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0.1, Math.min(1, Number(entity.opacity ?? 1)));
+  ctx.imageSmoothingEnabled = Math.abs(state.cam.k - 1) > 0.001;
+  ctx.drawImage(bitmap, image.x, image.y, image.width, image.height);
+  ctx.restore();
+}
+
+function drawPreviewSelection() {
+  const entity = previewEntityById(state.selectedPreviewId);
+  if (!entity || entity.visible === false) return;
+  const layout = previewEntityLayout(entity);
+  if (!layout) return;
+  const { ground } = layout;
+  if (entity.sourceType !== "image" || entity.locked) return;
+  ctx.save();
+  const handleSize = window.MobileWorkspace?.modeForViewport().coarse ? 16 : 10;
+  ctx.fillStyle = "rgba(255,255,255,.94)";
+  ctx.strokeStyle = "#2f7d5b";
+  ctx.lineWidth = 2;
+  for (const handle of previewResizeHandles(layout)) {
+    ctx.fillRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+    ctx.strokeRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+  }
+  ctx.fillStyle = "#2f7d5b";
+  ctx.strokeStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(ground.x, ground.y, window.MobileWorkspace?.modeForViewport().coarse ? 7 : 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawPlanOverlay() {
-  const overlay = state.planOverlay;
-  if (!overlay?.image || !document.getElementById("showPlanOverlay")?.checked) return;
-  const k = state.cam.k;
-  const layout = planOverlayDisplayRect(overlay);
-  const { center, halfWidth, halfHeight } = layout;
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(center.x, center.y - halfHeight);
-  ctx.lineTo(center.x + halfWidth, center.y);
-  ctx.lineTo(center.x, center.y + halfHeight);
-  ctx.lineTo(center.x - halfWidth, center.y);
-  ctx.closePath();
-  const showFoundation = document.getElementById("showPlanFoundation")?.checked;
-  if (showFoundation) {
-    ctx.fillStyle = "rgba(242, 226, 151, 0.24)";
-    ctx.fill();
+  state.previewBuildings.forEach((entity) => {
+    if (!state.previewRuntime.has(entity.id)) ensurePreviewRuntime(entity);
+    drawPreviewEntity(entity);
+  });
+  drawPreviewSelection();
+}
+
+function drawSceneObjects() {
+  if (state.strokeNeedsRebuild) return;
+  const scene = [];
+  if (document.getElementById("showBuild")?.checked) {
+    state.buildings.forEach((building, index) => {
+      scene.push({ type: "manor", depth: building.x + building.y, building, index });
+    });
   }
-  ctx.drawImage(
-    overlay.image,
-    layout.image.x,
-    layout.image.y,
-    layout.image.width,
-    layout.image.height
-  );
-  if (showFoundation) {
-    ctx.strokeStyle = "rgba(255, 226, 85, 0.9)";
-    ctx.lineWidth = Math.max(1, k);
-    ctx.setLineDash([6, 4]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+  if (document.getElementById("showPlanOverlay")?.checked) {
+    state.previewBuildings.forEach((entity) => {
+      if (entity.visible !== false) scene.push({ type: "preview", depth: entity.x + entity.y, entity });
+    });
   }
-  ctx.restore();
+  scene.sort((a, b) => a.depth - b.depth);
+  scene.forEach((row) => {
+    if (row.type === "manor") drawBuilding(row.building, row.index === state.selectedBld);
+    else {
+      if (!state.previewRuntime.has(row.entity.id)) ensurePreviewRuntime(row.entity);
+      drawPreviewEntity(row.entity);
+    }
+  });
+  drawPreviewSelection();
 }
 
 function resolveManorBase(item) {
@@ -3347,12 +3569,13 @@ function updateStats() {
   if (mm) mm.textContent = String(mat);
   const ul = document.getElementById("unknown");
   if (ul) {
-    ul.innerHTML = "";
+    ul.replaceChildren();
     for (const ch of state.unknown) {
       const li = document.createElement("li");
       li.textContent = ch;
       ul.appendChild(li);
     }
+    ul.hidden = state.unknown.size < 1;
   }
   refreshMatCount();
 }
@@ -3369,7 +3592,8 @@ function refreshMatCount() {
   const lines = [];
   for (const [ch, n] of cnt) lines.push((names.get(ch) || ch) + " × " + n);
   if (state.buildings.length) lines.push("建筑 " + state.buildings.length);
-  box.textContent = lines.join("\n") || "（空）";
+  box.hidden = !lines.length;
+  box.textContent = lines.join("\n");
 }
 
 function syncMiniCanvas() {
@@ -3497,10 +3721,39 @@ function drawMini() {
   mctx.restore();
 }
 
+function serializePreviewEntity(entity) {
+  return {
+    ...entity,
+    records: entity.records?.map((record) => ({ ...record })),
+    footprint: [...(entity.footprint || [1, 1])],
+    groundAnchor: entity.groundAnchor ? { ...entity.groundAnchor } : undefined,
+    crop: entity.crop ? [...entity.crop] : undefined,
+  };
+}
+
+function deserializePreviewEntity(entity) {
+  return {
+    ...serializePreviewEntity(entity),
+    id: entity.id || `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    visible: entity.visible !== false,
+    locked: !!entity.locked,
+    opacity: Math.max(0.1, Math.min(1, Number(entity.opacity ?? 1))),
+  };
+}
+
+function refreshPreviewRuntimes() {
+  state.previewRuntime.forEach((runtime) => {
+    if (runtime?.url) URL.revokeObjectURL(runtime.url);
+  });
+  state.previewRuntime.clear();
+  state.previewBuildings.forEach((entity) => ensurePreviewRuntime(entity));
+}
+
 function snapshotHist() {
   return {
     stamps: state.stamps.map((s) => ({ ...s })),
     buildings: state.buildings.map((b) => ({ ...b })),
+    previewBuildings: state.previewBuildings.map(serializePreviewEntity),
     grassKeep: [...(state.grassKeep || [])],
     mapflag: state.mapflag || 0,
   };
@@ -3509,10 +3762,15 @@ function snapshotHist() {
 function applySnapshot(h) {
   state.stamps = h.stamps;
   state.buildings = h.buildings;
+  state.previewBuildings = (h.previewBuildings || []).map(deserializePreviewEntity);
+  state.selectedPreviewId = null;
+  refreshPreviewRuntimes();
   state.grassKeep = new Set(h.grassKeep || []);
   if (h.mapflag != null) state.mapflag = h.mapflag;
   syncChgTerrButton();
   rebuildStampIndex();
+  updatePlanOverlayMeta();
+  updatePreviewBuildingUi();
   markDirty();
   draw();
 }
@@ -3953,7 +4211,13 @@ function rememberItem(item) {
 
 function showDlg(id, on) {
   const el = document.getElementById(id);
-  if (el) el.hidden = !on;
+  if (!el) return;
+  if (on) {
+    closeDrawers();
+    window.MobileWorkspace?.openLayer(el, document.activeElement);
+  } else {
+    window.MobileWorkspace?.closeLayer(el);
+  }
 }
 
 function markDirty() {
@@ -3969,7 +4233,7 @@ function setSaveStatus(text) {
 
 function projectSnapshot(name) {
   return {
-    v: 1,
+    v: 2,
     id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
     name: name || "自动保存",
     savedAt: Date.now(),
@@ -3978,6 +4242,7 @@ function projectSnapshot(name) {
     mapflag: state.mapflag,
     stamps: state.stamps.map((s) => ({ ...s })),
     buildings: state.buildings.map((b) => ({ ...b })),
+    previewBuildings: state.previewBuildings.map(serializePreviewEntity),
     grassKeep: [...(state.grassKeep || [])],
     portal: { x: state.portal.x, y: state.portal.y },
     bldKind: state.bldKind || "manor",
@@ -3989,6 +4254,9 @@ function applyProject(doc, opts) {
   const fit = !(opts && opts.skipFit);
   state.stamps = (doc.stamps || []).map((s) => ({ ...s }));
   state.buildings = (doc.buildings || []).map((b) => ({ ...b }));
+  state.previewBuildings = (doc.previewBuildings || []).map(deserializePreviewEntity);
+  state.selectedPreviewId = null;
+  refreshPreviewRuntimes();
   state.grassKeep = new Set(doc.grassKeep || []);
   state.mapSize = doc.mapSize || doc.size || state.mapSize;
   state.mapflag = doc.mapflag || 0;
@@ -4004,6 +4272,8 @@ function applyProject(doc, opts) {
   if (desc && doc.desc != null) desc.value = doc.desc;
   ensureSize(state.mapSize);
   rebuildStampIndex();
+  updatePlanOverlayMeta();
+  updatePreviewBuildingUi();
   if (fit) fitTerrainContent();
   draw();
   if (!quiet) setSaveStatus("已恢复");
@@ -4011,11 +4281,12 @@ function applyProject(doc, opts) {
 
 function openSaveDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open("manor-desk", 1);
+    const req = indexedDB.open("manor-desk", 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
       if (!db.objectStoreNames.contains("versions")) db.createObjectStore("versions", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("assets")) db.createObjectStore("assets", { keyPath: "id" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -4063,6 +4334,56 @@ async function idbDelete(store, key) {
   });
 }
 
+async function previewAssetId(blob) {
+  if (crypto?.subtle) {
+    const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+    return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  }
+  return `local-${blob.size}-${blob.lastModified || Date.now()}`;
+}
+
+function canvasPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("透明建筑图片编码失败"))),
+      "image/png"
+    );
+  });
+}
+
+async function storePreviewAsset(blob) {
+  const id = await previewAssetId(blob);
+  await idbPut("assets", { id, blob, type: blob.type || "application/octet-stream", savedAt: Date.now() });
+  fetch(`/api/saves/terrain/assets/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": blob.type || "application/octet-stream" },
+    body: blob,
+  }).catch((error) => console.warn("场景图片同步失败", error));
+  return id;
+}
+
+async function loadPreviewAsset(id) {
+  if (!id) return null;
+  try {
+    const local = await idbGet("assets", id);
+    if (local?.blob) return local.blob;
+  } catch (error) {
+    console.warn(error);
+  }
+  try {
+    const response = await fetch(`/api/saves/terrain/assets/${encodeURIComponent(id)}`, {
+      credentials: "same-origin",
+    });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    await idbPut("assets", { id, blob, type: blob.type, savedAt: Date.now() });
+    return blob;
+  } catch {
+    return null;
+  }
+}
+
 function formatSaveTime(ts) {
   const d = new Date(ts);
   const p = (n) => String(n).padStart(2, "0");
@@ -4076,6 +4397,7 @@ function draftHasWork(snap) {
     snap &&
     ((snap.stamps && snap.stamps.length) ||
       (snap.buildings && snap.buildings.length) ||
+      (snap.previewBuildings && snap.previewBuildings.length) ||
       (snap.grassKeep && snap.grassKeep.length) ||
       snap.mapflag)
   );
@@ -4087,6 +4409,54 @@ function saveDraftLocal(snap) {
   } catch (err) {
     console.warn(err);
   }
+}
+
+async function fetchJson(url, opts) {
+  const res = await fetch(url, {
+    credentials: "same-origin",
+    ...opts,
+    headers: {
+      Accept: "application/json",
+      ...(opts && opts.body ? { "Content-Type": "application/json" } : {}),
+      ...((opts && opts.headers) || {}),
+    },
+  });
+  if (!res.ok) throw new Error(String(res.status));
+  if (res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function fetchTerrainSaves() {
+  try {
+    return await fetchJson("/api/saves/terrain");
+  } catch (err) {
+    console.warn(err);
+    return null;
+  }
+}
+
+async function putTerrainDraft(snap) {
+  await fetchJson("/api/saves/terrain/draft", {
+    method: "PUT",
+    body: JSON.stringify(snap),
+    keepalive: true,
+  });
+}
+
+async function putTerrainVersion(snap) {
+  await fetchJson("/api/saves/terrain/version", {
+    method: "PUT",
+    body: JSON.stringify(snap),
+  });
+}
+
+async function deleteTerrainVersionRemote(id) {
+  const res = await fetch("/api/saves/terrain/version/" + encodeURIComponent(id), {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!res.ok && res.status !== 404) throw new Error(String(res.status));
 }
 
 function loadDraftLocal() {
@@ -4104,10 +4474,16 @@ async function saveDraft() {
   saveDraftLocal(snap);
   try {
     await idbPut("kv", snap, "draft");
-    state.dirty = false;
-    setSaveStatus("已自动保存 " + formatSaveTime(snap.savedAt));
   } catch (err) {
-    setSaveStatus("已本地暂存 " + formatSaveTime(snap.savedAt));
+    console.warn(err);
+  }
+  try {
+    await putTerrainDraft(snap);
+    state.dirty = false;
+    setSaveStatus("已同步 " + formatSaveTime(snap.savedAt));
+  } catch (err) {
+    state.dirty = false;
+    setSaveStatus("已本机暂存 " + formatSaveTime(snap.savedAt));
     console.warn(err);
   }
 }
@@ -4130,12 +4506,23 @@ function wireDeskSwitchSave(saveFn) {
 async function saveNamedVersion(name) {
   const snap = projectSnapshot(name || "快照");
   saveDraftLocal(snap);
-  await idbPut("versions", snap);
-  await idbPut("kv", snap, "draft");
-  const all = (await idbGetAll("versions")).sort((a, b) => b.savedAt - a.savedAt);
-  for (const extra of all.slice(30)) await idbDelete("versions", extra.id);
-  state.dirty = false;
-  setSaveStatus("已保存 " + snap.name);
+  try {
+    await idbPut("versions", snap);
+    await idbPut("kv", snap, "draft");
+    const all = (await idbGetAll("versions")).sort((a, b) => b.savedAt - a.savedAt);
+    for (const extra of all.slice(30)) await idbDelete("versions", extra.id);
+  } catch (err) {
+    console.warn(err);
+  }
+  try {
+    await putTerrainVersion(snap);
+    state.dirty = false;
+    setSaveStatus("已保存到服务器 " + snap.name);
+  } catch (err) {
+    state.dirty = false;
+    setSaveStatus("已本机保存 " + snap.name);
+    console.warn(err);
+  }
   return snap;
 }
 
@@ -4143,6 +4530,7 @@ function mapHasWork() {
   return !!(
     (state.stamps && state.stamps.length) ||
     (state.buildings && state.buildings.length) ||
+    (state.previewBuildings && state.previewBuildings.length) ||
     (state.grassKeep && state.grassKeep.size) ||
     state.mapflag
   );
@@ -4161,6 +4549,9 @@ async function startNewTerrain() {
   }
   state.stamps = [];
   state.buildings = [];
+  state.previewBuildings = [];
+  state.previewRuntime.clear();
+  state.selectedPreviewId = null;
   state.grassKeep = new Set();
   state.mapflag = 0;
   state.terrainSource = null;
@@ -4170,6 +4561,8 @@ async function startNewTerrain() {
   state.future = [];
   state.unknown = new Set();
   state.synthCache = new Map();
+  updatePlanOverlayMeta();
+  updatePreviewBuildingUi();
   const desc = document.getElementById("desc");
   if (desc) desc.value = "";
   initPortalPos();
@@ -4184,10 +4577,14 @@ async function startNewTerrain() {
 async function restoreDraft() {
   try {
     let snap = null;
-    try {
-      snap = await idbGet("kv", "draft");
-    } catch (err) {
-      console.warn(err);
+    const remote = await fetchTerrainSaves();
+    if (draftHasWork(remote && remote.draft)) snap = remote.draft;
+    if (!draftHasWork(snap)) {
+      try {
+        snap = await idbGet("kv", "draft");
+      } catch (err) {
+        console.warn(err);
+      }
     }
     if (!draftHasWork(snap)) {
       const local = loadDraftLocal();
@@ -4200,6 +4597,9 @@ async function restoreDraft() {
     applyProject(snap, { quiet: true });
     state.dirty = false;
     setSaveStatus("已恢复 " + formatSaveTime(snap.savedAt));
+    if (remote && !draftHasWork(remote.draft) && draftHasWork(snap)) {
+      putTerrainDraft(snap).catch(() => {});
+    }
     return true;
   } catch (err) {
     console.warn(err);
@@ -4210,7 +4610,17 @@ async function restoreDraft() {
 async function refreshHistoryList() {
   const box = document.getElementById("histList");
   if (!box) return;
-  const all = (await idbGetAll("versions")).sort((a, b) => b.savedAt - a.savedAt);
+  let all = [];
+  const remote = await fetchTerrainSaves();
+  if (remote && Array.isArray(remote.versions) && remote.versions.length) {
+    all = remote.versions.slice();
+  } else {
+    try {
+      all = (await idbGetAll("versions")).sort((a, b) => b.savedAt - a.savedAt);
+    } catch (err) {
+      console.warn(err);
+    }
+  }
   box.innerHTML = "";
   if (!all.length) {
     box.textContent = "还没有手动保存的历史版本。点上方按钮即可留下一版。";
@@ -4240,7 +4650,16 @@ async function refreshHistoryList() {
     del.className = "btn";
     del.textContent = "删除";
     del.onclick = async () => {
-      await idbDelete("versions", snap.id);
+      try {
+        if (snap.id) await deleteTerrainVersionRemote(snap.id);
+      } catch (err) {
+        console.warn(err);
+      }
+      try {
+        await idbDelete("versions", snap.id);
+      } catch (err) {
+        console.warn(err);
+      }
       refreshHistoryList();
     };
     row.append(name, open, del, time);
@@ -4248,27 +4667,107 @@ async function refreshHistoryList() {
   }
 }
 
-function closeDrawers() {
-  document.querySelector(".rail-left")?.classList.remove("open");
-  document.querySelector(".rail-right")?.classList.remove("open");
+let drawerReturnFocus = null;
+
+function setTerrainMobilePane(pane) {
+  state.mobileTerrainPane = pane === "tools" ? "tools" : "palette";
+  const sheet = document.getElementById("terrainLeftSheet");
+  if (sheet) sheet.dataset.mobileTerrainPane = state.mobileTerrainPane;
+  const title = document.getElementById("terrainSheetTitle");
+  if (title) title.textContent = state.mobileTerrainPane === "tools" ? "绘制工具" : "地形素材";
+  document.querySelectorAll("[data-terrain-pane]").forEach((button) => {
+    const active = button.dataset.terrainPane === state.mobileTerrainPane;
+    button.classList.toggle("on", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+}
+
+function setTerrainProjectTab(tab) {
+  state.mobileProjectTab = ["files", "scene", "overview"].includes(tab) ? tab : "files";
+  const sheet = document.getElementById("terrainProjectSheet");
+  if (sheet) sheet.dataset.mobileProjectTab = state.mobileProjectTab;
+  document.querySelectorAll("[data-project-tab]").forEach((button) => {
+    const active = button.dataset.projectTab === state.mobileProjectTab;
+    button.classList.toggle("on", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+}
+
+function syncDrawerAccessibility(openRail = null) {
+  const mobile = window.MobileWorkspace?.modeForViewport().mobile;
+  const left = document.querySelector(".rail-left");
+  const right = document.querySelector(".rail-right");
+  const map = document.getElementById("mapHost");
+  [left, right].forEach((rail) => {
+    const open = mobile && rail === openRail;
+    window.MobileWorkspace?.setInert(rail, mobile && !open);
+    rail?.setAttribute("aria-hidden", String(mobile && !open));
+  });
+  window.MobileWorkspace?.setInert(map, mobile && !!openRail);
+  window.MobileWorkspace?.setInert(document.querySelector("#desk .topbar"), mobile && !!openRail);
+  const leftOpen = openRail === left;
+  const paletteOpen = leftOpen && state.mobileTerrainPane === "palette";
+  const toolsOpen = leftOpen && state.mobileTerrainPane === "tools";
+  const projectOpen = openRail === right;
+  const terrainButton = document.getElementById("btnMobileTerrainTools");
+  const brushButton = document.getElementById("btnMobileBrush");
+  const panButton = document.getElementById("btnMobilePan");
+  const projectButton = document.getElementById("btnMobileProject");
+  terrainButton?.setAttribute("aria-expanded", String(paletteOpen));
+  brushButton?.setAttribute("aria-expanded", String(toolsOpen));
+  projectButton?.setAttribute("aria-expanded", String(projectOpen));
+  terrainButton?.classList.toggle("on", paletteOpen);
+  brushButton?.classList.toggle("on", toolsOpen || (!openRail && state.paintMode !== "pan"));
+  panButton?.classList.toggle("on", !openRail && state.paintMode === "pan");
+  projectButton?.classList.toggle("on", projectOpen);
+}
+
+function closeDrawers({ restoreFocus = false } = {}) {
+  const left = document.querySelector(".rail-left");
+  const right = document.querySelector(".rail-right");
+  window.MobileWorkspace?.closeSheet("terrain-left", { restoreFocus: false });
+  window.MobileWorkspace?.closeSheet("terrain-project", { restoreFocus: false });
+  left?.classList.remove("open");
+  right?.classList.remove("open");
   const mask = document.getElementById("drawerMask");
   if (mask) mask.hidden = true;
   document.body.classList.remove("drawer-open");
+  syncDrawerAccessibility(null);
+  if (restoreFocus && drawerReturnFocus?.isConnected) drawerReturnFocus.focus({ preventScroll: true });
+  drawerReturnFocus = null;
 }
 
-function toggleDrawer(side) {
+function toggleDrawer(side, pane = null, trigger = null) {
+  if (document.querySelector(".modal:not([hidden])") || (typeof isAppDialogOpen === "function" && isAppDialogOpen())) return;
   const left = document.querySelector(".rail-left");
   const right = document.querySelector(".rail-right");
   const mask = document.getElementById("drawerMask");
   const target = side === "right" ? right : left;
   const other = side === "right" ? left : right;
-  const willOpen = target && !target.classList.contains("open");
-  left?.classList.remove("open");
-  right?.classList.remove("open");
-  if (willOpen) target.classList.add("open");
-  if (mask) mask.hidden = !willOpen;
+  const previousPane = side === "left" ? state.mobileTerrainPane : state.mobileProjectTab;
+  const requestedPane = pane || previousPane;
+  const samePane = previousPane === requestedPane;
+  if (side === "left" && pane) setTerrainMobilePane(pane);
+  if (side === "right" && pane) setTerrainProjectTab(pane);
+  const willOpen = target && (!target.classList.contains("open") || !samePane);
+  const sheetId = side === "right" ? "terrain-project" : "terrain-left";
+  const managed = willOpen
+    ? window.MobileWorkspace?.openSheet(sheetId, { trigger: trigger || document.activeElement })
+    : window.MobileWorkspace?.closeSheet(sheetId, { restoreFocus: false });
+  if (!managed) {
+    left?.classList.remove("open");
+    right?.classList.remove("open");
+    if (willOpen) target.classList.add("open");
+    if (mask) mask.hidden = !willOpen;
+  }
   other?.classList.remove("open");
   document.body.classList.toggle("drawer-open", !!willOpen);
+  syncDrawerAccessibility(willOpen ? target : null);
+  if (willOpen) {
+    drawerReturnFocus = trigger || document.activeElement;
+    target.scrollTop = 0;
+    target.querySelector("[data-drawer-close]")?.focus({ preventScroll: true });
+  }
 }
 
 function wireClick(id, fn) {
@@ -4363,6 +4862,24 @@ function adoptBaseTerrain(sand) {
 }
 
 function bind() {
+  window.MobileWorkspace?.registerSheet({
+    id: "terrain-left",
+    root: "#terrainLeftSheet",
+    backdrop: "#drawerMask",
+    inert: ["#mapHost", "#desk .topbar"],
+    initialFocus: "[data-drawer-close]",
+    mutex: "terrain-workspace",
+  });
+  window.MobileWorkspace?.registerSheet({
+    id: "terrain-project",
+    root: "#terrainProjectSheet",
+    backdrop: "#drawerMask",
+    inert: ["#mapHost", "#desk .topbar"],
+    initialFocus: "[data-drawer-close]",
+    mutex: "terrain-workspace",
+  });
+  setTerrainMobilePane(state.mobileTerrainPane);
+  setTerrainProjectTab(state.mobileProjectTab);
   window.addEventListener("resize", () => {
     resize();
   });
@@ -4384,8 +4901,34 @@ function bind() {
     await saveNamedVersion(name);
     refreshHistoryList();
   });
-  document.getElementById("btnDrawerLeft")?.addEventListener("click", () => toggleDrawer("left"));
-  document.getElementById("btnDrawerRight")?.addEventListener("click", () => toggleDrawer("right"));
+  document.getElementById("btnDrawerLeft")?.addEventListener("click", (event) => toggleDrawer("left", "palette", event.currentTarget));
+  document.getElementById("btnDrawerRight")?.addEventListener("click", (event) => toggleDrawer("right", "files", event.currentTarget));
+  document.getElementById("btnMobileTerrainTools")?.addEventListener("click", (event) => toggleDrawer("left", "palette", event.currentTarget));
+  document.getElementById("btnMobileProject")?.addEventListener("click", (event) => toggleDrawer("right", "files", event.currentTarget));
+  document.getElementById("btnMobileBrush")?.addEventListener("click", (event) => {
+    if (state.paintMode === "pan") setPaintMode("brush");
+    toggleDrawer("left", "tools", event.currentTarget);
+  });
+  document.getElementById("btnMobilePan")?.addEventListener("click", () => {
+    closeDrawers();
+    setPaintMode(state.paintMode === "pan" ? "brush" : "pan");
+  });
+  document.getElementById("btnMobileUndo")?.addEventListener("click", undo);
+  document.querySelectorAll("[data-terrain-pane]").forEach((button) => {
+    button.addEventListener("click", () => setTerrainMobilePane(button.dataset.terrainPane));
+  });
+  document.querySelectorAll("[data-project-tab]").forEach((button) => {
+    button.addEventListener("click", () => setTerrainProjectTab(button.dataset.projectTab));
+  });
+  document.getElementById("mapmult")?.addEventListener("click", (event) => {
+    if (!event.target.closest(".row") || !window.MobileWorkspace?.modeForViewport().mobile) return;
+    closeDrawers({ restoreFocus: true });
+  });
+  document.getElementById("btnMobileFit")?.addEventListener("click", () => document.getElementById("btnFit")?.click());
+  document.getElementById("btnMobileZoom1")?.addEventListener("click", () => document.getElementById("btnZoom1")?.click());
+  document.getElementById("btnMobileMapSize")?.addEventListener("click", () => document.getElementById("btnChgMap")?.click());
+  document.getElementById("btnMobileNewTerrain")?.addEventListener("click", () => document.getElementById("btnNewTerr")?.click());
+  document.getElementById("btnMobileChangeTerrain")?.addEventListener("click", () => document.getElementById("btnChgTerr")?.click());
   document.getElementById("drawerMask")?.addEventListener("click", closeDrawers);
   document.querySelectorAll("[data-drawer-close]").forEach((b) => {
     b.onclick = closeDrawers;
@@ -4393,16 +4936,22 @@ function bind() {
   window.matchMedia("(min-width: 1101px)").addEventListener("change", (ev) => {
     if (ev.matches) closeDrawers();
   });
+  syncDrawerAccessibility(null);
   const openTerr = () => document.getElementById("fileTerr").click();
   const openBld = () => document.getElementById("fileBld").click();
   wireClick("btnOpenTerr", openTerr);
   wireClick("btnOpenBld", openBld);
+  wireClick("btnOpenDeskPaper", () => document.getElementById("fileDeskPaper").click());
   document.getElementById("fileTerr").onchange = (e) => {
     if (e.target.files[0]) importFile(e.target.files[0], "terrain");
     e.target.value = "";
   };
   document.getElementById("fileBld").onchange = (e) => {
     if (e.target.files[0]) importFile(e.target.files[0], "build");
+    e.target.value = "";
+  };
+  document.getElementById("fileDeskPaper").onchange = (e) => {
+    if (e.target.files[0]) importFile(e.target.files[0], "desk");
     e.target.value = "";
   };
   wireClick("btnSaveTerr", exportTerrain);
@@ -4438,15 +4987,90 @@ function bind() {
   };
   wireClick("btnApplyPlanOverlay", applyPlanOverlay);
   wireClick("btnRemovePlanOverlay", removePlanOverlay);
+  document.getElementById("planOverlayBase").onchange = () => renderPlacementPaperDraft();
+  document.getElementById("planOverlayOpacity").oninput = (event) => {
+    document.getElementById("planOverlayOpacityLabel").textContent = `${event.target.value}%`;
+  };
+  wireClick("btnPreviewDuplicate", duplicateSelectedPreview);
+  wireClick("btnPreviewDelete", deleteSelectedPreview);
+  wireClick("btnPreviewLock", () => {
+    const entity = previewEntityById(state.selectedPreviewId);
+    if (!entity) return;
+    pushHist();
+    entity.locked = !entity.locked;
+    markDirty();
+    updatePreviewBuildingUi();
+    draw();
+  });
+  document.getElementById("previewAspectLocked").onchange = (event) => {
+    const entity = previewEntityById(state.selectedPreviewId);
+    if (!entity || entity.sourceType !== "image") return;
+    pushHist();
+    entity.aspectLocked = event.target.checked;
+    markDirty();
+  };
+  document.getElementById("previewOpacity").oninput = (event) => {
+    const entity = previewEntityById(state.selectedPreviewId);
+    if (!entity) return;
+    entity.opacity = Number(event.target.value) / 100;
+    document.getElementById("previewOpacityLabel").textContent = `${event.target.value}%`;
+    markDirty();
+    draw();
+  };
+  const applyPreviewSize = (axis) => {
+    const entity = previewEntityById(state.selectedPreviewId);
+    if (!entity || entity.sourceType !== "image") return;
+    const width = Math.max(16, Number(document.getElementById("previewWidth").value) || entity.width);
+    const height = Math.max(16, Number(document.getElementById("previewHeight").value) || entity.height);
+    pushHist();
+    if (entity.aspectLocked !== false) {
+      const ratio = entity.height / Math.max(1, entity.width);
+      if (axis === "width") {
+        entity.width = width;
+        entity.height = Math.max(16, Math.round(width * ratio));
+      } else {
+        entity.height = height;
+        entity.width = Math.max(16, Math.round(height / Math.max(0.001, ratio)));
+      }
+    } else {
+      entity.width = width;
+      entity.height = height;
+    }
+    updatePreviewBuildingUi();
+    markDirty();
+    draw();
+  };
+  document.getElementById("previewWidth").onchange = () => applyPreviewSize("width");
+  document.getElementById("previewHeight").onchange = () => applyPreviewSize("height");
+  wireClick("btnPreviewFitFootprint", () => {
+    const entity = previewEntityById(state.selectedPreviewId);
+    if (!entity || entity.sourceType !== "image") return;
+    const width = Math.max(1, Math.min(64, Number(document.getElementById("previewFootprintWidth").value) || 1));
+    const height = Math.max(1, Math.min(64, Number(document.getElementById("previewFootprintHeight").value) || 1));
+    pushHist();
+    const ratio = entity.height / Math.max(1, entity.width);
+    entity.footprint = [width, height];
+    entity.width = width * TILE_W;
+    if (entity.aspectLocked !== false) entity.height = Math.max(16, Math.round(entity.width * ratio));
+    updatePreviewBuildingUi();
+    markDirty();
+    draw();
+  });
   document.getElementById("showGrid").onchange = draw;
   document.getElementById("showBuild").onchange = draw;
   document.getElementById("showPlanOverlay").onchange = draw;
-  document.getElementById("showPlanFoundation").onchange = draw;
+  document.getElementById("showPlanFoundation")?.addEventListener("change", draw);
   document.querySelectorAll("#modeRow .tool").forEach((btn) => {
-    btn.onclick = () => setPaintMode(btn.dataset.mode || "brush");
+    btn.onclick = () => {
+      setPaintMode(btn.dataset.mode || "brush");
+      if (window.MobileWorkspace?.modeForViewport().mobile) closeDrawers({ restoreFocus: true });
+    };
   });
   document.querySelectorAll("#toolRow .tool").forEach((btn) => {
-    btn.onclick = () => setTool(btn.dataset.tool || "free");
+    btn.onclick = () => {
+      setTool(btn.dataset.tool || "free");
+      if (window.MobileWorkspace?.modeForViewport().mobile) closeDrawers({ restoreFocus: true });
+    };
   });
   document.querySelectorAll('input[name="shapeMode"]').forEach((el) => {
     el.onchange = () => {
@@ -4489,10 +5113,6 @@ function bind() {
     startNewTerrain();
   };
   syncChgTerrButton();
-  document.getElementById("btnMatList").onclick = () => {
-    refreshMatCount();
-    showDlg("dlgMat", true);
-  };
   document.querySelectorAll("[data-close]").forEach((b) => {
     b.onclick = () => showDlg(b.dataset.close, false);
   });
@@ -4500,14 +5120,11 @@ function bind() {
   view.addEventListener("contextmenu", (e) => e.preventDefault());
   const mapHost = document.getElementById("mapHost");
   if (mapHost) mapHost.addEventListener("contextmenu", (e) => e.preventDefault());
-  view.addEventListener("mousedown", onDown);
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp);
+  view.addEventListener("pointerdown", onTerrainPointerDown);
+  window.addEventListener("pointermove", onTerrainPointerMove, { passive: false });
+  window.addEventListener("pointerup", (event) => onTerrainPointerUp(event, false), { passive: false });
+  window.addEventListener("pointercancel", (event) => onTerrainPointerUp(event, true), { passive: false });
   view.addEventListener("wheel", onWheel, { passive: false });
-  view.addEventListener("touchstart", onTouchStart, { passive: false });
-  window.addEventListener("touchmove", onTouchMove, { passive: false });
-  window.addEventListener("touchend", onTouchEnd, { passive: false });
-  window.addEventListener("touchcancel", onTouchEnd, { passive: false });
   window.addEventListener("keydown", onKey);
   if (window.visualViewport) {
     visualViewport.addEventListener("resize", () => resize());
@@ -4591,60 +5208,151 @@ function localXY(e) {
   return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
 }
 
-function onTouchStart(e) {
-  e.preventDefault();
-  state.touching = true;
-  if (e.touches.length >= 2) {
-    state.dragging = false;
-    state.panning = false;
-    state.shapeDrag = null;
-    const a = e.touches[0];
-    const b = e.touches[1];
-    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
-    const mid = { clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 };
-    const xy = localXY(mid);
-    const w = screenToWorld(xy.x, xy.y);
-    state.pinch = { dist, k: state.cam.k, wx: w.x, wy: w.y };
-    return;
-  }
-  const t = e.touches[0];
-  onDown({ clientX: t.clientX, clientY: t.clientY, button: 0, shiftKey: false });
+function terrainPointerEvent(event) {
+  return {
+    clientX: event.clientX,
+    clientY: event.clientY,
+    button: event.button ?? 0,
+    shiftKey: !!event.shiftKey,
+    ctrlKey: !!event.ctrlKey,
+    metaKey: !!event.metaKey,
+    altKey: !!event.altKey,
+    preventDefault: () => event.preventDefault(),
+  };
 }
 
-function onTouchMove(e) {
-  e.preventDefault();
-  if (state.pinch && e.touches.length >= 2) {
-    const a = e.touches[0];
-    const b = e.touches[1];
-    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+function beginPendingTerrainPointer() {
+  const pending = state.pointerPending;
+  if (!pending || pending.started || state.activePointers.size > 1) return;
+  pending.started = true;
+  clearTimeout(pending.timer);
+  onDown(pending.event);
+}
+
+function beginTerrainPinch() {
+  const points = [...state.activePointers.values()];
+  if (points.length < 2) return;
+  const pending = state.pointerPending;
+  if (pending?.started) {
+    const shouldUndo =
+      !!state.strokeSaved ||
+      !!state.previewInteraction?.changed ||
+      !!state.buildingDrag?.saved;
+    state.shapeDrag = null;
+    state.dragging = false;
+    state.panning = false;
+    state.lastPaint = null;
+    state.strokeSaved = false;
+    state.previewInteraction = null;
+    state.buildingDrag = null;
+    if (shouldUndo) undo();
+    else draw();
+  }
+  if (pending) clearTimeout(pending.timer);
+  state.pointerPending = null;
+  const a = points[0];
+  const b = points[1];
+  const mid = { clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 };
+  const screen = localXY(mid);
+  const world = screenToWorld(screen.x, screen.y);
+  state.pointerGesture = {
+    type: "pinch",
+    distance: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)),
+    zoom: state.cam.k,
+    worldX: world.x,
+    worldY: world.y,
+  };
+}
+
+function onTerrainPointerDown(event) {
+  if (event.pointerType !== "touch") {
+    onDown(event);
+    return;
+  }
+  event.preventDefault();
+  state.touching = true;
+  state.activePointers.set(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+  try {
+    view.setPointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture may fail for synthetic events.
+  }
+  if (state.activePointers.size >= 2) {
+    beginTerrainPinch();
+    return;
+  }
+  const pending = {
+    id: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    event: terrainPointerEvent(event),
+    latestEvent: terrainPointerEvent(event),
+    started: false,
+  };
+  pending.timer = setTimeout(beginPendingTerrainPointer, 90);
+  state.pointerPending = pending;
+}
+
+function onTerrainPointerMove(event) {
+  if (event.pointerType !== "touch") {
+    onMove(event);
+    return;
+  }
+  if (!state.activePointers.has(event.pointerId)) return;
+  event.preventDefault();
+  state.activePointers.set(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+  if (state.pointerGesture?.type === "pinch" && state.activePointers.size >= 2) {
+    const points = [...state.activePointers.values()];
+    const a = points[0];
+    const b = points[1];
+    const distance = Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY));
     const mid = { clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 };
-    state.cam.k = Math.min(8, Math.max(0.08, state.pinch.k * (dist / state.pinch.dist)));
-    const xy = localXY(mid);
-    const after = worldToScreen(state.pinch.wx, state.pinch.wy);
-    state.cam.x += xy.x - after.x;
-    state.cam.y += xy.y - after.y;
+    state.cam.k = Math.min(8, Math.max(0.08, state.pointerGesture.zoom * distance / state.pointerGesture.distance));
+    const screen = localXY(mid);
+    const anchor = worldToScreen(state.pointerGesture.worldX, state.pointerGesture.worldY);
+    state.cam.x += screen.x - anchor.x;
+    state.cam.y += screen.y - anchor.y;
     draw();
     return;
   }
-  if (e.touches.length === 1) {
-    const t = e.touches[0];
-    onMove({ clientX: t.clientX, clientY: t.clientY, button: 0, shiftKey: false });
-  }
+  const pending = state.pointerPending;
+  if (!pending || pending.id !== event.pointerId || state.pointerGesture) return;
+  pending.latestEvent = terrainPointerEvent(event);
+  const moved = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
+  if (!pending.started && moved >= 12) beginPendingTerrainPointer();
+  if (pending.started) onMove(pending.latestEvent);
 }
 
-function onTouchEnd(e) {
-  e.preventDefault();
-  if (e.touches.length >= 2) return;
-  if (state.pinch && e.touches.length === 1) {
-    state.pinch = null;
+function onTerrainPointerUp(event, cancelled = false) {
+  if (event.pointerType !== "touch") {
+    onUp(event);
     return;
   }
-  state.pinch = null;
-  const t = e.changedTouches[0];
-  onUp(t ? { clientX: t.clientX, clientY: t.clientY, button: 0, shiftKey: false } : {});
-  setTimeout(() => {
+  event.preventDefault();
+  const pending = state.pointerPending;
+  if (pending?.id === event.pointerId && !state.pointerGesture) {
+    pending.latestEvent = terrainPointerEvent(event);
+    if (!cancelled && !pending.started) beginPendingTerrainPointer();
+    if (pending.started) onUp(pending.latestEvent);
+    clearTimeout(pending.timer);
+    state.pointerPending = null;
+  }
+  state.activePointers.delete(event.pointerId);
+  if (state.pointerGesture?.type === "pinch") {
+    state.pointerGesture = state.activePointers.size ? { type: "pinch-tail" } : null;
+  } else if (state.pointerGesture?.type === "pinch-tail" && !state.activePointers.size) {
+    state.pointerGesture = null;
+  }
+  if (!state.activePointers.size) {
     state.touching = false;
-  }, 350);
+    state.pointerGesture = null;
+  }
 }
 
 function onDown(e) {
@@ -4668,12 +5376,39 @@ function onDown(e) {
   }
   if (e.button === 0) {
     if (state.portal.held) return;
-    if (state.layer === "build" && planOverlayHitScreen(x, y)) {
-      state.planOverlayDrag = {
-        grabX: w.x - state.planOverlay.x,
-        grabY: w.y - state.planOverlay.y,
-      };
-      return;
+    if (state.layer === "build") {
+      const previewHit = previewHitTest(x, y);
+      if (previewHit) {
+        selectPreviewBuilding(previewHit.entity.id);
+        if (wantsErase(e)) {
+          deleteSelectedPreview();
+          return;
+        }
+        if (previewHit.entity.locked) return;
+        pushHist();
+        const layout = previewHit.layout || previewEntityLayout(previewHit.entity);
+        state.previewInteraction = {
+          id: previewHit.entity.id,
+          mode: previewHit.part,
+          handle: previewHit.handle,
+          grabX: w.x - previewHit.entity.x,
+          grabY: w.y - previewHit.entity.y,
+          startX: x,
+          startY: y,
+          startWidth: Number(previewHit.entity.width) || layout?.image.width / state.cam.k || 1,
+          startHeight: Number(previewHit.entity.height) || layout?.image.height / state.cam.k || 1,
+          startAnchorX: Number(previewHit.entity.anchorX ?? 0.5),
+          startAnchorY: Number(previewHit.entity.anchorY ?? 1),
+          startRect: layout ? { ...layout.image } : null,
+          startDistance: layout ? Math.max(1, Math.hypot(x - layout.ground.x, y - layout.ground.y)) : 1,
+          changed: false,
+        };
+        return;
+      }
+      if (state.selectedPreviewId) {
+        state.selectedPreviewId = null;
+        updatePreviewBuildingUi();
+      }
     }
     if (state.paintMode === "pan") {
       state.panning = true;
@@ -4684,6 +5419,7 @@ function onDown(e) {
       const hit = hitBuilding(w.x, w.y);
       if (hit >= 0) {
         const building = state.buildings[hit];
+        state.selectedPreviewId = null;
         state.selectedBld = hit;
         state.buildingDrag = {
           index: hit,
@@ -4736,9 +5472,36 @@ function onMove(e) {
   const w = screenToWorld(x, y);
   const coord = document.getElementById("coord");
   if (coord) coord.textContent = Math.round(w.x) + ", " + Math.round(w.y);
-  if (state.planOverlayDrag && state.planOverlay) {
-    state.planOverlay.x = Math.max(0, Math.min(worldExtent(), snap(w.x - state.planOverlayDrag.grabX)));
-    state.planOverlay.y = Math.max(0, Math.min(worldExtent(), snap(w.y - state.planOverlayDrag.grabY)));
+  if (state.previewInteraction) {
+    const interaction = state.previewInteraction;
+    const entity = previewEntityById(interaction.id);
+    if (!entity) {
+      state.previewInteraction = null;
+      return;
+    }
+    if (interaction.mode === "body") {
+      entity.x = Math.max(0, Math.min(worldExtent(), snap(w.x - interaction.grabX)));
+      entity.y = Math.max(0, Math.min(worldExtent(), snap(w.y - interaction.grabY)));
+    } else if (interaction.mode === "resize") {
+      const layout = previewEntityLayout(entity);
+      if (entity.aspectLocked !== false && layout) {
+        const distance = Math.hypot(x - layout.ground.x, y - layout.ground.y);
+        const factor = Math.max(0.08, distance / interaction.startDistance);
+        entity.width = Math.max(16, Math.round(interaction.startWidth * factor));
+        entity.height = Math.max(16, Math.round(interaction.startHeight * factor));
+      } else {
+        const sx = interaction.handle?.includes("w") ? -1 : 1;
+        const sy = interaction.handle?.includes("n") ? -1 : 1;
+        entity.width = Math.max(16, Math.round(interaction.startWidth + sx * (x - interaction.startX) / state.cam.k));
+        entity.height = Math.max(16, Math.round(interaction.startHeight + sy * (y - interaction.startY) / state.cam.k));
+      }
+    } else if (interaction.mode === "anchor" && interaction.startRect) {
+      const rect = interaction.startRect;
+      entity.anchorX = Math.max(0, Math.min(1, (x - rect.x) / Math.max(1, rect.width)));
+      entity.anchorY = Math.max(0, Math.min(1, (y - rect.y) / Math.max(1, rect.height)));
+    }
+    interaction.changed = true;
+    updatePreviewBuildingUi();
     draw();
     return;
   }
@@ -4792,7 +5555,8 @@ function onMove(e) {
 function onUp(e) {
   if (state.buildingDrag?.saved) markDirty();
   state.buildingDrag = null;
-  state.planOverlayDrag = null;
+  if (state.previewInteraction?.changed) markDirty();
+  state.previewInteraction = null;
   if (state.dragging && state.layer === "terrain" && isShapeTool(state.tool) && state.shapeDrag) {
     const d = state.shapeDrag;
     const cells = collectShapeCells(state.tool, d.u0, d.v0, d.u1, d.v1, {
@@ -4832,6 +5596,21 @@ function onWheel(e) {
 
 function onKey(e) {
   if (typeof isAppDialogOpen === "function" && isAppDialogOpen()) return;
+  if (e.key === "Escape") {
+    const modal = [...document.querySelectorAll(".modal:not([hidden])")].pop();
+    if (modal) {
+      e.preventDefault();
+      const close = modal.querySelector("[data-close], .icon-x");
+      if (close) close.click();
+      else showDlg(modal.id, false);
+      return;
+    }
+    if (document.querySelector(".rail.open")) {
+      e.preventDefault();
+      closeDrawers({ restoreFocus: true });
+      return;
+    }
+  }
   if (e.target && ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
   if ((e.key === "z" || e.key === "Z") && (e.ctrlKey || e.metaKey) && e.shiftKey) {
     e.preventDefault();
@@ -4849,12 +5628,44 @@ function onKey(e) {
     return;
   }
   if (e.key === "Escape") {
+    if (state.previewInteraction) {
+      state.previewInteraction = null;
+      draw();
+      return;
+    }
     if (state.shapeDrag) {
       state.shapeDrag = null;
       state.dragging = false;
       draw();
     }
     return;
+  }
+  if ((e.key === "d" || e.key === "D") && (e.ctrlKey || e.metaKey) && state.selectedPreviewId) {
+    e.preventDefault();
+    duplicateSelectedPreview();
+    return;
+  }
+  if (e.key === "Delete" && state.selectedPreviewId) {
+    e.preventDefault();
+    deleteSelectedPreview();
+    return;
+  }
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key) && state.selectedPreviewId) {
+    const entity = previewEntityById(state.selectedPreviewId);
+    if (entity && !entity.locked) {
+      e.preventDefault();
+      pushHist();
+      const step = e.shiftKey ? SNAP * 5 : SNAP;
+      if (e.key === "ArrowLeft") entity.x -= step;
+      if (e.key === "ArrowRight") entity.x += step;
+      if (e.key === "ArrowUp") entity.y -= step;
+      if (e.key === "ArrowDown") entity.y += step;
+      entity.x = Math.max(0, Math.min(worldExtent(), entity.x));
+      entity.y = Math.max(0, Math.min(worldExtent(), entity.y));
+      markDirty();
+      draw();
+      return;
+    }
   }
   if (e.key === "Delete" && state.selectedBld >= 0) {
     pushHist();
@@ -4932,139 +5743,120 @@ async function applyTerrain(doc, quiet) {
   );
 }
 
-let buildingPreviewCatalogPromise = null;
-
-function ensureBuildingPreviewCatalog() {
-  if (!buildingPreviewCatalogPromise) {
-    buildingPreviewCatalogPromise = Promise.all([
-      fetch("/api/editor-catalog").then((response) => response.json()),
-      fetch("/data/building_pack_uids.json").then((response) => response.json()),
-    ]).then(([catalog, packUids]) => ({
-      catalog,
-      packUids: packUids.mapping || {},
-      packs: new Map((catalog.building?.packs || []).map((pack) => [pack.key, pack])),
-    }));
+function hashPaperRecords(records) {
+  let value = 2166136261;
+  const text = JSON.stringify(records || []);
+  for (let index = 0; index < text.length; index += 1) {
+    value ^= text.charCodeAt(index);
+    value = Math.imul(value, 16777619);
   }
-  return buildingPreviewCatalogPromise;
+  return (value >>> 0).toString(36);
 }
 
-function deskPreviewComponent(mat, previewCatalog, localPackKey = "") {
-  const value = Number(mat) || 0;
-  const local = value < 1000 ? value : value % 1000;
-  const packKey =
-    value < 1000
-      ? localPackKey
-      : previewCatalog.packUids[String(Math.floor(value / 1000))];
-  const pack = previewCatalog.packs.get(packKey);
-  if (!pack) return null;
-  const component = (pack.components || []).find(
-    (row) => row.kind === "sprite" && Number(row.id) === local
-  );
-  return component ? { component, pack } : null;
+function preferredPreviewBaseNo(previewCatalog) {
+  try {
+    const session = JSON.parse(localStorage.getItem("manor-building-session-v1") || "null");
+    if (BuildingPreview.baseByNo(previewCatalog, session?.baseNo)) return Number(session.baseNo);
+  } catch {
+    // Use a real catalog default when no building-desk session exists.
+  }
+  return Number(previewCatalog.bases.find((base) => Number(base.no) === 212)?.no || previewCatalog.bases[0]?.no);
 }
 
-function deskPreviewSpriteUrl(component, pack, frame) {
-  if (!component?.file || !pack) return "";
-  const path = component.file.split("/").map(encodeURIComponent).join("/");
-  const frameCount = Math.max(1, Number(component.asset?.frames) || 1);
-  const face = Math.max(0, Number(frame) || 0) % frameCount;
-  return `/bdesign/ale/${pack.kind === "item" ? "item" : "res"}/${encodeURIComponent(pack.key)}/${path}.png?f=${face}`;
-}
-
-function loadStandaloneImage(src) {
-  return new Promise((resolve) => {
-    if (!src) {
-      resolve(null);
-      return;
-    }
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => resolve(null);
-    image.src = src;
+function fillPlanOverlayBases(previewCatalog, selectedNo) {
+  const select = document.getElementById("planOverlayBase");
+  if (!select) return;
+  select.replaceChildren();
+  previewCatalog.bases.forEach((base) => {
+    const option = document.createElement("option");
+    option.value = String(base.no);
+    const footprint = Array.isArray(base.footprint) ? base.footprint.join("×") : "—";
+    option.textContent = `${base.name || `户型 ${base.no}`} · ${footprint}`;
+    option.selected = Number(base.no) === Number(selectedNo);
+    select.appendChild(option);
   });
 }
 
-async function openDeskBuildingCode(doc, fileName) {
-  const previewCatalog = await ensureBuildingPreviewCatalog();
-  const unresolved = [];
-  const rows = (doc.records || [])
-    .filter((record) => Number(record.mat) && Number(record.x) < 32000 && Number(record.y) < 32000)
-    .map((record) => {
-      const solved = deskPreviewComponent(record.mat, previewCatalog);
-      if (!solved) unresolved.push(Number(record.mat) || 0);
-      return { record, solved };
-    });
-  const rendered = await Promise.all(
-    rows.map(async (row) => ({
-      ...row,
-      image: row.solved
-        ? await loadStandaloneImage(
-            deskPreviewSpriteUrl(
-              row.solved.component,
-              row.solved.pack,
-              row.record.state ?? row.record.flip ?? 0
-            )
-          )
-        : null,
-    }))
-  );
-  const visible = rendered.filter((row) => row.image?.naturalWidth);
-  const pad = 4;
-  const sheet = document.createElement("canvas");
-  const sheetContext = sheet.getContext("2d");
-  if (visible.length) {
-    const left = Math.min(...visible.map((row) => Number(row.record.x) || 0));
-    const top = Math.min(...visible.map((row) => Number(row.record.y) || 0));
-    const right = Math.max(
-      ...visible.map((row) => (Number(row.record.x) || 0) + row.image.naturalWidth)
-    );
-    const bottom = Math.max(
-      ...visible.map((row) => (Number(row.record.y) || 0) + row.image.naturalHeight)
-    );
-    sheet.width = Math.max(1, Math.ceil(right - left) + pad * 2);
-    sheet.height = Math.max(1, Math.ceil(bottom - top) + pad * 2);
-    visible.forEach((row) => {
-      sheetContext.drawImage(
-        row.image,
-        Math.round((Number(row.record.x) || 0) - left + pad),
-        Math.round((Number(row.record.y) || 0) - top + pad)
-      );
-    });
-  } else {
-    sheet.width = 320;
-    sheet.height = 180;
-    sheetContext.fillStyle = "#25482f";
-    sheetContext.fillRect(0, 0, sheet.width, sheet.height);
-    sheetContext.fillStyle = "#eef5ea";
-    sheetContext.font = "14px Microsoft YaHei";
-    sheetContext.textAlign = "center";
-    sheetContext.fillText("没有可解析的带 UID 素材", sheet.width / 2, sheet.height / 2);
+function paintPlacementPreview(bitmap, groundAnchor) {
+  const canvas = document.getElementById("planOverlayCanvas");
+  if (!canvas) return;
+  const g = canvas.getContext("2d");
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  if (!bitmap?.width) return;
+  const scale = Math.min((canvas.width - 28) / bitmap.width, (canvas.height - 34) / bitmap.height, 1.5);
+  const x = Math.round((canvas.width - bitmap.width * scale) / 2);
+  const y = Math.round((canvas.height - bitmap.height * scale) / 2);
+  g.imageSmoothingEnabled = Math.abs(scale - 1) > 0.001;
+  g.drawImage(bitmap, x, y, bitmap.width * scale, bitmap.height * scale);
+  if (groundAnchor) {
+    const gx = x + groundAnchor.x * scale;
+    const gy = y + groundAnchor.y * scale;
+    g.fillStyle = "#2f7d5b";
+    g.strokeStyle = "#ffffff";
+    g.beginPath();
+    g.arc(gx, gy, 5, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
   }
+}
+
+async function renderPlacementPaperDraft() {
+  if (planOverlayDraft?.sourceType !== "paper") return;
+  const loading = document.getElementById("planOverlayLoading");
+  const apply = document.getElementById("btnApplyPlanOverlay");
+  if (loading) loading.hidden = false;
+  if (apply) apply.disabled = true;
+  const baseNo = Number(document.getElementById("planOverlayBase")?.value || planOverlayDraft.baseNo);
+  try {
+    const result = await BuildingPreview.renderPaper({
+      documentData: planOverlayDraft.documentData,
+      baseNo,
+      localPackKey: planOverlayDraft.localPackKey || "",
+      coordinateSpace: planOverlayDraft.coordinateSpace || "paper",
+      purpose: "terrain",
+    });
+    planOverlayDraft.baseNo = baseNo;
+    planOverlayDraft.rendered = result;
+    paintPlacementPreview(result.bitmap, result.groundAnchor);
+    document.getElementById("planOverlayWidth").value = String(result.footprint[0]);
+    document.getElementById("planOverlayHeight").value = String(result.footprint[1]);
+    const info = document.getElementById("planOverlayInfo");
+    if (info) {
+      info.textContent =
+        `${result.base.name || "真实户型"} · 已渲染 ${result.resolved} 件素材` +
+        (result.unresolved.length ? ` · 缺失 ${result.unresolved.length} 件` : " · 素材完整");
+    }
+    if (apply) apply.disabled = result.resolved === 0;
+  } catch (error) {
+    const info = document.getElementById("planOverlayInfo");
+    if (info) info.textContent = error.message || String(error);
+  } finally {
+    if (loading) loading.hidden = true;
+  }
+}
+
+async function openDeskBuildingCode(doc, fileName, options = {}) {
+  const previewCatalog = await BuildingPreview.loadCatalog();
+  const baseNo = Number(options.baseNo || preferredPreviewBaseNo(previewCatalog));
   planOverlayDraft = {
-    image: sheet,
-    name: fileName,
-    sourceKind: "code",
-    codeDocument: doc,
-    nativePixels: true,
-    resolved: visible.length,
-    unresolved: unresolved.length,
+    sourceType: "paper",
+    name: fileName || "设计建筑",
+    documentData: { kind: "desk", records: (doc.records || []).map((record) => ({ ...record })) },
+    baseNo,
+    localPackKey: options.localPackKey || "",
+    coordinateSpace: options.coordinateSpace || "paper",
   };
-  const preview = document.getElementById("planOverlayPreview");
-  if (preview) preview.src = sheet.toDataURL("image/png");
+  fillPlanOverlayBases(previewCatalog, baseNo);
+  document.getElementById("planOverlayBaseField").hidden = false;
+  document.getElementById("planOverlaySizeFields").hidden = false;
+  document.getElementById("planOverlayWidth").disabled = true;
+  document.getElementById("planOverlayHeight").disabled = true;
+  document.getElementById("planOverlayAspectField").hidden = true;
+  document.getElementById("planOverlayOpacityField").hidden = true;
   const title = document.querySelector("#dlgPlanOverlay .modal-cap span");
-  if (title) title.textContent = "导入建筑代码";
-  const info = document.getElementById("planOverlayInfo");
-  if (info) {
-    info.textContent =
-      `已真实渲染 ${visible.length} 件素材` +
-      (unresolved.length
-        ? `，${unresolved.length} 件因 UID 或本地素材缺失未渲染。`
-        : "，全部素材均已解析");
-  }
-  document.getElementById("planOverlayWidth").value = "11";
-  document.getElementById("planOverlayHeight").value = "11";
-  document.getElementById("btnApplyPlanOverlay").disabled = visible.length === 0;
+  if (title) title.textContent = "放置设计建筑";
   showDlg("dlgPlanOverlay", true);
+  await renderPlacementPaperDraft();
 }
 
 async function importFile(file, expect) {
@@ -5074,6 +5866,12 @@ async function importFile(file, expect) {
       const res = await fetch("/api/parse-terrain", { method: "POST", body: buf });
       if (!res.ok) throw new Error("地形图纸解析失败 (" + res.status + ")");
       await applyTerrain(await res.json(), false);
+      return;
+    }
+    if (expect === "desk") {
+      const res = await fetch("/api/parse-building-desk", { method: "POST", body: buf });
+      if (!res.ok) throw new Error("建筑设计图纸解析失败 (" + res.status + ")");
+      await openDeskBuildingCode(await res.json(), file.name);
       return;
     }
     if (expect === "build") {
@@ -5412,19 +6210,41 @@ async function openPlanOverlay(file) {
   if (planOverlayDraft?.url) URL.revokeObjectURL(planOverlayDraft.url);
   const url = URL.createObjectURL(file);
   try {
-    const image = await new Promise((resolve, reject) => {
-      const next = new Image();
-      next.onload = () => resolve(next);
-      next.onerror = () => reject(new Error("建筑预览图读取失败"));
-      next.src = url;
+    const image = await BuildingPreview.loadImage(url);
+    if (!image) throw new Error("建筑预览图读取失败");
+    const rendered = BuildingPreview.prepareImageBitmap(image, {
+      removeConnectedBackground: true,
     });
-    planOverlayDraft = { image, name: file.name, url };
-    const preview = document.getElementById("planOverlayPreview");
-    if (preview) preview.src = url;
+    if (!rendered?.bitmap?.width) throw new Error("图片中没有可放置的建筑像素");
+    planOverlayDraft = {
+      sourceType: "image",
+      image,
+      rendered,
+      file,
+      name: file.name,
+      url,
+      aspectRatio: rendered.bitmap.width / Math.max(1, rendered.bitmap.height),
+    };
+    paintPlacementPreview(rendered.bitmap, rendered.groundAnchor);
     const title = document.querySelector("#dlgPlanOverlay .modal-cap span");
-    if (title) title.textContent = "导入建筑图片";
+    if (title) title.textContent = "放置建筑图片";
     const info = document.getElementById("planOverlayInfo");
-    if (info) info.textContent = "原图会保持宽高比例；占地与图片本身分开显示。";
+    if (info) {
+      info.textContent =
+        `${rendered.bitmap.width}×${rendered.bitmap.height} 原生像素 · 自动裁切透明边` +
+        (rendered.removedBackground ? ` · 已移除 ${rendered.removedBackground} 个连通背景像素` : "");
+    }
+    document.getElementById("planOverlayBaseField").hidden = true;
+    document.getElementById("planOverlaySizeFields").hidden = false;
+    document.getElementById("planOverlayWidth").disabled = false;
+    document.getElementById("planOverlayHeight").disabled = false;
+    document.getElementById("planOverlayWidth").value = "11";
+    document.getElementById("planOverlayHeight").value = "11";
+    document.getElementById("planOverlayAspectField").hidden = false;
+    document.getElementById("planOverlayOpacityField").hidden = false;
+    document.getElementById("planOverlayAspect").checked = true;
+    document.getElementById("planOverlayOpacity").value = "100";
+    document.getElementById("planOverlayOpacityLabel").textContent = "100%";
     document.getElementById("btnApplyPlanOverlay").disabled = false;
     showDlg("dlgPlanOverlay", true);
   } catch (error) {
@@ -5436,43 +6256,252 @@ async function openPlanOverlay(file) {
 function updatePlanOverlayMeta() {
   const meta = document.getElementById("planOverlayMeta");
   const label = document.getElementById("planOverlayFootprint");
-  const overlay = state.planOverlay;
-  if (meta) meta.hidden = !overlay;
-  if (label && overlay) {
-    const type = overlay.sourceKind === "code" ? "建筑代码" : "建筑图片";
-    label.textContent =
-      `${type} · 占地 ${overlay.footprint[0]}×${overlay.footprint[1]} · ` +
-      `${overlay.footprint[0] * overlay.footprint[1]} 格 · 直接拖动建筑可移动`;
-  }
+  const count = state.previewBuildings.length;
+  if (meta) meta.hidden = count === 0;
+  if (label) label.textContent = count ? `${count} 个场景建筑 · 不写入游戏图纸` : "";
 }
 
-function applyPlanOverlay() {
-  if (!planOverlayDraft?.image) return;
+async function applyPlanOverlay() {
+  if (!planOverlayDraft) return;
   const width = Math.max(1, Math.min(64, Number(document.getElementById("planOverlayWidth")?.value) || 1));
   const height = Math.max(1, Math.min(64, Number(document.getElementById("planOverlayHeight")?.value) || 1));
   const center = screenToWorld(view.width / 2, view.height / 2);
-  state.planOverlay = {
-    ...planOverlayDraft,
+  const id = `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  let entity;
+  let runtime;
+  if (planOverlayDraft.sourceType === "paper") {
+    const result = planOverlayDraft.rendered;
+    if (!result?.bitmap) return;
+    entity = {
+      id,
+      sourceType: "paper",
+      name: planOverlayDraft.name || "设计建筑",
+      records: planOverlayDraft.documentData.records.map((record) => ({ ...record })),
+      paperHash: hashPaperRecords(planOverlayDraft.documentData.records),
+      baseNo: Number(planOverlayDraft.baseNo),
+      localPackKey: planOverlayDraft.localPackKey || "",
+      coordinateSpace: planOverlayDraft.coordinateSpace || "paper",
+      footprint: [...result.footprint],
+      groundAnchor: { ...result.groundAnchor },
+      unresolved: [...result.unresolved],
+      visible: true,
+      locked: false,
+      opacity: 1,
+      x: snap(center.x),
+      y: snap(center.y),
+    };
+    runtime = {
+      ...result,
+      cacheKey: `terrain-v2|${entity.baseNo}|${entity.coordinateSpace}|${entity.paperHash}`,
+      loading: false,
+    };
+  } else {
+    const prepared = planOverlayDraft.rendered;
+    if (!prepared?.bitmap?.width) return;
+    const assetId = await storePreviewAsset(await canvasPngBlob(prepared.bitmap));
+    entity = {
+      id,
+      sourceType: "image",
+      name: planOverlayDraft.name || "建筑图片",
+      assetId,
+      footprint: [width, height],
+      crop: [0, 0, 1, 1],
+      width: prepared.bitmap.width,
+      height: prepared.bitmap.height,
+      pixelSizing: "native",
+      removeConnectedBackground: true,
+      aspectLocked: document.getElementById("planOverlayAspect")?.checked !== false,
+      anchorX: prepared.groundAnchor.x / Math.max(1, prepared.bitmap.width),
+      anchorY: prepared.groundAnchor.y / Math.max(1, prepared.bitmap.height),
+      visible: true,
+      locked: false,
+      opacity: Math.max(0.1, Number(document.getElementById("planOverlayOpacity")?.value || 100) / 100),
     x: snap(center.x),
     y: snap(center.y),
-    footprint: [width, height],
-  };
+    };
+    runtime = {
+      ...prepared,
+      cacheKey: `native-v2|${assetId}`,
+      loading: false,
+    };
+    if (planOverlayDraft.url) URL.revokeObjectURL(planOverlayDraft.url);
+    planOverlayDraft.url = null;
+  }
+  pushHist();
+  state.previewBuildings.push(entity);
+  state.previewRuntime.set(entity.id, runtime);
+  state.selectedPreviewId = entity.id;
   const showOverlay = document.getElementById("showPlanOverlay");
   if (showOverlay) showOverlay.checked = true;
   setLayer("build");
   showDlg("dlgPlanOverlay", false);
   updatePlanOverlayMeta();
+  updatePreviewBuildingUi();
+  markDirty();
   draw();
 }
 
 function removePlanOverlay() {
-  if (planOverlayDraft?.url) URL.revokeObjectURL(planOverlayDraft.url);
-  state.planOverlay = null;
-  planOverlayDraft = null;
-  const preview = document.getElementById("planOverlayPreview");
-  if (preview) preview.removeAttribute("src");
+  if (!state.previewBuildings.length) return;
+  pushHist();
+  state.previewBuildings.forEach((entity) => {
+    const runtime = state.previewRuntime.get(entity.id);
+    if (runtime?.url) URL.revokeObjectURL(runtime.url);
+  });
+  state.previewBuildings = [];
+  state.previewRuntime.clear();
+  state.selectedPreviewId = null;
   updatePlanOverlayMeta();
+  updatePreviewBuildingUi();
+  markDirty();
   draw();
+}
+
+function selectPreviewBuilding(id) {
+  state.selectedPreviewId = previewEntityById(id)?.id || null;
+  state.selectedBld = -1;
+  updatePreviewBuildingUi();
+  draw();
+}
+
+function duplicateSelectedPreview() {
+  const source = previewEntityById(state.selectedPreviewId);
+  if (!source) return;
+  pushHist();
+  const copy = {
+    ...source,
+    id: `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    name: `${source.name} 副本`,
+    records: source.records?.map((record) => ({ ...record })),
+    footprint: [...(source.footprint || [1, 1])],
+    groundAnchor: source.groundAnchor ? { ...source.groundAnchor } : undefined,
+    crop: source.crop ? [...source.crop] : undefined,
+    x: Math.min(worldExtent(), source.x + SNAP * 2),
+    y: Math.min(worldExtent(), source.y + SNAP * 2),
+    locked: false,
+  };
+  const runtime = state.previewRuntime.get(source.id);
+  if (runtime) state.previewRuntime.set(copy.id, { ...runtime, url: null });
+  state.previewBuildings.push(copy);
+  state.selectedPreviewId = copy.id;
+  updatePlanOverlayMeta();
+  updatePreviewBuildingUi();
+  markDirty();
+  draw();
+}
+
+function deleteSelectedPreview() {
+  const index = state.previewBuildings.findIndex((entity) => entity.id === state.selectedPreviewId);
+  if (index < 0) return;
+  pushHist();
+  const [removed] = state.previewBuildings.splice(index, 1);
+  const runtime = state.previewRuntime.get(removed.id);
+  if (runtime?.url) URL.revokeObjectURL(runtime.url);
+  state.previewRuntime.delete(removed.id);
+  state.selectedPreviewId = null;
+  updatePlanOverlayMeta();
+  updatePreviewBuildingUi();
+  markDirty();
+  draw();
+}
+
+function previewThumbnail(entity) {
+  const runtime = state.previewRuntime.get(entity.id);
+  if (!runtime) return "";
+  if (runtime.thumb) return runtime.thumb;
+  if (runtime.url) return runtime.url;
+  const bitmap = runtime.bitmap;
+  if (!bitmap?.width) return "";
+  const thumb = document.createElement("canvas");
+  const scale = Math.min(1, 84 / bitmap.width, 68 / bitmap.height);
+  thumb.width = Math.max(1, Math.round(bitmap.width * scale));
+  thumb.height = Math.max(1, Math.round(bitmap.height * scale));
+  thumb.getContext("2d").drawImage(bitmap, 0, 0, thumb.width, thumb.height);
+  runtime.thumb = thumb.toDataURL("image/png");
+  return runtime.thumb;
+}
+
+function updatePreviewBuildingUi() {
+  const list = document.getElementById("previewBuildingList");
+  const empty = document.getElementById("previewBuildingEmpty");
+  const count = document.getElementById("previewBuildingCount");
+  if (count) count.textContent = String(state.previewBuildings.length);
+  if (empty) empty.hidden = state.previewBuildings.length > 0;
+  if (list) {
+    list.replaceChildren();
+    state.previewBuildings.forEach((entity) => {
+      const row = document.createElement("div");
+      row.className = `preview-building-row${entity.id === state.selectedPreviewId ? " is-selected" : ""}`;
+      row.onclick = () => selectPreviewBuilding(entity.id);
+      const image = document.createElement("img");
+      image.className = "preview-building-thumb";
+      image.alt = "";
+      const src = previewThumbnail(entity);
+      if (src) image.src = src;
+      const copy = document.createElement("div");
+      copy.className = "preview-building-copy";
+      const strong = document.createElement("strong");
+      strong.textContent = entity.name || "场景建筑";
+      const small = document.createElement("small");
+      const runtime = state.previewRuntime.get(entity.id);
+      small.textContent = runtime?.error
+        ? runtime.error
+        : entity.sourceType === "paper"
+          ? `真实户型 ${entity.baseNo} · ${(entity.footprint || []).join("×")}`
+          : `${Math.round(entity.width || 0)}×${Math.round(entity.height || 0)} 像素`;
+      copy.append(strong, small);
+      const icons = document.createElement("div");
+      icons.className = "preview-building-icons";
+      const visible = document.createElement("button");
+      visible.type = "button";
+      visible.className = "preview-icon-button";
+      visible.title = entity.visible === false ? "显示" : "隐藏";
+      visible.textContent = entity.visible === false ? "○" : "●";
+      visible.onclick = (event) => {
+        event.stopPropagation();
+        pushHist();
+        entity.visible = entity.visible === false;
+        markDirty();
+        updatePreviewBuildingUi();
+        draw();
+      };
+      const locked = document.createElement("button");
+      locked.type = "button";
+      locked.className = "preview-icon-button";
+      locked.title = entity.locked ? "解锁" : "锁定";
+      locked.textContent = entity.locked ? "🔒" : "◇";
+      locked.onclick = (event) => {
+        event.stopPropagation();
+        pushHist();
+        entity.locked = !entity.locked;
+        markDirty();
+        updatePreviewBuildingUi();
+        draw();
+      };
+      icons.append(visible, locked);
+      row.append(image, copy, icons);
+      list.appendChild(row);
+      if (!state.previewRuntime.has(entity.id)) ensurePreviewRuntime(entity);
+    });
+  }
+  const selected = previewEntityById(state.selectedPreviewId);
+  const inspector = document.getElementById("previewBuildingInspector");
+  if (inspector) inspector.hidden = !selected;
+  if (!selected) return;
+  document.getElementById("previewInspectorName").textContent = selected.name || "场景建筑";
+  const isImage = selected.sourceType === "image";
+  document.querySelector(".preview-size-row").hidden = !isImage;
+  document.getElementById("previewImageOptions").hidden = !isImage;
+  document.getElementById("previewAspectField").hidden = !isImage;
+  document.getElementById("previewWidth").value = String(Math.round(selected.width || 0));
+  document.getElementById("previewHeight").value = String(Math.round(selected.height || 0));
+  document.getElementById("previewFootprintWidth").value = String(selected.footprint?.[0] || 1);
+  document.getElementById("previewFootprintHeight").value = String(selected.footprint?.[1] || 1);
+  document.getElementById("previewAspectLocked").checked = selected.aspectLocked !== false;
+  const opacity = Math.round(Number(selected.opacity ?? 1) * 100);
+  document.getElementById("previewOpacity").value = String(opacity);
+  document.getElementById("previewOpacityLabel").textContent = `${opacity}%`;
+  document.getElementById("btnPreviewLock").textContent = selected.locked ? "解锁" : "锁定";
 }
 
 function ensureSize(n) {
@@ -5581,12 +6610,10 @@ async function exportTerrainPng() {
       clipMap();
       drawPortal();
       ctx.restore();
-      if (document.getElementById("showBuild")?.checked) {
-        const order = state.buildings
-          .map((b, i) => ({ b, i }))
-          .sort((a, c) => a.b.x + a.b.y - (c.b.x + c.b.y));
-        for (const { b, i } of order) drawBuilding(b, i === state.selectedBld);
-      }
+      const selectedPreviewId = state.selectedPreviewId;
+      state.selectedPreviewId = null;
+      drawSceneObjects();
+      state.selectedPreviewId = selectedPreviewId;
     });
   } catch (err) {
     console.warn(err);

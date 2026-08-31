@@ -15,14 +15,17 @@
     "3": "greece",
     "4": "park",
     "5": "q",
-    "7": "toy",
+    "7": "flower1",
     "8": "flower1",
     "9": "flower2",
     "10": "candy",
+    "11": "fruit",
+    "12": "sea",
     "13": "space",
     "14": "bazaar",
     "15": "supermarket",
     "16": "antique",
+    "18": "paradise",
     "19": "giant",
     "20": "japan",
     "21": "tds",
@@ -30,6 +33,10 @@
     "26": "shiqi",
     "27": "snow",
     "28": "muguang"
+  },
+  "aliases": {
+    "6": "toy",
+    "17": "paradise"
   },
   "frames": {
     "antique": [
@@ -320,10 +327,10 @@
     },
     {
       "uid": 7,
-      "key": "toy",
-      "folder": "toy",
-      "name": "玩具天地",
-      "source": "legacy packet table"
+      "key": "flower1",
+      "folder": "flower1",
+      "name": "花卉风格",
+      "source": "café 7112 is flower1 butterfly stool, not toy carnival"
     },
     {
       "uid": 8,
@@ -345,6 +352,20 @@
       "folder": "candy",
       "name": "糖果乐园",
       "source": "exact mixed-paper wall match"
+    },
+    {
+      "uid": 11,
+      "key": "fruit",
+      "folder": "fruit",
+      "name": "水果系列",
+      "source": "café roof 11105/11111 are fruit orange-half / lime-stack"
+    },
+    {
+      "uid": 12,
+      "key": "sea",
+      "folder": "sea",
+      "name": "海洋世界",
+      "source": "café BAR 12506/12110 are sea scallop wall / coral lantern, not fruit"
     },
     {
       "uid": 13,
@@ -373,6 +394,13 @@
       "folder": "antique",
       "name": "古韵建筑",
       "source": "vendor packet table"
+    },
+    {
+      "uid": 18,
+      "key": "paradise",
+      "folder": "paradise",
+      "name": "欢快乐园",
+      "source": "user-named 18161; unmapped local 161 is paradise try01"
     },
     {
       "uid": 19,

@@ -66,7 +66,12 @@ python tools/build_editor_catalog.py
 
 - `sourceCode/leo/rcsys/svr/bdesign/builddesign.cfg`
   - 普通建筑设计桌、快速设计、户型选择、素材列表、模板列表和预览。
-  - 主设计层是 570×550 的 `GDesignLayer`。
+  - 主设计层配置最小值是 570×550 的 `GDesignLayer`，并带
+    `SetAutoSize(100,100,-230,-50)`。用户「保存设计」`TxtExport`
+    （`0x6593c0` → `0x6689b0`）写出的是**当前层实时坐标**；
+    「导入设计」`TxtInsert`（`0x6663e0`）以 ox=oy=0 原样载入。
+    最大化 1920×1080 时该层约 `1690×1030`。AddTemplate 的
+    `(当前−570)/2` 只用于套件 TEMPIMG，不是图纸 txt。
   - 原版工具包括到底层、到下层、到上层、到顶层、删除、撤销、重做、翻转和拆散套件。
 - `sourceCode/leo/rcsys/svr/bdesign/adorndesign.cfg`
   - 高级装饰设计，增加可达格、禁行格、保留地基和人物参照。
@@ -102,7 +107,8 @@ python tools/build_editor_catalog.py
   `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_` + 反引号 + `abcdefghijklmnopqrstuvwxyz`。
 - `GDesignLayer` 的记录加载路径位于 `0x668e00`。
 - 前 5 个字符不是“标志 + 两个双字符坐标”。原生 `0x425370` 将它整体解码成
-  30 位整数，再拆为两个无符号 15 位 x/y；`0x4252f0` 是对应编码器。
+  30 位整数，再拆为两个有符号 15 位 x/y（大于 `0x3fff` 时减 `0x8000`）；
+  `0x4252f0` 是对应编码器（`x/y & 0x7fff`）。所谓 `327xx` 是负数，不是独立离屏域。
 - 第 6–8 个字符是素材 ID。单包图纸是当前 `mat.cfg` 的 1xx–6xx；混包图纸是
   `合成时间 * 1000 + 本地组件 ID`。`rc3.exe` 在 `0x658d1b` 用 `uid*1000` 写入，
   在 `0x656bd0` 整除 1000 读回。`合成时间` 不能用 `formula.tab` 的 `名称ID` 或
@@ -120,9 +126,16 @@ python tools/build_editor_catalog.py
   两帧素材常表现为镜像，但不能统一当作布尔翻转。
 - `mat.cfg` 中 6xx “素材”可能直接保存另一段 `V1;`，表示可拆散套件，不是 ALE 文件路径。
 
+- `mat=0` 是 `GDesignSubUser` 人物参照，不是图纸原点。无此记录时原版不补头。
+- 导入视图变换：用户 txt 是 `TxtExport` 的实时层坐标，不是 570 基准。
+  网页按最大化桌 `1690×1030` 居中 mask，地板为
+  `mask + base.tab(cx,cy) + ALE(anchor)`，再对齐到锁定的 `floorSnugInMask`。
+  不要用命中数猜 `1370×850` / `1691×515`，不要用 `mat=0`、内容包围盒或
+  `paperContentFront` 去猜任一轴。
+
 仍需从 `GDesignLayer` 确认：
 
-- 少量 327xx 离屏坐标的历史用途。
+- 个别资产故意使用负坐标的业务目的（裁边还是暂存）。
 - 各素材帧状态的具体视觉语义。
 - 地基亮区裁剪、不可见对象和高级地格的序列化。
 

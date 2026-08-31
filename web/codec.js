@@ -147,20 +147,25 @@ function formatV1(records, kind = "manor") {
   return "V1;" + recs.join(";");
 }
 
+function decodeS15(value) {
+  value &= 0x7fff;
+  return value > 0x3fff ? value - 0x8000 : value;
+}
+
 function unpackDeskCoordinates(token) {
   if (token.length !== 5) throw new Error("建筑坐标必须是 5 个字符");
   const packed = dec(token);
   const x = Math.floor(packed / 32768) & 0x7fff;
   const y = packed & 0x7fff;
-  return [x, y];
+  return [decodeS15(x), decodeS15(y)];
 }
 
 function packDeskCoordinates(x, y) {
   x = Math.round(x);
   y = Math.round(y);
-  if (x < 0 || x > 0x7fff || y < 0 || y > 0x7fff) {
-    throw new Error("建筑坐标超出 15 位无符号范围");
+  if (x < -0x4000 || x > 0x3fff || y < -0x4000 || y > 0x3fff) {
+    throw new Error("建筑坐标超出有符号 15 位范围");
   }
-  const packed = x * 32768 + y;
+  const packed = (x & 0x7fff) * 32768 + (y & 0x7fff);
   return enc(packed, 5);
 }

@@ -1,0 +1,41 @@
+services:
+  desk:
+    build: .
+    restart: unless-stopped
+    environment:
+      MANOR_HOST: "0.0.0.0"
+      MANOR_PORT: "8765"
+      MANOR_NO_BROWSER: "1"
+      MANOR_USER: ${MANOR_USER}
+      MANOR_PASSWORD: ${MANOR_PASSWORD}
+    volumes:
+      - ale_png_cache:/app/data/ale_png_cache
+      - manor_saves:/app/data/saves
+      # 镜像里贴图不齐时，把解包游戏目录挂进来：
+      # - /opt/manor-game:/app/vendor/game:ro
+    ports:
+      - "${MANOR_PUBLISH:-8095}:8765"
+
+  caddy:
+    profiles: ["https"]
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      desk:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      MANOR_SITE: ${MANOR_SITE:-http://:80}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  ale_png_cache:
+  manor_saves:
+  caddy_data:
+  caddy_config:

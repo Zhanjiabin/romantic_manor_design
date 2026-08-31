@@ -96,10 +96,14 @@ def test_public_document_strips_paper_text_and_snapshots():
     assert got["records"][0]["mat"] == 504
 
 
-def test_desk_coordinates_use_native_uint15_pair():
+def test_desk_coordinates_use_native_signed15_pair():
     assert unpack_desk_coordinates("0MO3g") == (179, 236)
     assert pack_desk_coordinates(179, 236) == "0MO3g"
-    assert unpack_desk_coordinates(pack_desk_coordinates(32767, 32766)) == (32767, 32766)
+    assert unpack_desk_coordinates(pack_desk_coordinates(-1, -2)) == (-1, -2)
+    # Bits that the unsigned reader treated as 32767/32766 are native -1/-2.
+    wrapped = encode((32767 << 15) | 32766, 5)
+    assert unpack_desk_coordinates(wrapped) == (-1, -2)
+    assert pack_desk_coordinates(-1, -2) == wrapped
 
 
 def test_explicit_v1_kind_avoids_heuristic():

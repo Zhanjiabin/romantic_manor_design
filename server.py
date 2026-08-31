@@ -2,8 +2,11 @@
 """Local static server: editor + real unpacked tiles/tables."""
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
+import os
 import sys
 import threading
 import webbrowser
@@ -28,9 +31,113 @@ from codec.ale import AleError, dumps_png
 from codec.terrain import dumps_document as dumps_terrain_document
 from codec.terrain import dumps_gbk as dumps_terrain
 from codec.terrain import loads_gbk as loads_terrain
+from saves import (
+    delete_terrain_version,
+    load_building_bundle,
+    load_terrain_asset,
+    load_terrain_bundle,
+    save_building_bundle,
+    save_terrain_asset,
+    save_terrain_draft,
+    save_terrain_version,
+)
 
-PORT = 8765
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8765
+DEFAULT_MAX_BODY = 8 * 1024 * 1024
+PUBLIC_PATHS = frozenset({"/api/health"})
+LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 ALE_PNG_MAX_BYTES = 80 * 1024 * 1024
+
+
+def listen_host() -> str:
+    return (os.environ.get("MANOR_HOST") or DEFAULT_HOST).strip() or DEFAULT_HOST
+
+
+def listen_port() -> int:
+    raw = (os.environ.get("MANOR_PORT") or str(DEFAULT_PORT)).strip()
+    try:
+        port = int(raw)
+    except ValueError:
+        raise SystemExit("MANOR_PORT 必须是数字")
+    if not (1 <= port <= 65535):
+        raise SystemExit("MANOR_PORT 超出范围")
+    return port
+
+
+def max_body_bytes() -> int:
+    raw = (os.environ.get("MANOR_MAX_BODY") or str(DEFAULT_MAX_BODY)).strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_BODY
+    return max(64 * 1024, n)
+
+
+def auth_credentials() -> tuple[str, str] | None:
+    raw = (os.environ.get("MANOR_BASIC_AUTH") or "").strip()
+    user = (os.environ.get("MANOR_USER") or "").strip()
+    password = os.environ.get("MANOR_PASSWORD") or ""
+    if raw:
+        user, sep, password = raw.partition(":")
+        user = user.strip()
+        if not sep:
+            password = ""
+    if user and password:
+        return user, password
+    return None
+
+
+def parse_basic_auth(header: str) -> tuple[str, str] | None:
+    if not header:
+        return None
+    kind, _, token = header.partition(" ")
+    if kind.lower() != "basic" or not token.strip():
+        return None
+    try:
+        decoded = base64.b64decode(token.strip(), validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    user, sep, password = decoded.partition(":")
+    if not sep:
+        return None
+    return user, password
+
+
+def credentials_match(got_user: str, got_password: str, want_user: str, want_password: str) -> bool:
+    user_ok = hmac.compare_digest(
+        hashlib.sha256(got_user.encode("utf-8")).digest(),
+        hashlib.sha256(want_user.encode("utf-8")).digest(),
+    )
+    pass_ok = hmac.compare_digest(
+        hashlib.sha256(got_password.encode("utf-8")).digest(),
+        hashlib.sha256(want_password.encode("utf-8")).digest(),
+    )
+    return user_ok and pass_ok
+
+
+def require_auth_for_bind(host: str) -> None:
+    if host in LOOPBACK:
+        return
+    if auth_credentials():
+        return
+    if (os.environ.get("MANOR_ALLOW_OPEN") or "").strip() == "1":
+        print("警告: 已对公网开放且未设访问密码（MANOR_ALLOW_OPEN=1）")
+        return
+    raise SystemExit(
+        "监听非本机地址时必须设置 MANOR_USER 和 MANOR_PASSWORD（或 MANOR_BASIC_AUTH=用户:密码）。"
+        "仅调试可设 MANOR_ALLOW_OPEN=1。"
+    )
+
+
+def should_open_browser(host: str) -> bool:
+    if (os.environ.get("MANOR_NO_BROWSER") or "").strip() == "1":
+        return False
+    if (os.environ.get("MANOR_OPEN_BROWSER") or "").strip() == "1":
+        return True
+    return host in LOOPBACK
+
+
 _ALE_PNG = OrderedDict()
 _ALE_PNG_BYTES = 0
 _ALE_PNG_LOCK = threading.Lock()
@@ -101,6 +208,36 @@ class Handler(SimpleHTTPRequestHandler):
         except OSError:
             pass
 
+    def _request_path(self) -> str:
+        return unquote(urlsplit(self.path).path)
+
+    def _authorized(self) -> bool:
+        creds = auth_credentials()
+        if not creds:
+            return True
+        if self._request_path() in PUBLIC_PATHS:
+            return True
+        got = parse_basic_auth(self.headers.get("Authorization") or "")
+        if not got:
+            return False
+        return credentials_match(got[0], got[1], creds[0], creds[1])
+
+    def _challenge(self) -> bool:
+        if self._authorized():
+            return False
+        body = b"auth required"
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="Manor Desk", charset="UTF-8"')
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
+            pass
+        return True
+
     def _send(self, code, body: bytes, ctype="application/octet-stream", cache="no-cache"):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -123,11 +260,13 @@ class Handler(SimpleHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def do_GET(self):
+        if self._challenge():
+            return
         request = urlsplit(self.path)
         path = unquote(request.path)
         query = parse_qs(request.query)
@@ -212,11 +351,39 @@ class Handler(SimpleHTTPRequestHandler):
                 "grass": (TILE / "maptexture" / "c01.jpg").is_file(),
             }
             return self._send(200, json.dumps(payload).encode("utf-8"), "application/json")
+        if path == "/api/saves/terrain":
+            body = json.dumps(load_terrain_bundle(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
+        asset_prefix = "/api/saves/terrain/assets/"
+        if path.startswith(asset_prefix):
+            asset = load_terrain_asset(path[len(asset_prefix) :])
+            if not asset:
+                return self._send(404, b"missing", "text/plain")
+            body, content_type = asset
+            return self._send(200, body, content_type)
+        if path == "/api/saves/building":
+            body = json.dumps(load_building_bundle(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
         return self._send(404, b"not found", "text/plain")
 
+    def _limited_body(self):
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send(400, b"bad content-length", "text/plain")
+            return None
+        if length > max_body_bytes():
+            self._send(413, b"payload too large", "text/plain")
+            return None
+        return self._read_body()
+
     def do_POST(self):
+        if self._challenge():
+            return
         path = unquote(self.path.split("?", 1)[0])
-        raw = self._read_body()
+        raw = self._limited_body()
+        if raw is None:
+            return
         try:
             if path == "/api/from-gbk":
                 text = None
@@ -281,6 +448,47 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             msg = str(e).encode("utf-8", errors="replace")
             return self._send(400, msg, "text/plain; charset=utf-8")
+        return self._send(404, b"not found", "text/plain")
+
+    def do_PUT(self):
+        if self._challenge():
+            return
+        path = unquote(self.path.split("?", 1)[0])
+        raw = self._limited_body()
+        if raw is None:
+            return
+        try:
+            asset_prefix = "/api/saves/terrain/assets/"
+            if path.startswith(asset_prefix):
+                save_terrain_asset(
+                    path[len(asset_prefix) :],
+                    raw,
+                    self.headers.get("Content-Type") or "application/octet-stream",
+                )
+                return self._send(200, b'{"ok":true}', "application/json")
+            obj = json.loads(raw.decode("utf-8") or "null")
+            if path == "/api/saves/terrain/draft":
+                save_terrain_draft(obj)
+                return self._send(200, b'{"ok":true}', "application/json")
+            if path == "/api/saves/terrain/version":
+                save_terrain_version(obj)
+                return self._send(200, b'{"ok":true}', "application/json")
+            if path == "/api/saves/building":
+                body = json.dumps(save_building_bundle(obj), ensure_ascii=False).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
+        except Exception as e:
+            return self._send(400, str(e).encode("utf-8", errors="replace"), "text/plain; charset=utf-8")
+        return self._send(404, b"not found", "text/plain")
+
+    def do_DELETE(self):
+        if self._challenge():
+            return
+        path = unquote(self.path.split("?", 1)[0])
+        prefix = "/api/saves/terrain/version/"
+        if path.startswith(prefix):
+            if delete_terrain_version(path[len(prefix) :]):
+                return self._send(200, b'{"ok":true}', "application/json")
+            return self._send(404, b"missing", "text/plain")
         return self._send(404, b"not found", "text/plain")
 
     def _ale_png(self, name: str, crop: bool = True):
@@ -436,17 +644,24 @@ def main():
         from tools.export_assets import main as export_assets
 
         export_assets()
+    host = listen_host()
+    port = listen_port()
+    require_auth_for_bind(host)
     ThreadingHTTPServer.allow_reuse_address = True
-    httpd = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
-    url = "http://127.0.0.1:%d/" % PORT
+    url = "http://127.0.0.1:%d/" % port if host in LOOPBACK else "http://%s:%d/" % (host, port)
     print("外部设计桌", url)
+    print("bind", "%s:%d" % (host, port))
     print("game", GAME)
     print("tiles", TILE)
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
+    if auth_credentials():
+        print("auth", "basic")
+    if should_open_browser(host):
+        try:
+            webbrowser.open("http://127.0.0.1:%d/" % port)
+        except Exception:
+            pass
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

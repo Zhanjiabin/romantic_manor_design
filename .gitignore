@@ -15,6 +15,8 @@ Thumbs.db
 # Machine-specific game path. Clone uses vendor/game instead.
 config.json
 game_root.txt
+.env
+deploy/.env
 
 # Decoded ALE PNG cache (rebuilt on demand).
 data/ale_png_cache/
@@ -33,3 +35,12 @@ data/_*.jpg
 data/_cab_tmp/
 web/_debug*
 web/_debug*
+
+# Server-side desk saves (runtime).
+data/saves/**
+!data/saves/.gitkeep
+
+# Scratch research scripts and packed deploy archives.
+_tmp_*
+_tmp_*/
+web/_tmp_*

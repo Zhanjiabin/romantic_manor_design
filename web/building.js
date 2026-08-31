@@ -1,5 +1,15 @@
 const DESIGN_W = 570;
 const DESIGN_H = 550;
+// TxtExport (0x6593c0 → 0x6663c0 → 0x6689b0) writes LIVE layer x/y.
+// TxtInsert (0x6595d0 → 0x6663e0) loads them with ox=oy=0.
+// Cfg layer is 570×550; SetAutoSize(100,100,-230,-50) on a 1920×1080
+// client is 1690×1030. Papers from a maximized native desk are that live
+// size. Do not guess 1370/1691 from content; do not use AddTemplate's
+// (curr−570)/2 (that path is kits / TEMPIMG, not 保存设计).
+const NATIVE_PAPER_W = 1690;
+const NATIVE_PAPER_H = 1030;
+const DESK_COORD_MIN = -0x4000;
+const DESK_COORD_MAX = 0x3fff;
 const ALL_CATEGORY = "全部";
 const CUSTOM_CATEGORY = "组件";
 const UNGROUPED_FOLDER = "__ungrouped__";
@@ -11,33 +21,31 @@ const ASSET_VIRTUAL_MIN = 80;
 const MATERIAL_CATEGORIES = ["装饰", "门窗", "地面", "屋顶", "墙壁"];
 /** 对齐 builddesign.cfg 素材列表 / 截图顺序；首格全部，末格用自定义组件顶替原版套件 */
 const CATEGORY_ORDER = [ALL_CATEGORY, ...MATERIAL_CATEGORIES, CUSTOM_CATEGORY];
-/** 截图与常见主题优先排序 */
+/** 对齐原版图鉴 合成时间 顺序；未登记的包放最后 */
 const THEME_ORDER = [
-  "redera",
-  "giant",
-  "paradise",
-  "shiqi",
-  "snow",
-  "rose",
-  "antique",
-  "japan",
   "europe",
-  "greece",
   "egypt",
+  "greece",
   "park",
-  "bazaar",
-  "fruit",
-  "flower1",
-  "flower2",
-  "sea",
-  "military",
-  "space",
-  "supermarket",
-  "candy",
   "q",
   "toy",
-  "muguang",
+  "flower1",
+  "flower2",
+  "candy",
+  "fruit",
+  "sea",
+  "space",
+  "bazaar",
+  "supermarket",
+  "antique",
+  "paradise",
+  "giant",
+  "japan",
   "tds",
+  "rose",
+  "shiqi",
+  "snow",
+  "muguang",
 ];
 const BASE_KIND_TABS = [
   { kind: 0, label: "普通房屋" },
@@ -52,7 +60,7 @@ const ASSET_PREFS_KEY = "manor-building-asset-prefs-v1";
 const HUD_LAYOUT_KEY = "manor-building-hud-layout-v1";
 const OBJECT_SNAP_PX = 6;
 const MAX_PLANE = 8192;
-// Locked: ignore wrapped uint15 outliers so mixed papers stay canvas-centered.
+// Center / content-front helpers stay in the authored visible range.
 const MAX_CONTENT_COORD = 2047;
 const IMAGE_INFLIGHT_MAX = 8;
 const IMAGE_RETRY_MAX = 2;
@@ -128,9 +136,15 @@ const state = {
   customFolders: [],
   customBrush: null,
   railTab: "assets",
+  mobileSheetMode: "assets",
+  mobileToolFamily: "select",
   layerCollapsed: new Set(),
   layerFilter: "",
   layerSelectedOnly: false,
+  mobilePan: false,
+  activePointers: new Map(),
+  pointerGesture: null,
+  pointerPending: null,
   paletteDrag: null,
   interaction: null,
   tool: "select",
@@ -375,6 +389,7 @@ function rememberAsset(component, pack = component?._pack || state.pack) {
 
 async function bootBuilding() {
   document.documentElement.classList.add("boot-pending");
+  window.MobileWorkspace?.init();
   upgradeWorkspaceChrome();
   loadAssetPreferences();
   loadImage("/bdesign/imgs/glsbg.gif");
@@ -393,6 +408,7 @@ async function bootBuilding() {
   state.catalog = catalog;
   state.uidCatalog = uidCatalog;
   state.packUids = packUids.mapping || {};
+  state.packUidAliases = packUids.aliases || {};
   state.itemIcons = itemIcons.icons || {};
   state.packs = sortThemes(catalog.building.packs.filter((pack) => pack.kind === "theme"));
   state.indexedPacks = (catalog.building.packs || []).filter(
@@ -405,12 +421,29 @@ async function bootBuilding() {
     if (!PACK_INDEX.has(pack.key)) PACK_INDEX.set(pack.key, pack);
   });
   state.pack =
-    state.packs.find((pack) => pack.key === "redera") || state.packs[0] || null;
-  state.themeFilter = state.pack?.key || THEME_ALL;
+    state.packs.find((pack) => pack.key === "europe") || state.packs[0] || null;
+  state.themeFilter = THEME_ALL;
   ensureActiveCategory();
   state.base =
     catalog.building.bases.find((base) => base.kind === 0) || catalog.building.bases[0] || null;
-  loadCustoms();
+  const remoteSaves = await fetchBuildingSaves();
+  if (remoteSaves && remoteSaves.customs) {
+    applyCustomsData(remoteSaves.customs);
+    try {
+      localStorage.setItem(
+        CUSTOMS_KEY,
+        JSON.stringify(
+          Array.isArray(remoteSaves.customs)
+            ? { items: remoteSaves.customs, folders: [] }
+            : remoteSaves.customs
+        )
+      );
+    } catch (error) {
+      console.warn(error);
+    }
+  } else {
+    loadCustoms();
+  }
   bindBuilding();
   fillThemes();
   fillCategories();
@@ -419,11 +452,37 @@ async function bootBuilding() {
   fillBaseIcons();
   fillCustoms();
   setRailTab("assets");
-  const restored = restoreBuildingSession();
+  const restored = restoreBuildingSession(remoteSaves && remoteSaves.session);
+  let wasMobileWorkspace = !!window.MobileWorkspace?.modeForViewport().mobile;
+  if (wasMobileWorkspace) {
+    state.railCollapsed = restored && state.phase === "design";
+    applyRailState();
+  }
+  window.MobileWorkspace?.onModeChange((mode) => {
+    if (mode.mobile !== wasMobileWorkspace) {
+      setMobileToolsOpen(false);
+      wasMobileWorkspace = mode.mobile;
+      if (mode.mobile) {
+        if (state.phase === "select") openBuildingRail("assets");
+        else closeBuildingRail();
+      } else {
+        state.railCollapsed = false;
+        applyRailState();
+      }
+    } else {
+      syncBuildingRailAccessibility();
+      fitStageToShell();
+    }
+  });
+  if (restored && !(remoteSaves && remoteSaves.session)) saveBuildingSession();
+  if (!(remoteSaves && remoteSaves.customs) && (state.customs.length || state.customFolders.length)) {
+    saveCustoms();
+  }
   if (!restored) {
     setPhase("select");
     updateBase();
   }
+  if (wasMobileWorkspace && state.phase === "select") openBuildingRail("assets");
   syncSnapUi();
   syncMarqueeModeUi();
   syncVeilControls();
@@ -432,11 +491,16 @@ async function bootBuilding() {
   updateAlignBar();
   updateSelectionCaption();
   renderBuilding();
-  requestAnimationFrame(() => {
+  let bootFinished = false;
+  const finishBoot = () => {
+    if (bootFinished) return;
+    bootFinished = true;
     document.documentElement.classList.remove("boot-pending");
     document.documentElement.classList.add("boot-ready");
     fitStageToShell();
-  });
+  };
+  requestAnimationFrame(finishBoot);
+  setTimeout(finishBoot, 450);
 }
 
 function sortThemes(packs) {
@@ -461,9 +525,21 @@ function isAllThemes() {
   return state.themeFilter === THEME_ALL;
 }
 
+function isNativeDeskHiddenFile(file) {
+  const stem = String(file || "")
+    .toLowerCase()
+    .replace(/\.ale$/, "");
+  return /^try\d+$/.test(stem);
+}
+
+function isNativeDeskHiddenComponent(component) {
+  return isNativeDeskHiddenFile(component?.file);
+}
+
 function isBrowsableComponent(component) {
   if (!component || component.kind === "kit") return false;
   if (component.category === CUSTOM_CATEGORY || component.category === "套件") return false;
+  if (isNativeDeskHiddenComponent(component)) return false;
   return true;
 }
 
@@ -535,8 +611,8 @@ function setPhase(phase) {
   const app = document.getElementById("buildingApp");
   app.classList.toggle("phase-select", phase === "select");
   app.classList.toggle("phase-design", phase === "design");
-  document.getElementById("materialSide").hidden = phase !== "design";
-  document.getElementById("baseSelectSide").hidden = phase !== "select";
+  state.mobileSheetMode = phase === "select" ? "base" : "assets";
+  syncMobileBuildingPanels();
   const designDock = document.getElementById("designDock");
   if (designDock) designDock.hidden = phase !== "design";
   layoutFloatingHuds();
@@ -552,6 +628,8 @@ function setPhase(phase) {
   }
   updateAlignBar();
   updateToolHint();
+  updateSelectionCaption();
+  syncMobileBuildingChrome();
   markBuildingDirty();
 }
 
@@ -640,6 +718,7 @@ async function beginDesign() {
   fillLayers();
   syncDesignResetButtons();
   renderBuilding();
+  if (window.MobileWorkspace?.modeForViewport().mobile) closeBuildingRail();
 }
 
 function setRailTab(tab) {
@@ -648,13 +727,17 @@ function setRailTab(tab) {
     tab = "assets";
   }
   state.railTab = tab;
+  if (window.MobileWorkspace?.modeForViewport().mobile) state.mobileSheetMode = tab;
   document.querySelectorAll(".rail-tab").forEach((button) => {
     button.classList.toggle("on", button.dataset.tab === tab);
+    button.setAttribute("aria-selected", String(button.dataset.tab === tab));
   });
   document.getElementById("tabAssets").hidden = tab !== "assets";
   document.getElementById("tabLayers").hidden = tab !== "layers";
   if (tab === "layers") fillLayers();
   if (tab === "assets") syncAssetCategoryView();
+  syncMobileBuildingPanels();
+  syncMobileBuildingChrome();
 }
 
 function syncSnapUi() {
@@ -810,14 +893,19 @@ function updateToolHint() {
 function packUidOf(pack = state.pack) {
   if (!pack) return null;
   const mapping = state.packUids || {};
+  let found = null;
   for (const [uid, key] of Object.entries(mapping)) {
-    if (key === pack.key) return Number(uid);
+    if (key !== pack.key) continue;
+    const n = Number(uid);
+    if (found == null || n > found) found = n;
   }
-  return null;
+  return found;
 }
 
 function packForPaperUid(paperUid) {
-  const key = (state.packUids || {})[String(paperUid)];
+  const key =
+    (state.packUids || {})[String(paperUid)] ||
+    (state.packUidAliases || {})[String(paperUid)];
   return key ? packByKey(key) : null;
 }
 
@@ -1175,6 +1263,9 @@ function opaqueBottomVertex(image, threshold = 32) {
 
 /** Locked frame: maskimg stays put. Floor's visible front vertex sits on the mask front vertex. */
 function floorSnugInMask(floor, mask, fw, fh, mw, mh) {
+  if (window.BuildingPreview?.floorSnugInMask) {
+    return window.BuildingPreview.floorSnugInMask(floor, mask);
+  }
   const maskBottom = opaqueBottomVertex(mask, 32);
   // Floor ALE has a faint fringe below the grey tiles; use the solid surface
   // so the visible foundation sits on the mask's front edge, not the halo.
@@ -1441,19 +1532,62 @@ function centerBuildingInPlane(layout) {
   return layout;
 }
 
-function paperNativeOrigin() {
-  const origin = state.paperOrigin;
-  if (origin && Number.isFinite(origin.x) && Number.isFinite(origin.y)) return origin;
-  const header = state.records.find((record) => Number(record.mat) === 0);
-  if (
-    state.paperLayout &&
-    header &&
-    Number.isFinite(Number(header.x)) &&
-    Number.isFinite(Number(header.y))
-  ) {
-    return { x: Number(header.x) || 0, y: Number(header.y) || 0 };
+function decodeS15(value) {
+  value = Number(value) | 0;
+  value &= 0x7fff;
+  return value > 0x3fff ? value - 0x8000 : value;
+}
+
+/** x86 cdq/sub/sar 1: signed divide-by-two toward zero. Mask center and AddTemplate. */
+function nativeHalfDelta(a, b) {
+  return window.BuildingPreview?.nativeHalfDelta
+    ? window.BuildingPreview.nativeHalfDelta(a, b)
+    : Math.trunc((Number(a) - Number(b)) / 2);
+}
+
+function nativeMaskOriginForLayer(layerW, layerH, maskW, maskH) {
+  if (window.BuildingPreview?.nativeMaskOriginForLayer) {
+    return window.BuildingPreview.nativeMaskOriginForLayer(layerW, layerH, maskW, maskH);
   }
-  return null;
+  return {
+    x: nativeHalfDelta(layerW, maskW || 0),
+    y: nativeHalfDelta(layerH, maskH || 0),
+  };
+}
+
+function paperNativeOrigin() {
+  // mat=0 is GDesignSubUser, not a paper origin. TxtExport papers are live
+  // layer coords; map the maximized native layer onto the locked frame.
+  if (!state.paperLayout || !state.records.length) return null;
+  const layout = state.baseLayout;
+  if (!layout) return null;
+  return nativeMaskOriginForLayer(NATIVE_PAPER_W, NATIVE_PAPER_H, layout.maskW, layout.maskH);
+}
+
+function nativePaperFloorOrigin(layout, maskOrigin) {
+  if (window.BuildingPreview?.nativePaperFloorOrigin) {
+    return window.BuildingPreview.nativePaperFloorOrigin(state.base, maskOrigin);
+  }
+  const anchor = state.base?.anchor;
+  const frame = state.base?.assets?.baseImage?.frameTable?.[0];
+  if (
+    !layout?.maskW ||
+    !maskOrigin ||
+    !Array.isArray(anchor) ||
+    !Number.isFinite(Number(anchor[0])) ||
+    !Number.isFinite(Number(anchor[1])) ||
+    !Number.isFinite(Number(frame?.anchorX)) ||
+    !Number.isFinite(Number(frame?.anchorY))
+  ) {
+    return null;
+  }
+  // Blit 0x6646af puts the floor bitmap at mask+(cx,cy). ALE then shifts
+  // the opaque tiles inside that bitmap; floorSnugInMask matches that
+  // visible floor, so sprites stay on the grey tiles like TxtInsert.
+  return {
+    x: maskOrigin.x + Number(anchor[0]) + Number(frame.anchorX),
+    y: maskOrigin.y + Number(anchor[1]) + Number(frame.anchorY),
+  };
 }
 
 let paperFrontCache = null;
@@ -1516,22 +1650,16 @@ function computeLiveContentOffset() {
   if (!layout) return { dx: 0, dy: 0 };
   if (state.paperLayout && state.records.length) {
     const origin = paperNativeOrigin();
-    if (origin) {
-      // The mat=0 record is the native ChgBaseMask origin. Keep every imported
-      // sprite at its authored offset from that origin; normalising sparse
-      // papers by their lowest prop wrongly drags those props to the front tip.
-      const frameX = layout.maskW ? layout.maskX : layout.contentDx || 0;
-      const frameY = layout.maskH ? layout.maskY : layout.contentDy || 0;
+    const nativeFloor = origin ? nativePaperFloorOrigin(layout, origin) : null;
+    if (
+      nativeFloor &&
+      Number.isFinite(layout.floorX) &&
+      Number.isFinite(layout.floorY)
+    ) {
+      // View transform only: map the maximized TxtInsert layer onto floorSnugInMask.
       return {
-        dx: Math.round(frameX - origin.x),
-        dy: Math.round(frameY - origin.y),
-      };
-    }
-    const front = paperContentFront();
-    if (front && Number.isFinite(layout.frontX) && Number.isFinite(layout.frontY)) {
-      return {
-        dx: Math.round(layout.frontX - front.x),
-        dy: Math.round(layout.frontY - front.y),
+        dx: Math.round(layout.floorX - nativeFloor.x),
+        dy: Math.round(layout.floorY - nativeFloor.y),
       };
     }
   }
@@ -1576,15 +1704,11 @@ function computeBaseLayout(base, floor, mask) {
   if (mask?.complete && mask.naturalWidth) {
     layout = baseLayout(base, floor, mask);
   } else {
-    const frame = base?.assets?.baseImage?.frameTable?.[0];
     layout.floorW = floor.naturalWidth;
     layout.floorH = floor.naturalHeight;
-    layout.floorX = Number.isFinite(frame?.valueA)
-      ? frame.valueA
-      : Math.round((DESIGN_W - floor.naturalWidth) / 2);
-    layout.floorY = Number.isFinite(frame?.valueB)
-      ? frame.valueB
-      : Math.max(52, DESIGN_H - floor.naturalHeight - 16);
+    // valueA/valueB are AEX atlas crop offsets, not screen coordinates.
+    layout.floorX = Math.round((DESIGN_W - floor.naturalWidth) / 2);
+    layout.floorY = Math.max(52, DESIGN_H - floor.naturalHeight - 16);
     layout.planeW = Math.max(DESIGN_W, layout.floorX + layout.floorW);
     layout.planeH = Math.max(DESIGN_H, layout.floorY + layout.floorH);
   }
@@ -1903,6 +2027,7 @@ function appendAssetTile(parent, row) {
       return;
     }
     selectBrush();
+    if (window.MobileWorkspace?.modeForViewport().mobile) closeBuildingRail();
   };
   const favorite = document.createElement("button");
   favorite.type = "button";
@@ -2120,6 +2245,8 @@ function updateBase() {
   if (meta) meta.hidden = !base;
   if (!base) {
     document.getElementById("currentBase").textContent = "无";
+    const projectBase = document.getElementById("projectCurrentBase");
+    if (projectBase) projectBase.textContent = "无";
     document.getElementById("buildingName").textContent = "无";
     document.getElementById("buildingPut").textContent = "0×0";
     document.getElementById("buildingSpace").textContent = "无";
@@ -2130,6 +2257,8 @@ function updateBase() {
     return;
   }
   document.getElementById("currentBase").textContent = base.name;
+  const projectBase = document.getElementById("projectCurrentBase");
+  if (projectBase) projectBase.textContent = base.name;
   document.getElementById("buildingName").textContent = base.name;
   document.getElementById("buildingPut").textContent = base.footprint?.join("×") || "0×0";
   document.getElementById("buildingSpace").textContent = formatInsideSpace(base);
@@ -2161,6 +2290,8 @@ function updateSelectionCaption() {
   const actions = document.getElementById("selectionActions");
   const btnClearPick = document.getElementById("btnClearPick");
   const count = state.selected.length;
+  const mobileBar = document.getElementById("mobileSelectionBar");
+  if (mobileBar) mobileBar.hidden = state.phase !== "design" || count < 1;
   const picking = hasBrush() || count > 0;
   if (btnClearPick) btnClearPick.hidden = !picking;
   if (actions) actions.hidden = count < 1;
@@ -2276,9 +2407,8 @@ function frameGeometry(component, stateValue = 0) {
 function isInCanvasBounds(record) {
   const x = Number(record?.x) || 0;
   const y = Number(record?.y) || 0;
-  // Native papers park leftovers at uint15 wrap (~32000). Keep those off the grass.
-  // New stamps left/above the house origin are negative paper coords and must still paint.
-  if (x >= 32000 || y >= 32000) return false;
+  // After s15 decode, leftover 327xx values are small negatives and may
+  // legally hang off the design layer. Clip by the painted canvas only.
   const offset = state.interaction?.offset || paintedOffset || { dx: 0, dy: 0 };
   const px = x + (Number(offset.dx) || 0);
   const py = y + (Number(offset.dy) || 0);
@@ -2287,12 +2417,31 @@ function isInCanvasBounds(record) {
   return px > -w && py > -h && px < w * 2 && py < h * 2;
 }
 
+function drawFrameImage(target, image, x, y, width, height) {
+  if (width > 0 && height > 0) {
+    target.drawImage(image, x, y, width, height);
+    return;
+  }
+  target.drawImage(image, x, y);
+}
+
 function isCanvasRecord(record) {
-  return !!(record && !record.hidden && Number(record.mat) !== 0 && isInCanvasBounds(record));
+  return !!(
+    record &&
+    !record.hidden &&
+    Number(record.mat) !== 0 &&
+    isInCanvasBounds(record) &&
+    !isNativeDeskHiddenComponent(recordComponent(record))
+  );
 }
 
 function isSelectableRecord(record) {
-  return !!(record && Number(record.mat) !== 0 && isInCanvasBounds(record));
+  return !!(
+    record &&
+    Number(record.mat) !== 0 &&
+    isInCanvasBounds(record) &&
+    !isNativeDeskHiddenComponent(recordComponent(record))
+  );
 }
 
 function recordBox(record) {
@@ -2387,7 +2536,7 @@ function drawGhost() {
       const x = originX + row.dx;
       const y = originY + row.dy;
       if (image?.complete && image.naturalWidth) {
-        ctx.drawImage(image, x, y);
+        drawFrameImage(ctx, image, x, y, geometry.width, geometry.height);
       } else {
         ctx.fillStyle = "#7ec8a0";
         ctx.fillRect(x, y, Math.max(16, geometry.width), Math.max(16, geometry.height));
@@ -2406,7 +2555,7 @@ function drawGhost() {
   ctx.save();
   ctx.globalAlpha = 0.55;
   if (image?.complete && image.naturalWidth) {
-    ctx.drawImage(image, x, y);
+    drawFrameImage(ctx, image, x, y, geometry.width, geometry.height);
   } else {
     ctx.fillStyle = "#7ec8a0";
     ctx.fillRect(x, y, Math.max(16, geometry.width), Math.max(16, geometry.height));
@@ -2429,8 +2578,9 @@ function drawStampGhostAt(template, cx, cy) {
       const geometry = frameGeometry(component, face);
       const x = originX + row.dx;
       const y = originY + row.dy;
-      if (image?.complete && image.naturalWidth) ctx.drawImage(image, x, y);
-      else ctx.fillRect(x, y, Math.max(16, geometry.width), Math.max(16, geometry.height));
+      if (image?.complete && image.naturalWidth) {
+        drawFrameImage(ctx, image, x, y, geometry.width, geometry.height);
+      } else ctx.fillRect(x, y, Math.max(16, geometry.width), Math.max(16, geometry.height));
     });
     return;
   }
@@ -2443,8 +2593,9 @@ function drawStampGhostAt(template, cx, cy) {
   const y = Math.round(cy - geometry.height / 2);
   const url = spriteUrl(component, pack, face);
   const image = loadImage(url);
-  if (image?.complete && image.naturalWidth) ctx.drawImage(image, x, y);
-  else {
+  if (image?.complete && image.naturalWidth) {
+    drawFrameImage(ctx, image, x, y, geometry.width, geometry.height);
+  } else {
     ctx.fillStyle = "#7ec8a0";
     ctx.fillRect(x, y, Math.max(16, geometry.width), Math.max(16, geometry.height));
   }
@@ -2487,6 +2638,9 @@ function paintBuilding() {
   if (frameEl) {
     frameEl.dataset.paintDx = String(dx);
     frameEl.dataset.paintDy = String(dy);
+    if (state.paperLayout && state.baseLayout) {
+      frameEl.dataset.nativeLayer = `${NATIVE_PAPER_W}x${NATIVE_PAPER_H}`;
+    }
   }
   if (state.phase === "design" && layoutReady) {
     const drag = state.dragging;
@@ -2506,7 +2660,7 @@ function paintBuilding() {
       const offsetX = moving ? drag.offsetX || 0 : 0;
       const offsetY = moving ? drag.offsetY || 0 : 0;
       if (image?.complete && image.naturalWidth) {
-        ctx.drawImage(image, box.x + offsetX, box.y + offsetY);
+        drawFrameImage(ctx, image, box.x + offsetX, box.y + offsetY, box.width, box.height);
       } else {
         ctx.fillStyle = "#d75d44";
         ctx.fillRect(box.hotX + offsetX - 4, box.hotY + offsetY - 4, 8, 8);
@@ -3397,6 +3551,29 @@ function markBuildingDirty() {
   }, 350);
 }
 
+async function fetchBuildingSaves() {
+  try {
+    const res = await fetch("/api/saves/building", { credentials: "same-origin" });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (error) {
+    console.warn(error);
+    return null;
+  }
+}
+
+function putBuildingSaves(payload, keepalive) {
+  return fetch("/api/saves/building", {
+    method: "PUT",
+    credentials: "same-origin",
+    keepalive: !!keepalive,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then((res) => {
+    if (!res.ok) throw new Error(String(res.status));
+  });
+}
+
 function serializeSessionRecords() {
   return state.records.map((record) => ({
     mode: record.mode || "desk",
@@ -3454,12 +3631,14 @@ function buildingSessionSnapshot() {
 }
 
 function saveBuildingSession() {
+  const snap = buildingSessionSnapshot();
   try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(buildingSessionSnapshot()));
+    localStorage.setItem(SESSION_KEY, JSON.stringify(snap));
     state.sessionDirty = false;
   } catch (error) {
     console.warn("建筑会话保存失败", error);
   }
+  putBuildingSaves({ session: snap }, true).catch((error) => console.warn(error));
 }
 
 function findBaseFromSession(snap) {
@@ -3474,14 +3653,16 @@ function findBaseFromSession(snap) {
   );
 }
 
-function restoreBuildingSession() {
-  let snap = null;
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return false;
-    snap = JSON.parse(raw);
-  } catch {
-    return false;
+function restoreBuildingSession(remoteSnap) {
+  let snap = remoteSnap && typeof remoteSnap === "object" ? remoteSnap : null;
+  if (!snap) {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return false;
+      snap = JSON.parse(raw);
+    } catch {
+      return false;
+    }
   }
   if (!snap || snap.v !== 1) return false;
 
@@ -3569,8 +3750,8 @@ function hydrateRecord(record) {
     ? ""
     : record.packKey || record.pack?.key || state.pack?.key || "";
   const pack = localPackUnknown ? null : packByKey(packKey) || state.pack;
-  const x = Number(record.x) || 0;
-  const y = Number(record.y) || 0;
+  const x = decodeS15(record.x);
+  const y = decodeS15(record.y);
   const mat = Number(record.mat) || 0;
   return {
     mode: record.mode || "desk",
@@ -3586,7 +3767,7 @@ function hydrateRecord(record) {
     groupName: record.groupName || null,
     label: record.label || null,
     locked: !!record.locked,
-    hidden: !!record.hidden || mat === 0 || x >= 32000 || y >= 32000,
+    hidden: !!record.hidden || mat === 0,
   };
 }
 
@@ -3671,7 +3852,14 @@ function buildDragLayer(indices) {
     const image = loadImage(spriteUrl(component, pack, record.state ?? record.flip ?? 0));
     const box = recordBox(record);
     if (image?.complete && image.naturalWidth) {
-      c.drawImage(image, Math.round(box.x - bounds.left), Math.round(box.y - bounds.top));
+      drawFrameImage(
+        c,
+        image,
+        Math.round(box.x - bounds.left),
+        Math.round(box.y - bounds.top),
+        box.width,
+        box.height
+      );
     } else allReady = false;
   });
   return { bounds, movingSet, sheet: allReady ? sheet : null };
@@ -4355,6 +4543,15 @@ function commitRecordDrag() {
 function cancelCanvasInteraction() {
   const interaction = state.interaction;
   if (!interaction) return false;
+  if (interaction.mode === "move" && state.dragging?.origins) {
+    state.dragging.origins.forEach((origin) => {
+      const record = state.records[origin.i];
+      if (record) {
+        record.x = origin.x;
+        record.y = origin.y;
+      }
+    });
+  }
   if (interaction.baseSelection) setSelection(interaction.baseSelection, { layers: false });
   state.marquee = null;
   state.dragging = null;
@@ -4415,6 +4612,59 @@ function beginCanvasPointer(event, shell) {
   }
   if (state.phase !== "design") return;
   if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
+  if (event.pointerType === "touch") {
+    event.preventDefault();
+    state.activePointers.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+    try { shell.setPointerCapture?.(event.pointerId); } catch {}
+    if (state.activePointers.size >= 2) {
+      if (state.pointerPending?.timer) clearTimeout(state.pointerPending.timer);
+      state.pointerPending = null;
+      cancelCanvasInteraction();
+      const [a, b] = [...state.activePointers.values()];
+      state.pointerGesture = {
+        type: "pinch",
+        distance: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)),
+        zoom: state.zoom,
+        midX: (a.clientX + b.clientX) / 2,
+        midY: (a.clientY + b.clientY) / 2,
+      };
+      shell.classList.add("is-panning");
+      return;
+    }
+    if (!state._touchArmed) {
+      if (state.pointerGesture) return;
+      const armedEvent = {
+        pointerId: event.pointerId,
+        pointerType: "touch",
+        button: 0,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        shiftKey: !!event.shiftKey,
+        ctrlKey: !!event.ctrlKey,
+        metaKey: !!event.metaKey,
+        altKey: !!event.altKey,
+        target: event.target,
+        preventDefault() {},
+      };
+      state.pointerPending = {
+        id: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        event: armedEvent,
+        timer: setTimeout(() => {
+          if (state.pointerGesture || state.activePointers.size !== 1) return;
+          const pending = state.pointerPending;
+          state.pointerPending = null;
+          if (!pending) return;
+          state._touchArmed = true;
+          beginCanvasPointer(pending.event, shell);
+          state._touchArmed = false;
+        }, 90),
+      };
+      return;
+    }
+  }
+  if (state.pointerGesture) return;
   if (state.interaction) return;
   if (event.target.closest?.(".zoom-control, .base-meta, .stage-commandbar, .canvas-tool-dock, .canvas-toolrail, .ctx-menu, button, a, input, select, label")) return;
   focusDesignCanvas();
@@ -4446,7 +4696,7 @@ function beginCanvasPointer(event, shell) {
     return;
   }
 
-  if (event.button === 1 || state.spacePan) {
+  if (event.button === 1 || state.spacePan || state.mobilePan) {
     interaction.mode = "pan";
     interaction.startScroll = { x: shell.scrollLeft, y: shell.scrollTop };
     shell.classList.add("is-panning");
@@ -4526,6 +4776,37 @@ function beginCanvasPointer(event, shell) {
 }
 
 function moveCanvasPointer(event, shell) {
+  if (event.pointerType === "touch" && state.activePointers.has(event.pointerId)) {
+    event.preventDefault();
+    state.activePointers.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+    if (state.pointerGesture?.type === "pinch" && state.activePointers.size >= 2) {
+      const [a, b] = [...state.activePointers.values()];
+      const distance = Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY));
+      const midX = (a.clientX + b.clientX) / 2;
+      const midY = (a.clientY + b.clientY) / 2;
+      setZoom(state.pointerGesture.zoom * distance / state.pointerGesture.distance, midX, midY);
+      shell.scrollLeft -= (midX - state.pointerGesture.midX);
+      shell.scrollTop -= (midY - state.pointerGesture.midY);
+      state.pointerGesture.midX = midX;
+      state.pointerGesture.midY = midY;
+      syncViewportOverlays();
+      return;
+    }
+    if (state.pointerGesture) return;
+    const pending = state.pointerPending;
+    if (pending && pending.id === event.pointerId && !state.interaction) {
+      const moved = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
+      if (moved >= 12) {
+        clearTimeout(pending.timer);
+        pending.event.clientX = event.clientX;
+        pending.event.clientY = event.clientY;
+        state.pointerPending = null;
+        state._touchArmed = true;
+        beginCanvasPointer(pending.event, shell);
+        state._touchArmed = false;
+      }
+    }
+  }
   const interaction = state.interaction;
   if (!interaction || event.pointerId !== interaction.pointerId) return;
   if (interaction.mode === "pan") {
@@ -4578,6 +4859,27 @@ function moveCanvasPointer(event, shell) {
 }
 
 function finishCanvasPointer(event, shell, cancelled = false) {
+  if (event.pointerType === "touch" && state.activePointers.has(event.pointerId)) {
+    if (state.pointerGesture) {
+      state.activePointers.delete(event.pointerId);
+      state.pointerGesture = state.activePointers.size ? { type: "pinch-tail" } : null;
+      if (!state.activePointers.size) shell.classList.remove("is-panning");
+      return;
+    }
+    const pending = state.pointerPending;
+    if (pending?.id === event.pointerId) {
+      clearTimeout(pending.timer);
+      state.pointerPending = null;
+      if (!cancelled && !state.interaction) {
+        pending.event.clientX = event.clientX;
+        pending.event.clientY = event.clientY;
+        state._touchArmed = true;
+        beginCanvasPointer(pending.event, shell);
+        state._touchArmed = false;
+      }
+    }
+    state.activePointers.delete(event.pointerId);
+  }
   const interaction = state.interaction;
   if (!interaction || event.pointerId !== interaction.pointerId) return;
   try {
@@ -4613,20 +4915,23 @@ function finishCanvasPointer(event, shell, cancelled = false) {
   renderBuilding();
 }
 
+function applyCustomsData(data) {
+  if (Array.isArray(data)) {
+    state.customs = data;
+    state.customFolders = [];
+  } else {
+    state.customs = Array.isArray(data?.items) ? data.items : [];
+    state.customFolders = Array.isArray(data?.folders)
+      ? data.folders.map((folder) => String(folder || "").trim()).filter(Boolean)
+      : [];
+  }
+  if (!Array.isArray(state.customs)) state.customs = [];
+}
+
 function loadCustoms() {
   try {
     const raw = localStorage.getItem(CUSTOMS_KEY);
-    const data = raw ? JSON.parse(raw) : [];
-    if (Array.isArray(data)) {
-      state.customs = data;
-      state.customFolders = [];
-    } else {
-      state.customs = Array.isArray(data?.items) ? data.items : [];
-      state.customFolders = Array.isArray(data?.folders)
-        ? data.folders.map((folder) => String(folder || "").trim()).filter(Boolean)
-        : [];
-    }
-    if (!Array.isArray(state.customs)) state.customs = [];
+    applyCustomsData(raw ? JSON.parse(raw) : []);
   } catch {
     state.customs = [];
     state.customFolders = [];
@@ -4634,13 +4939,12 @@ function loadCustoms() {
 }
 
 function saveCustoms() {
-  localStorage.setItem(
-    CUSTOMS_KEY,
-    JSON.stringify({
-      items: state.customs,
-      folders: customFolders(),
-    })
-  );
+  const customs = {
+    items: state.customs,
+    folders: customFolders(),
+  };
+  localStorage.setItem(CUSTOMS_KEY, JSON.stringify(customs));
+  putBuildingSaves({ customs }, true).catch((error) => console.warn(error));
 }
 
 function customFolders() {
@@ -4888,6 +5192,7 @@ function fillCustoms() {
           return;
         }
         selectCustom();
+        if (window.MobileWorkspace?.modeForViewport().mobile) closeBuildingRail();
       };
       list.appendChild(card);
     });
@@ -5351,6 +5656,7 @@ function collectLayerItems(selectedSet, filterText) {
   for (let index = state.records.length - 1; index >= 0; index--) {
     if (state.layerSelectedOnly && !selectedSet.has(index)) continue;
     const record = state.records[index];
+    if (Number(record.mat) === 0 || isNativeDeskHiddenComponent(recordComponent(record))) continue;
     const groupId = record.group || null;
     if (groupId) {
       if (!shownGroups.has(groupId)) {
@@ -5551,6 +5857,12 @@ function setActiveTool(tool) {
   });
   const shell = document.getElementById("canvasShell");
   if (shell) shell.dataset.tool = state.tool;
+  const toolButton = document.getElementById("btnBuildingMobileTools");
+  if (toolButton) {
+    const label = toolButton.querySelector("span:last-child");
+    const activeName = document.querySelector(`#canvasToolrail [data-tool="${state.tool}"] .tool-name`);
+    if (label && activeName) label.textContent = activeName.textContent;
+  }
   updateToolHint();
   syncShapeOverlay();
 }
@@ -5602,6 +5914,7 @@ const COMMANDS = [
   { id: "zoomOut", label: "缩小", shortcut: "-", run: () => zoomBy(-ZOOM_STEP) },
   { id: "copy", label: "复制到剪贴工作集", shortcut: "Ctrl+C", run: copySelected },
   { id: "paste", label: "粘贴工作集", shortcut: "Ctrl+V", run: pasteClipboard },
+  { id: "batchPreview", label: "打开图纸库", shortcut: "", run: () => togglePaperLibrary() },
 ];
 const SHORTCUT_NOTES = [
   { label: "选中素材微移", shortcut: "方向键" },
@@ -5921,10 +6234,13 @@ function runLayerCommand(command) {
 function setModalVisible(id, visible) {
   const modal = document.getElementById(id);
   if (!modal) return;
-  modal.hidden = !visible;
   if (visible) {
+    closeBuildingRail();
+    window.MobileWorkspace?.openLayer(modal, document.activeElement);
     const input = modal.querySelector("input");
     requestAnimationFrame(() => input?.focus());
+  } else {
+    window.MobileWorkspace?.closeLayer(modal);
   }
 }
 
@@ -5968,6 +6284,150 @@ function fillShortcutHelp() {
   });
 }
 
+function setMobileToolsOpen(open) {
+  if (open) {
+    state.mobilePan = false;
+    syncMobilePanUi();
+    setMobileToolFamily(state.tool === "select" ? "select" : "brush");
+  }
+  document.documentElement.classList.toggle("mobile-tools-open", !!open);
+  const mobile = window.MobileWorkspace?.modeForViewport().mobile;
+  if (mobile) {
+    if (open && window.MobileWorkspace.activeSheet() !== "building-tools") {
+      window.MobileWorkspace.openSheet("building-tools", {
+        trigger: document.getElementById("btnBuildingMobileTools"),
+        resetScroll: false,
+      });
+    } else if (!open && window.MobileWorkspace.activeSheet() === "building-tools") {
+      window.MobileWorkspace.closeSheet("building-tools", { restoreFocus: false });
+    }
+  }
+  const dock = document.getElementById("canvasToolDock");
+  dock?.setAttribute("aria-hidden", String(mobile && !open));
+  const button = document.getElementById("btnBuildingMobileTools");
+  button?.classList.toggle("on", !!open);
+  button?.setAttribute("aria-pressed", String(!!open));
+  syncBuildingBackdrop();
+}
+
+function setMobileToolFamily(family) {
+  state.mobileToolFamily = family === "brush" ? "brush" : "select";
+  document.querySelectorAll("[data-mobile-tool-family]").forEach((button) => {
+    const active = button.dataset.mobileToolFamily === state.mobileToolFamily;
+    button.classList.toggle("on", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  const dock = document.getElementById("canvasToolDock");
+  if (dock) dock.dataset.mobileToolFamily = state.mobileToolFamily;
+  const title = document.getElementById("buildingToolSheetTitle");
+  if (title) title.textContent = state.mobileToolFamily === "brush" ? "工具 · 绘制" : "工具 · 选择";
+}
+
+function syncBuildingBackdrop() {
+  const backdrop = document.getElementById("buildingRailBackdrop");
+  if (!backdrop) return;
+  const mobile = window.MobileWorkspace?.modeForViewport().mobile;
+  if (!mobile) {
+    backdrop.hidden = true;
+    return;
+  }
+  const railOpen = !state.railCollapsed;
+  const toolsOpen = document.documentElement.classList.contains("mobile-tools-open");
+  backdrop.hidden = !(railOpen || toolsOpen);
+}
+
+function closeBuildingRail() {
+  state.railCollapsed = true;
+  applyRailState();
+}
+
+function openBuildingRail(mode = state.phase === "select" ? "base" : state.railTab || "assets") {
+  setMobileToolsOpen(false);
+  state.mobilePan = false;
+  syncMobilePanUi();
+  if (state.phase !== "design") mode = "base";
+  if (!["base", "assets", "layers", "project"].includes(mode)) mode = "assets";
+  state.mobileSheetMode = mode;
+  if (mode === "assets" || mode === "layers") setRailTab(mode);
+  state.railCollapsed = false;
+  applyRailState();
+  requestAnimationFrame(() => {
+    const rail = document.querySelector(".building-rail");
+    if (rail) rail.scrollTop = 0;
+    if (mode === "assets") {
+      const list = document.getElementById("componentList");
+      if (list) list.scrollTop = 0;
+      paintAssetWindow?.();
+    }
+    document.getElementById("btnBuildingSheetClose")?.focus({ preventScroll: true });
+  });
+}
+
+function syncMobileBuildingPanels() {
+  const mobile = !!window.MobileWorkspace?.modeForViewport().mobile;
+  const base = document.getElementById("baseSelectSide");
+  const material = document.getElementById("materialSide");
+  const project = document.getElementById("buildingProjectPane");
+  if (!mobile) {
+    if (base) base.hidden = state.phase !== "select";
+    if (material) material.hidden = state.phase !== "design";
+    if (project) project.hidden = state.phase !== "design";
+    return;
+  }
+  const mode = state.phase === "select" ? "base" : state.mobileSheetMode;
+  if (base) base.hidden = mode !== "base";
+  if (material) material.hidden = mode === "base" || mode === "project";
+  if (project) project.hidden = mode !== "project";
+}
+
+function syncMobilePanUi() {
+  const button = document.getElementById("btnBuildingMobilePan");
+  button?.classList.toggle("on", state.mobilePan);
+  button?.setAttribute("aria-pressed", String(state.mobilePan));
+  document.getElementById("canvasShell")?.classList.toggle("mobile-pan-mode", state.mobilePan);
+}
+
+function syncBuildingRailAccessibility() {
+  const mobile = window.MobileWorkspace?.modeForViewport().mobile;
+  const rail = document.querySelector(".building-rail");
+  const stage = document.querySelector(".building-stage");
+  const open = mobile && !state.railCollapsed;
+  if (open && window.MobileWorkspace?.activeSheet() !== "building-rail") {
+    window.MobileWorkspace?.openSheet("building-rail", {
+      trigger:
+        state.mobileSheetMode === "project"
+          ? document.getElementById("btnBuildingMobileProject")
+          : document.getElementById("btnBuildingMobileAssets"),
+      resetScroll: false,
+    });
+  } else if (!open && window.MobileWorkspace?.activeSheet() === "building-rail") {
+    window.MobileWorkspace?.closeSheet("building-rail", { restoreFocus: false });
+  }
+  rail?.classList.toggle("open", open);
+  window.MobileWorkspace?.setInert(rail, mobile && !open);
+  window.MobileWorkspace?.setInert(stage, open);
+  syncBuildingBackdrop();
+  syncMobileBuildingPanels();
+  syncMobileBuildingChrome();
+  const assets = document.getElementById("btnBuildingMobileAssets");
+  const project = document.getElementById("btnBuildingMobileProject");
+  const mode = state.phase === "select" ? "base" : state.mobileSheetMode;
+  assets?.setAttribute("aria-expanded", String(open && mode !== "project"));
+  project?.setAttribute("aria-expanded", String(open && mode === "project"));
+  assets?.classList.toggle("on", open && mode !== "project");
+  project?.classList.toggle("on", open && mode === "project");
+  if (open) setMobileToolsOpen(false);
+}
+
+function syncMobileBuildingChrome() {
+  const label = document.getElementById("buildingMobileAssetsLabel");
+  if (label) label.textContent = state.phase === "design" ? "素材" : "户型";
+  const title = document.getElementById("buildingSheetTitle");
+  if (!title) return;
+  const mode = state.phase === "select" ? "base" : state.mobileSheetMode;
+  title.textContent = mode === "base" ? "户型" : mode === "layers" ? "图层" : mode === "project" ? "项目" : "素材";
+}
+
 function applyRailState() {
   const app = document.getElementById("buildingApp");
   if (!app) return;
@@ -5976,6 +6436,7 @@ function applyRailState() {
   app.classList.toggle("rail-collapsed", !!state.railCollapsed);
   const button = document.getElementById("btnToggleRail");
   if (button) button.textContent = state.railCollapsed ? "展开" : "侧栏";
+  syncBuildingRailAccessibility();
   requestAnimationFrame(() => fitStageToShell());
 }
 
@@ -5991,7 +6452,7 @@ function applyImportedPaperBase() {
 
 async function parseBuildingFile(file) {
   const buffer = await file.arrayBuffer();
-  const response = await fetch("/api/parse-building", {
+  const response = await fetch("/api/parse-building-desk", {
     method: "POST",
     body: buffer,
   });
@@ -6076,9 +6537,9 @@ function loadPreviewImage(url) {
   });
 }
 
-async function paintPaperThumbnail(target, documentData) {
-  const width = 240;
-  const height = 180;
+async function paintPaperThumbnail(target, documentData, options = {}) {
+  const width = Math.max(80, Math.round(Number(options.width) || 240));
+  const height = Math.max(60, Math.round(Number(options.height) || 180));
   target.width = width;
   target.height = height;
   const c = target.getContext("2d");
@@ -6094,7 +6555,7 @@ async function paintPaperThumbnail(target, documentData) {
   c.fill();
 
   const rows = (documentData.records || [])
-    .filter((record) => Number(record.mat) && Number(record.x) < 32000 && Number(record.y) < 32000)
+    .filter((record) => Number(record.mat))
     .map((record) => {
       const mat = Number(record.mat) || 0;
       const pack = previewPackForMat(mat);
@@ -6139,130 +6600,604 @@ async function paintPaperThumbnail(target, documentData) {
   });
 }
 
+const PAPER_INSPECT_MIN_ZOOM = 0.2;
+const PAPER_INSPECT_MAX_ZOOM = 8;
+
+const batchLibrary = {
+  generation: 0,
+  loading: false,
+  folderLabel: "",
+  query: "",
+  entries: [],
+  failed: 0,
+};
+
+const paperInspectView = {
+  entry: null,
+  bitmap: null,
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+  dragging: false,
+  lastX: 0,
+  lastY: 0,
+  pointers: new Map(),
+  pinch: null,
+  resizeObserver: null,
+};
+
+function isPaperLibraryOpen() {
+  const panel = document.getElementById("paperLibrary");
+  return Boolean(panel && !panel.hidden);
+}
+
+function isPaperInspectOpen() {
+  const panel = document.getElementById("paperInspect");
+  return Boolean(panel && !panel.hidden);
+}
+
+function updateBatchPreviewButton() {
+  const btn = document.getElementById("btnBatchPreview");
+  if (!btn) return;
+  const n = batchLibrary.entries.length;
+  if (n) {
+    btn.textContent = `图纸库 (${n})`;
+    btn.title = "打开常驻图纸库（已缓存，不会重新解析）";
+  } else if (batchLibrary.loading) {
+    btn.textContent = "图纸库";
+    btn.title = "图纸正在解析，打开可查看进度";
+  } else {
+    btn.textContent = "图纸库";
+    btn.title = "打开常驻图纸库；第一次会选择本地文件夹";
+  }
+  btn.classList.toggle("on", isPaperLibraryOpen());
+}
+
+function syncPaperLibraryEmpty() {
+  const empty = document.getElementById("paperLibraryEmpty");
+  const grid = document.getElementById("paperPreviewGrid");
+  const hasCards = batchLibrary.entries.length > 0 || batchLibrary.loading;
+  if (empty) empty.hidden = hasCards;
+  if (grid) grid.hidden = !batchLibrary.entries.length && !batchLibrary.loading;
+}
+
+function setPaperLibraryOpen(open) {
+  const panel = document.getElementById("paperLibrary");
+  if (!panel) return;
+  if (!open) closePaperInspect();
+  panel.hidden = !open;
+  window.MobileWorkspace?.setInert(document.querySelector(".building-stage"), open);
+  window.MobileWorkspace?.setInert(document.querySelector(".building-rail"), open || (window.MobileWorkspace.modeForViewport().mobile && state.railCollapsed));
+  window.MobileWorkspace?.setInert(document.getElementById("buildingMobileDock"), open);
+  document.getElementById("buildingApp")?.classList.toggle("library-open", open);
+  if (open) {
+    syncPaperLibraryEmpty();
+    applyPaperLibraryFilter();
+    updatePaperLibraryStatus();
+  }
+  if (!open) syncBuildingRailAccessibility();
+  updateBatchPreviewButton();
+}
+
+function togglePaperLibrary() {
+  if (isPaperLibraryOpen()) {
+    setPaperLibraryOpen(false);
+    return;
+  }
+  if (batchLibrary.entries.length || batchLibrary.loading) {
+    setPaperLibraryOpen(true);
+    return;
+  }
+  document.getElementById("buildingFolder")?.click();
+}
+
+function folderLabelFromFiles(files) {
+  const rel = String(files[0]?.webkitRelativePath || files[0]?.name || "").replace(/\\/g, "/");
+  const parts = rel.split("/").filter(Boolean);
+  return parts.length > 1 ? parts[0] : "本地图纸";
+}
+
+function paperLibraryMaterials(records) {
+  const materialTotals = new Map();
+  let unresolved = 0;
+  records.filter((record) => Number(record.mat)).forEach((record) => {
+    const mat = Number(record.mat) || 0;
+    const pack = previewPackForMat(mat);
+    const component = componentByUid(mat, pack);
+    if (!component) {
+      unresolved += 1;
+      return;
+    }
+    (component.materials || []).forEach((material) => {
+      materialTotals.set(material.name, (materialTotals.get(material.name) || 0) + material.count);
+    });
+  });
+  return { materialTotals, unresolved };
+}
+
+function updatePaperLibraryStatus(message = "") {
+  const status = document.getElementById("paperBatchStatus");
+  const title = document.getElementById("paperLibraryTitle");
+  if (title) {
+    title.textContent = batchLibrary.folderLabel
+      ? `本地图纸库 · ${batchLibrary.folderLabel}`
+      : "本地图纸库";
+  }
+  if (!status) return;
+  if (message) {
+    status.textContent = message;
+    return;
+  }
+  const total = batchLibrary.entries.length;
+  const unresolved = batchLibrary.entries.reduce((sum, entry) => sum + Number(entry.unresolved || 0), 0);
+  const shown = [...(document.getElementById("paperPreviewGrid")?.children || [])].filter((card) => !card.hidden).length;
+  if (batchLibrary.loading) {
+    status.textContent = `正在解析… 已载入 ${total} 张`
+      + (unresolved ? ` · ${unresolved} 件素材未解析` : "")
+      + (batchLibrary.failed ? ` · ${batchLibrary.failed} 张无法读取` : "");
+    return;
+  }
+  if (!total) {
+    status.textContent = batchLibrary.failed
+      ? `${batchLibrary.failed} 张文件无法读取。`
+      : "还没有载入图纸。选择文件夹后会一直留在这里，关掉再开不用重新解析。";
+    return;
+  }
+  const filterNote = batchLibrary.query && shown !== total ? ` · 显示 ${shown} 张` : "";
+  status.textContent = `已载入 ${total} 张图纸${filterNote}`
+    + (unresolved ? ` · ${unresolved} 件素材未解析` : "")
+    + (batchLibrary.failed ? ` · ${batchLibrary.failed} 张无法读取` : "")
+    + " · 已缓存";
+}
+
+function applyPaperLibraryFilter() {
+  const query = (document.getElementById("paperBatchSearch")?.value || "").trim().toLowerCase();
+  batchLibrary.query = query;
+  const grid = document.getElementById("paperPreviewGrid");
+  if (!grid) return;
+  grid.querySelectorAll(".paper-preview-item").forEach((card) => {
+    card.hidden = Boolean(query) && !String(card.dataset.search || "").includes(query);
+  });
+  updatePaperLibraryStatus();
+}
+
+function fillPaperCardMaterials(host, materials, unresolved, kind) {
+  const preview = new Map([...materials].slice(0, 6));
+  fillMaterialList(host, preview, 0);
+  if (materials.size > 6) {
+    const more = document.createElement("span");
+    more.className = "mat-chip";
+    more.textContent = `+${materials.size - 6}`;
+    more.title = "在明细里查看全部材料";
+    host.appendChild(more);
+  } else if (!materials.size) {
+    const empty = document.createElement("small");
+    empty.textContent = kind === "desk" ? "没有可统计的材料" : "庄园摆放图不含装修材料";
+    host.appendChild(empty);
+  }
+  if (unresolved) {
+    host.title = `${unresolved} 件素材未解析`;
+  }
+}
+
+function renderPaperLibraryCard(entry) {
+  const card = document.createElement("article");
+  card.className = "paper-preview-item" + (entry.unresolved ? " has-unresolved" : "");
+  card.dataset.search = entry.search;
+  card.dataset.id = String(entry.id);
+  const visual = document.createElement("button");
+  visual.type = "button";
+  visual.className = "paper-preview-visual";
+  visual.title = "点击放大，查看明细并缩放";
+  const canvas = document.createElement("canvas");
+  const badge = document.createElement("span");
+  badge.className = "paper-preview-badge" + (entry.unresolved ? " is-warning" : "");
+  badge.textContent = entry.unresolved ? `${entry.unresolved} 件未解析` : "素材已解析";
+  const hint = document.createElement("span");
+  hint.className = "paper-preview-zoom-hint";
+  hint.textContent = "点击放大";
+  visual.append(canvas, badge, hint);
+  visual.onclick = () => openPaperInspect(entry);
+  const copy = document.createElement("div");
+  copy.className = "paper-preview-copy";
+  const name = document.createElement("strong");
+  name.textContent = entry.name;
+  name.title = entry.name;
+  name.onclick = () => openPaperInspect(entry);
+  const meta = document.createElement("small");
+  meta.textContent = entry.meta;
+  copy.append(name, meta);
+  const materials = document.createElement("div");
+  materials.className = "paper-preview-item-materials";
+  fillPaperCardMaterials(materials, entry.materials, entry.unresolved, entry.kind);
+  const actions = document.createElement("div");
+  actions.className = "paper-preview-item-actions";
+  if (entry.kind === "desk") {
+    const replace = document.createElement("button");
+    replace.type = "button";
+    replace.className = "btn";
+    replace.textContent = "覆盖打开";
+    replace.onclick = () => importLibraryPaper(entry, "replace");
+    const merge = document.createElement("button");
+    merge.type = "button";
+    merge.className = "btn btn-primary";
+    merge.textContent = "合并到当前";
+    merge.onclick = () => importLibraryPaper(entry, "merge");
+    actions.append(replace, merge);
+  } else {
+    const terrain = document.createElement("button");
+    terrain.type = "button";
+    terrain.className = "btn btn-primary";
+    terrain.textContent = "去地形桌查看";
+    terrain.onclick = () => importLibraryPaper(entry, "replace");
+    actions.appendChild(terrain);
+  }
+  card.append(visual, copy, materials, actions);
+  return { card, canvas };
+}
+
+async function importLibraryPaper(entry, mode) {
+  if (mode === "replace" && state.records.length) {
+    const ok = await appConfirm("覆盖打开会清空当前设计，是否继续？", {
+      title: "覆盖打开",
+      okLabel: "覆盖",
+      cancelLabel: "取消",
+    });
+    if (!ok) return;
+  }
+  closePaperInspect();
+  setPaperLibraryOpen(false);
+  try {
+    await importDesign(entry.file, { mode });
+  } catch (error) {
+    await appAlert(error.message || String(error), { title: mode === "merge" ? "合并图纸失败" : "导入图纸失败" });
+  }
+}
+
+function inspectViewportSize() {
+  const viewport = document.getElementById("paperInspectViewport");
+  const rect = viewport?.getBoundingClientRect();
+  return {
+    width: Math.max(1, rect?.width || 1),
+    height: Math.max(1, rect?.height || 1),
+  };
+}
+
+function inspectBitmapSize() {
+  const bitmap = paperInspectView.bitmap;
+  return {
+    width: Math.max(1, bitmap?.width || DESIGN_W),
+    height: Math.max(1, bitmap?.height || DESIGN_H),
+  };
+}
+
+function clampPaperInspectZoom(zoom) {
+  return Math.min(PAPER_INSPECT_MAX_ZOOM, Math.max(PAPER_INSPECT_MIN_ZOOM, zoom));
+}
+
+function updatePaperInspectZoomLabel() {
+  const label = document.getElementById("paperInspectZoomLabel");
+  if (label) label.textContent = `${Math.round(paperInspectView.zoom * 100)}%`;
+}
+
+function drawPaperInspect() {
+  const canvas = document.getElementById("paperInspectCanvas");
+  const bitmap = paperInspectView.bitmap;
+  if (!canvas || !isPaperInspectOpen()) return;
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const view = inspectViewportSize();
+  canvas.width = Math.max(1, Math.round(view.width * dpr));
+  canvas.height = Math.max(1, Math.round(view.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#163522";
+  ctx.fillRect(0, 0, view.width, view.height);
+  if (!bitmap) return;
+  ctx.save();
+  ctx.translate(paperInspectView.panX, paperInspectView.panY);
+  ctx.scale(paperInspectView.zoom, paperInspectView.zoom);
+  ctx.imageSmoothingEnabled = paperInspectView.zoom < 1.6;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, 0, 0);
+  ctx.restore();
+  updatePaperInspectZoomLabel();
+}
+
+function fitPaperInspect() {
+  const view = inspectViewportSize();
+  const bitmap = inspectBitmapSize();
+  const zoom = clampPaperInspectZoom(Math.min(view.width / bitmap.width, view.height / bitmap.height) * 0.96);
+  paperInspectView.zoom = zoom;
+  paperInspectView.panX = (view.width - bitmap.width * zoom) / 2;
+  paperInspectView.panY = (view.height - bitmap.height * zoom) / 2;
+  drawPaperInspect();
+}
+
+function actualPaperInspect() {
+  const view = inspectViewportSize();
+  const bitmap = inspectBitmapSize();
+  paperInspectView.zoom = 1;
+  paperInspectView.panX = (view.width - bitmap.width) / 2;
+  paperInspectView.panY = (view.height - bitmap.height) / 2;
+  drawPaperInspect();
+}
+
+function zoomPaperInspectAt(clientX, clientY, factor) {
+  const viewport = document.getElementById("paperInspectViewport");
+  if (!viewport) return;
+  const rect = viewport.getBoundingClientRect();
+  const mx = clientX - rect.left;
+  const my = clientY - rect.top;
+  const next = clampPaperInspectZoom(paperInspectView.zoom * factor);
+  if (next === paperInspectView.zoom) return;
+  const contentX = (mx - paperInspectView.panX) / paperInspectView.zoom;
+  const contentY = (my - paperInspectView.panY) / paperInspectView.zoom;
+  paperInspectView.zoom = next;
+  paperInspectView.panX = mx - contentX * next;
+  paperInspectView.panY = my - contentY * next;
+  drawPaperInspect();
+}
+
+function zoomPaperInspectBy(direction) {
+  const viewport = document.getElementById("paperInspectViewport");
+  const rect = viewport?.getBoundingClientRect();
+  const cx = (rect?.left || 0) + (rect?.width || 0) / 2;
+  const cy = (rect?.top || 0) + (rect?.height || 0) / 2;
+  zoomPaperInspectAt(cx, cy, direction > 0 ? 1.2 : 1 / 1.2);
+}
+
+function closePaperInspect() {
+  const panel = document.getElementById("paperInspect");
+  if (panel && !panel.hidden) window.MobileWorkspace?.closeLayer(panel);
+  paperInspectView.entry = null;
+  paperInspectView.bitmap = null;
+  paperInspectView.dragging = false;
+  paperInspectView.pointers.clear();
+  paperInspectView.pinch = null;
+  document.getElementById("paperInspectViewport")?.classList.remove("is-panning");
+  paperInspectView.resizeObserver?.disconnect();
+}
+
+function bindPaperInspectControls() {
+  const viewport = document.getElementById("paperInspectViewport");
+  if (!viewport || viewport.dataset.bound === "1") return;
+  viewport.dataset.bound = "1";
+  viewport.addEventListener("wheel", (event) => {
+    if (!isPaperInspectOpen()) return;
+    event.preventDefault();
+    zoomPaperInspectAt(event.clientX, event.clientY, event.deltaY > 0 ? 1 / 1.12 : 1.12);
+  }, { passive: false });
+  viewport.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !isPaperInspectOpen()) return;
+    event.preventDefault();
+    paperInspectView.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    paperInspectView.dragging = true;
+    paperInspectView.lastX = event.clientX;
+    paperInspectView.lastY = event.clientY;
+    try { viewport.setPointerCapture(event.pointerId); } catch {}
+    viewport.classList.add("is-panning");
+    if (paperInspectView.pointers.size >= 2) {
+      const [a, b] = [...paperInspectView.pointers.values()];
+      const rect = viewport.getBoundingClientRect();
+      const mx = (a.x + b.x) / 2 - rect.left;
+      const my = (a.y + b.y) / 2 - rect.top;
+      paperInspectView.pinch = {
+        distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+        zoom: paperInspectView.zoom,
+        contentX: (mx - paperInspectView.panX) / paperInspectView.zoom,
+        contentY: (my - paperInspectView.panY) / paperInspectView.zoom,
+      };
+      paperInspectView.dragging = false;
+    }
+  });
+  viewport.addEventListener("pointermove", (event) => {
+    if (paperInspectView.pointers.has(event.pointerId)) {
+      paperInspectView.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+    if (paperInspectView.pinch && paperInspectView.pointers.size >= 2) {
+      event.preventDefault();
+      const [a, b] = [...paperInspectView.pointers.values()];
+      const rect = viewport.getBoundingClientRect();
+      const mx = (a.x + b.x) / 2 - rect.left;
+      const my = (a.y + b.y) / 2 - rect.top;
+      const distance = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      const zoom = clampPaperInspectZoom(paperInspectView.pinch.zoom * distance / paperInspectView.pinch.distance);
+      paperInspectView.zoom = zoom;
+      paperInspectView.panX = mx - paperInspectView.pinch.contentX * zoom;
+      paperInspectView.panY = my - paperInspectView.pinch.contentY * zoom;
+      drawPaperInspect();
+      return;
+    }
+    if (!paperInspectView.dragging) return;
+    paperInspectView.panX += event.clientX - paperInspectView.lastX;
+    paperInspectView.panY += event.clientY - paperInspectView.lastY;
+    paperInspectView.lastX = event.clientX;
+    paperInspectView.lastY = event.clientY;
+    drawPaperInspect();
+  });
+  const endPan = (event) => {
+    paperInspectView.pointers.delete(event.pointerId);
+    if (paperInspectView.pinch) {
+      paperInspectView.pinch = paperInspectView.pointers.size ? { tail: true } : null;
+      if (!paperInspectView.pointers.size) viewport.classList.remove("is-panning");
+      try { viewport.releasePointerCapture(event.pointerId); } catch {}
+      return;
+    }
+    if (!paperInspectView.dragging) return;
+    paperInspectView.dragging = false;
+    viewport.classList.remove("is-panning");
+    try { viewport.releasePointerCapture(event.pointerId); } catch {}
+  };
+  viewport.addEventListener("pointerup", endPan);
+  viewport.addEventListener("pointercancel", endPan);
+  viewport.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    fitPaperInspect();
+  });
+}
+
+async function paintPaperInspectBitmap(documentData) {
+  const rows = (documentData.records || []).filter((record) => Number(record.mat));
+  if (!rows.length) {
+    const empty = document.createElement("canvas");
+    await paintPaperThumbnail(empty, documentData, { width: DESIGN_W, height: DESIGN_H });
+    return empty;
+  }
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  rows.forEach((record) => {
+    const mat = Number(record.mat) || 0;
+    const pack = previewPackForMat(mat);
+    const component = componentByUid(mat, pack);
+    const geometry = frameGeometry(component, record.state ?? record.flip ?? 0);
+    const x = Number(record.x) || 0;
+    const y = Number(record.y) || 0;
+    left = Math.min(left, x);
+    top = Math.min(top, y);
+    right = Math.max(right, x + (geometry.width || 16));
+    bottom = Math.max(bottom, y + (geometry.height || 16));
+  });
+  const cap = 2400;
+  const contentW = Math.max(1, right - left);
+  const contentH = Math.max(1, bottom - top);
+  const scale = Math.min(1, cap / contentW, cap / contentH);
+  const width = Math.max(80, Math.ceil(contentW * scale) + 24);
+  const height = Math.max(60, Math.ceil(contentH * scale) + 24);
+  const bitmap = document.createElement("canvas");
+  await paintPaperThumbnail(bitmap, documentData, { width, height });
+  return bitmap;
+}
+
+async function openPaperInspect(entry) {
+  if (!entry) return;
+  bindPaperInspectControls();
+  paperInspectView.entry = entry;
+  const name = document.getElementById("paperInspectName");
+  const summary = document.getElementById("paperInspectSummary");
+  if (name) name.textContent = entry.name;
+  if (summary) {
+    summary.textContent = [
+      entry.kind === "desk" ? "建筑图纸" : "庄园摆放图",
+      entry.meta,
+      entry.unresolved ? `${entry.unresolved} 件素材未解析` : "素材已全部解析",
+    ].join("\n");
+  }
+  fillMaterialList(document.getElementById("paperInspectMaterials"), entry.materials, entry.unresolved);
+  if (!entry.materials.size) {
+    const host = document.getElementById("paperInspectMaterials");
+    if (host && !host.childElementCount) {
+      const empty = document.createElement("small");
+      empty.textContent = entry.kind === "desk" ? "没有可统计的材料" : "庄园摆放图不含装修材料";
+      host.appendChild(empty);
+    }
+  }
+  const mergeBtn = document.getElementById("btnPaperInspectMerge");
+  const replaceBtn = document.getElementById("btnPaperInspectReplace");
+  if (entry.kind === "desk") {
+    if (replaceBtn) {
+      replaceBtn.hidden = false;
+      replaceBtn.textContent = "覆盖打开";
+    }
+    if (mergeBtn) mergeBtn.hidden = false;
+  } else {
+    if (replaceBtn) {
+      replaceBtn.hidden = false;
+      replaceBtn.textContent = "去地形桌查看";
+    }
+    if (mergeBtn) mergeBtn.hidden = true;
+  }
+  const panel = document.getElementById("paperInspect");
+  window.MobileWorkspace?.openLayer(panel, document.activeElement);
+  if (!paperInspectView.resizeObserver) {
+    paperInspectView.resizeObserver = new ResizeObserver(() => drawPaperInspect());
+  }
+  paperInspectView.resizeObserver.disconnect();
+  paperInspectView.resizeObserver.observe(document.getElementById("paperInspectViewport"));
+  const bitmap = await paintPaperInspectBitmap(entry.documentData);
+  if (paperInspectView.entry !== entry) return;
+  paperInspectView.bitmap = bitmap;
+  requestAnimationFrame(() => {
+    fitPaperInspect();
+    document.getElementById("paperInspectViewport")?.focus();
+  });
+}
+
 async function openBatchPaperPreview(files) {
   const candidates = [...files].filter((file) => /\.txt$/i.test(file.name));
   const grid = document.getElementById("paperPreviewGrid");
-  const status = document.getElementById("paperBatchStatus");
   const search = document.getElementById("paperBatchSearch");
-  if (!grid || !status) return;
+  if (!grid) return;
+  if (search) search.value = "";
+  batchLibrary.query = "";
+  batchLibrary.generation += 1;
+  const gen = batchLibrary.generation;
+  batchLibrary.loading = true;
+  batchLibrary.entries = [];
+  batchLibrary.failed = 0;
+  batchLibrary.folderLabel = candidates.length ? folderLabelFromFiles(candidates) : "";
   grid.replaceChildren();
-  if (search) {
-    search.value = "";
-    search.oninput = () => {
-      const query = search.value.trim().toLowerCase();
-      grid.querySelectorAll(".paper-preview-item").forEach((item) => {
-        item.hidden = !!query && !String(item.dataset.search || "").includes(query);
-      });
-    };
+  setPaperLibraryOpen(true);
+  syncPaperLibraryEmpty();
+  if (!candidates.length) {
+    batchLibrary.loading = false;
+    updatePaperLibraryStatus("所选文件夹里没有 .txt 图纸。");
+    updateBatchPreviewButton();
+    return;
   }
-  status.textContent = `正在读取 ${candidates.length} 张图纸…`;
-  showPaperPreviewPane("batch");
-  setModalVisible("dlgPaperPreview", true);
-  let loaded = 0;
-  let failed = 0;
+  updatePaperLibraryStatus(`正在读取 ${candidates.length} 张图纸…`);
+  updateBatchPreviewButton();
   let unresolvedTotal = 0;
-  for (const file of candidates) {
+  for (const [index, file] of candidates.entries()) {
     try {
       const { documentData } = await parseBuildingFile(file);
+      if (gen !== batchLibrary.generation) return;
       const records = documentData.records || [];
-      const paperRows = records.filter(
-        (record) => Number(record.mat) && Number(record.x) < 32000 && Number(record.y) < 32000
-      );
-      const materialTotals = new Map();
-      let unresolved = 0;
-      paperRows.forEach((record) => {
-        const mat = Number(record.mat) || 0;
-        const pack = previewPackForMat(mat);
-        const component = componentByUid(mat, pack);
-        if (!component) {
-          unresolved += 1;
-          return;
-        }
-        (component.materials || []).forEach((material) => {
-          materialTotals.set(
-            material.name,
-            (materialTotals.get(material.name) || 0) + material.count
-          );
-        });
-      });
+      const paperRows = records.filter((record) => Number(record.mat));
+      const { materialTotals, unresolved } = paperLibraryMaterials(records);
       unresolvedTotal += unresolved;
-      const item = document.createElement("article");
-      item.className = "paper-preview-item" + (unresolved ? " has-unresolved" : "");
-      item.dataset.search = (file.webkitRelativePath || file.name).toLowerCase();
-      const visual = document.createElement("div");
-      visual.className = "paper-preview-visual";
-      const thumb = document.createElement("canvas");
-      const badge = document.createElement("span");
-      badge.className = "paper-preview-badge" + (unresolved ? " is-warning" : "");
-      badge.textContent = unresolved ? `${unresolved} 件未解析` : "素材已解析";
-      visual.append(thumb, badge);
-      const copy = document.createElement("div");
-      copy.className = "paper-preview-copy";
-      const name = document.createElement("strong");
-      name.textContent = file.webkitRelativePath || file.name;
-      name.title = name.textContent;
-      const meta = document.createElement("small");
-      meta.textContent =
-        documentData.kind === "desk"
+      const relative = String(file.webkitRelativePath || file.name).replace(/\\/g, "/");
+      const entry = {
+        id: `${gen}-${index}`,
+        file,
+        documentData,
+        name: relative,
+        search: relative.toLowerCase(),
+        kind: documentData.kind,
+        count: paperRows.length,
+        meta: documentData.kind === "desk"
           ? `${paperRows.length} 件素材 · ${materialTotals.size} 种材料`
-          : `${records.length} 个庄园建筑点`;
-      copy.append(name, meta);
-      const materials = document.createElement("div");
-      materials.className = "paper-preview-item-materials";
-      fillMaterialList(materials, materialTotals, unresolved);
-      if (!materialTotals.size) {
-        const empty = document.createElement("small");
-        empty.textContent = documentData.kind === "desk" ? "没有可统计的材料" : "庄园摆放图不含装修材料";
-        materials.appendChild(empty);
-      }
-      const actions = document.createElement("div");
-      actions.className = "paper-preview-item-actions";
-      const openPaper = async (mode) => {
-        if (mode === "replace" && state.records.length) {
-          const ok = await appConfirm("覆盖打开会清空当前设计，是否继续？", {
-            title: "覆盖打开",
-            okLabel: "覆盖",
-            cancelLabel: "取消",
-          });
-          if (!ok) return;
-        }
-        setModalVisible("dlgPaperPreview", false);
-        await importDesign(file, { mode });
+          : `${records.length} 个庄园建筑点`,
+        materials: materialTotals,
+        unresolved,
       };
-      if (documentData.kind === "desk") {
-        const replace = document.createElement("button");
-        replace.type = "button";
-        replace.className = "btn";
-        replace.textContent = "覆盖打开";
-        replace.onclick = () => openPaper("replace");
-        const merge = document.createElement("button");
-        merge.type = "button";
-        merge.className = "btn btn-primary";
-        merge.textContent = "合并到当前";
-        merge.onclick = () => openPaper("merge");
-        actions.append(replace, merge);
-      } else {
-        const terrain = document.createElement("button");
-        terrain.type = "button";
-        terrain.className = "btn btn-primary";
-        terrain.textContent = "去地形桌查看";
-        terrain.onclick = () => openPaper("replace");
-        actions.appendChild(terrain);
-      }
-      item.append(visual, copy, materials, actions);
-      grid.appendChild(item);
-      await paintPaperThumbnail(thumb, documentData);
-      loaded += 1;
+      batchLibrary.entries.push(entry);
+      const { card, canvas } = renderPaperLibraryCard(entry);
+      grid.appendChild(card);
+      grid.hidden = false;
+      const empty = document.getElementById("paperLibraryEmpty");
+      if (empty) empty.hidden = true;
+      await paintPaperThumbnail(canvas, documentData);
+      if (gen !== batchLibrary.generation) return;
     } catch (error) {
-      failed += 1;
+      if (gen !== batchLibrary.generation) return;
+      batchLibrary.failed += 1;
       console.warn(`图纸预览失败：${file.name}`, error);
     }
-    status.textContent =
-      `已载入 ${loaded} 张图纸` +
-      (unresolvedTotal ? ` · ${unresolvedTotal} 件素材未解析` : "") +
-      (failed ? ` · ${failed} 张文件无法读取` : "");
+    applyPaperLibraryFilter();
+    updatePaperLibraryStatus(
+      `正在解析 ${index + 1} / ${candidates.length} 张图纸`
+      + (unresolvedTotal ? ` · ${unresolvedTotal} 件素材未解析` : "")
+      + (batchLibrary.failed ? ` · ${batchLibrary.failed} 张无法读取` : "")
+    );
+    if (index % 4 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
   }
-  if (!candidates.length) status.textContent = "所选文件夹里没有 .txt 图纸。";
+  if (gen !== batchLibrary.generation) return;
+  batchLibrary.loading = false;
+  syncPaperLibraryEmpty();
+  updatePaperLibraryStatus();
+  updateBatchPreviewButton();
 }
 
 function importedPaperRows(records) {
@@ -6280,7 +7215,6 @@ function importedPaperRows(records) {
     inferredThemeKeys.size === 1 ? packByKey([...inferredThemeKeys][0]) : null;
   const rows = records.map((record) => {
     const mat = Number(record.mat) || 0;
-    const offscreen = (record.x || 0) >= 32000 || (record.y || 0) >= 32000;
     let packKey = mat < 1000 ? inferredLocalPack?.key || "" : state.pack?.key || "";
     if (mat >= 1000) {
       const pack = packForPaperUid(Math.floor(mat / 1000));
@@ -6291,13 +7225,13 @@ function importedPaperRows(records) {
     }
     return {
       mode: "desk",
-      x: Number(record.x) || 0,
-      y: Number(record.y) || 0,
+      x: decodeS15(record.x),
+      y: decodeS15(record.y),
       mat,
       state: record.state ?? record.flip ?? 0,
       packKey,
       localPackUnknown: mat > 0 && mat < 1000 && !inferredLocalPack,
-      hidden: mat === 0 || offscreen,
+      hidden: mat === 0,
     };
   });
   return { rows, lastTheme };
@@ -6333,22 +7267,7 @@ async function importDesign(file, options = {}) {
   const mode = options.mode === "merge" && placedDesignCount() ? "merge" : "replace";
   const imported = importedPaperRows(records);
   if (mode === "merge") {
-    const importedHeader = imported.rows.find((record) => Number(record.mat) === 0);
-    const currentHeader = exportHeaderRecord();
-    const differentOrigin =
-      importedHeader &&
-      (Number(importedHeader.x) !== Number(currentHeader.x) ||
-        Number(importedHeader.y) !== Number(currentHeader.y));
-    if (differentOrigin) {
-      const ok = await appConfirm(
-        "这张图纸的户型原点与当前设计不同。合并时会自动对齐两个户型原点，但建筑边界可能不同，合并后请检查遮挡。",
-        { title: "户型不同", okLabel: "对齐并合并", cancelLabel: "取消" }
-      );
-      if (!ok) return;
-    }
-    const dx = importedHeader ? Number(currentHeader.x) - Number(importedHeader.x) : 0;
-    const dy = importedHeader ? Number(currentHeader.y) - Number(importedHeader.y) : 0;
-    const body = imported.rows.filter((record) => Number(record.mat) !== 0 && !record.hidden);
+    const body = imported.rows.filter((record) => Number(record.mat) !== 0);
     if (!body.length) throw new Error("这张图纸没有可合并的建筑素材。");
     const group = `${Date.now()}-import`;
     const groupName = file.name.replace(/\.[^.]+$/, "") || "合并图纸";
@@ -6357,8 +7276,6 @@ async function importDesign(file, options = {}) {
     body.forEach((record) => {
       state.records.push({
         ...record,
-        x: record.x + dx,
-        y: record.y + dy,
         hidden: false,
         group,
         groupName,
@@ -6381,10 +7298,7 @@ async function importDesign(file, options = {}) {
   state.paperLayout = true;
   state.records = imported.rows;
   state.baseAnchor = null;
-  const header = state.records.find((record) => Number(record.mat) === 0);
-  state.paperOrigin = header
-    ? { x: Number(header.x) || 0, y: Number(header.y) || 0 }
-    : null;
+  state.paperOrigin = null;
   invalidateBaseLayout();
   if (imported.lastTheme) state.pack = imported.lastTheme;
   ensureActiveCategory();
@@ -6416,35 +7330,48 @@ function serializeExportRecord(record) {
   return {
     ...rest,
     mode: "desk",
-    x: Math.max(0, Math.min(0x7fff, Math.round(Number(rest.x) || 0))),
-    y: Math.max(0, Math.min(0x7fff, Math.round(Number(rest.y) || 0))),
+    x: Math.max(DESK_COORD_MIN, Math.min(DESK_COORD_MAX, Math.round(Number(rest.x) || 0))),
+    y: Math.max(DESK_COORD_MIN, Math.min(DESK_COORD_MAX, Math.round(Number(rest.y) || 0))),
     mat: Math.max(0, Math.round(Number(rest.mat) || 0)),
     state: Math.max(0, Math.min(63, Math.round(Number(rest.state ?? rest.flip) || 0))),
   };
 }
 
-function exportHeaderRecord() {
-  const existing = state.records.find((record) => Number(record.mat) === 0);
-  if (existing) return serializeExportRecord(existing);
-  const native = state.base?.anchor;
-  if (!Array.isArray(native) || !Number.isFinite(Number(native[0])) || !Number.isFinite(Number(native[1]))) {
-    throw new Error("当前户型缺少原生 mask 坐标，无法生成安全的图纸头。");
-  }
-  return serializeExportRecord({
-    mode: "desk",
-    x: Number(native[0]),
-    y: Number(native[1]),
-    mat: 0,
-    // base.kind is the native frame/state class (0..4), not the base number.
-    state: Number(state.base?.kind) || 0,
-  });
+function existingUserReferences() {
+  return state.records
+    .filter((record) => Number(record.mat) === 0)
+    .map(serializeExportRecord);
 }
 
 function buildExportRecords() {
   const body = state.records
     .filter((record) => Number(record.mat) !== 0)
     .map(serializeExportRecord);
-  return [exportHeaderRecord(), ...body];
+  return [...existingUserReferences(), ...body];
+}
+
+async function placeCurrentBuildingOnTerrain() {
+  if (!state.base) {
+    await appAlert("请先选择建筑户型。", { title: "无法放置" });
+    return;
+  }
+  const records = buildExportRecords();
+  if (!records.some((record) => Number(record.mat))) {
+    await appAlert("当前建筑还没有可预览的素材。", { title: "无法放置" });
+    return;
+  }
+  const payload = {
+    v: 1,
+    name: state.base?.name || "设计建筑",
+    baseNo: Number(state.base.no),
+    localPackKey: state.pack?.key || "",
+    coordinateSpace: state.paperLayout ? "paper" : "editor",
+    documentData: { kind: "desk", records },
+    createdAt: Date.now(),
+  };
+  sessionStorage.setItem("manor-pending-preview-building", JSON.stringify(payload));
+  saveBuildingSession();
+  location.href = "/?placeBuilding=1";
 }
 
 async function exportDesign() {
@@ -6468,6 +7395,23 @@ async function exportDesign() {
 }
 
 function bindBuilding() {
+  window.MobileWorkspace?.registerSheet({
+    id: "building-rail",
+    root: ".building-rail",
+    backdrop: "#buildingRailBackdrop",
+    inert: [".building-stage", ".building-app .topbar"],
+    initialFocus: "#btnBuildingSheetClose",
+    mutex: "building-workspace",
+  });
+  window.MobileWorkspace?.registerSheet({
+    id: "building-tools",
+    root: "#canvasToolDock",
+    backdrop: "#buildingRailBackdrop",
+    inert: ["#canvasZoomInner", ".stage-bar", ".building-app .topbar"],
+    initialFocus: "#btnBuildingToolsClose",
+    mutex: "building-workspace",
+    resetScroll: false,
+  });
   document.getElementById("btnChooseBase").onclick = () => {
     state.baseKind = state.base?.kind ?? 0;
     fillBaseKindTabs();
@@ -6596,9 +7540,28 @@ function bindBuilding() {
     pendingImportMode = "merge";
     document.getElementById("buildingFile").click();
   };
-  document.getElementById("btnBatchPreview").onclick = () => {
-    document.getElementById("buildingFolder").click();
-  };
+  document.getElementById("btnBatchPreview").onclick = () => togglePaperLibrary();
+  document.getElementById("btnPaperLibraryClose")?.addEventListener("click", () => setPaperLibraryOpen(false));
+  document.getElementById("btnPaperLibraryFolder")?.addEventListener("click", () => {
+    document.getElementById("buildingFolder")?.click();
+  });
+  document.getElementById("btnPaperLibraryPick")?.addEventListener("click", () => {
+    document.getElementById("buildingFolder")?.click();
+  });
+  document.getElementById("paperBatchSearch")?.addEventListener("input", () => applyPaperLibraryFilter());
+  document.getElementById("btnPaperInspectBack")?.addEventListener("click", () => closePaperInspect());
+  document.getElementById("btnPaperInspectClose")?.addEventListener("click", () => closePaperInspect());
+  document.getElementById("btnPaperInspectZoomIn")?.addEventListener("click", () => zoomPaperInspectBy(1));
+  document.getElementById("btnPaperInspectZoomOut")?.addEventListener("click", () => zoomPaperInspectBy(-1));
+  document.getElementById("btnPaperInspectFit")?.addEventListener("click", () => fitPaperInspect());
+  document.getElementById("btnPaperInspect100")?.addEventListener("click", () => actualPaperInspect());
+  document.getElementById("btnPaperInspectReplace")?.addEventListener("click", () => {
+    if (paperInspectView.entry) importLibraryPaper(paperInspectView.entry, "replace");
+  });
+  document.getElementById("btnPaperInspectMerge")?.addEventListener("click", () => {
+    if (paperInspectView.entry) importLibraryPaper(paperInspectView.entry, "merge");
+  });
+  bindPaperInspectControls();
   document.getElementById("buildingFolder").onchange = async (event) => {
     await openBatchPaperPreview(event.target.files || []);
     event.target.value = "";
@@ -6629,17 +7592,29 @@ function bindBuilding() {
   document.getElementById("btnMakeBuilding").onclick = () => {
     openCurrentPaperPreview();
   };
+  document.getElementById("btnPlaceOnTerrain").onclick = () => {
+    placeCurrentBuildingOnTerrain().catch((error) => {
+      appAlert(error.message || String(error), { title: "放置失败" });
+    });
+  };
   document.querySelectorAll("button[data-command]").forEach((button) => {
     button.onclick = () => executeCommand(button.dataset.command);
   });
   document.querySelectorAll("button[data-tool]").forEach((button) => {
-    button.onclick = () => setActiveTool(button.dataset.tool);
+    button.onclick = () => {
+      setActiveTool(button.dataset.tool);
+      if (window.MobileWorkspace?.modeForViewport().mobile) setMobileToolsOpen(false);
+    };
   });
   document.querySelectorAll("[data-marquee-mode]").forEach((button) => {
     button.onclick = () => {
       setMarqueeMode(button.dataset.marqueeMode);
       setActiveTool("select");
+      if (window.MobileWorkspace?.modeForViewport().mobile) setMobileToolsOpen(false);
     };
+  });
+  document.querySelectorAll("[data-mobile-tool-family]").forEach((button) => {
+    button.onclick = () => setMobileToolFamily(button.dataset.mobileToolFamily);
   });
   document.querySelectorAll("#alignBar button").forEach((button) => {
     button.onclick = () => alignSelection(button.dataset.align);
@@ -6774,6 +7749,48 @@ function bindBuilding() {
       markBuildingDirty();
     };
   }
+  document.getElementById("btnBuildingMobileAssets")?.addEventListener("click", () => {
+    setMobileToolsOpen(false);
+    const mode = state.phase === "select" ? "base" : "assets";
+    if (!state.railCollapsed && state.mobileSheetMode === mode) {
+      closeBuildingRail();
+    } else openBuildingRail(mode);
+  });
+  document.getElementById("btnBuildingMobileTools")?.addEventListener("click", () => {
+    const open = !document.documentElement.classList.contains("mobile-tools-open");
+    if (open) closeBuildingRail();
+    setMobileToolsOpen(open);
+  });
+  document.getElementById("btnBuildingToolsClose")?.addEventListener("click", () => setMobileToolsOpen(false));
+  document.getElementById("canvasEmpty")?.addEventListener("click", () => {
+    if (window.MobileWorkspace?.modeForViewport().mobile) openBuildingRail("assets");
+  });
+  document.getElementById("canvasEmpty")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (window.MobileWorkspace?.modeForViewport().mobile) openBuildingRail("assets");
+  });
+  document.getElementById("btnBuildingMobileProject")?.addEventListener("click", () => {
+    setMobileToolsOpen(false);
+    if (!state.railCollapsed && state.mobileSheetMode === "project") closeBuildingRail();
+    else openBuildingRail("project");
+  });
+  document.getElementById("btnBuildingMobileUndo")?.addEventListener("click", undo);
+  document.getElementById("btnBuildingMobilePan")?.addEventListener("click", (event) => {
+    closeBuildingRail();
+    setMobileToolsOpen(false);
+    state.mobilePan = !state.mobilePan;
+    syncMobilePanUi();
+  });
+  document.getElementById("btnProjectChooseBase")?.addEventListener("click", () => {
+    setPhase("select");
+    openBuildingRail("base");
+  });
+  document.getElementById("btnBuildingSheetClose")?.addEventListener("click", closeBuildingRail);
+  document.getElementById("buildingRailBackdrop")?.addEventListener("click", () => {
+    closeBuildingRail();
+    setMobileToolsOpen(false);
+  });
   const railResizer = document.getElementById("railResizer");
   if (railResizer) {
     railResizer.onpointerdown = (event) => {
@@ -6901,6 +7918,61 @@ function bindBuilding() {
       event.preventDefault();
       document.getElementById("btnShortcuts").click();
       return;
+    }
+    if (isPaperInspectOpen()) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePaperInspect();
+        return;
+      }
+      if (!isTypingTarget(event.target)) {
+        if (event.key === "=" || event.key === "+") {
+          event.preventDefault();
+          zoomPaperInspectBy(1);
+          return;
+        }
+        if (event.key === "-") {
+          event.preventDefault();
+          zoomPaperInspectBy(-1);
+          return;
+        }
+        if (event.key === "0") {
+          event.preventDefault();
+          fitPaperInspect();
+          return;
+        }
+        if (event.key === "1") {
+          event.preventDefault();
+          actualPaperInspect();
+          return;
+        }
+        return;
+      }
+    }
+    if (isPaperLibraryOpen()) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPaperLibraryOpen(false);
+        return;
+      }
+      if (isTypingTarget(event.target)) return;
+      return;
+    }
+    if (event.key === "Escape" && window.MobileWorkspace?.modeForViewport().mobile) {
+      if (document.documentElement.classList.contains("mobile-tools-open")) {
+        event.preventDefault();
+        setMobileToolsOpen(false);
+        document.getElementById("btnBuildingMobileTools")?.focus({ preventScroll: true });
+        return;
+      }
+      if (!state.railCollapsed) {
+        event.preventDefault();
+        closeBuildingRail();
+        document
+          .getElementById(state.mobileSheetMode === "project" ? "btnBuildingMobileProject" : "btnBuildingMobileAssets")
+          ?.focus({ preventScroll: true });
+        return;
+      }
     }
     if (isTypingTarget(event.target)) return;
     if (state.phase !== "design") return;

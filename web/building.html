@@ -2,12 +2,17 @@
 <html lang="zh-CN" class="boot-pending">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="建筑设计桌" />
   <meta name="theme-color" content="#1e4a36" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>建筑设计桌</title>
-  <link rel="stylesheet" href="/web/app.css?v=71" />
+  <link rel="stylesheet" href="/web/app.css?v=79" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=4" />
-  <link rel="stylesheet" href="/web/building.css?v=135" />
+  <link rel="stylesheet" href="/web/building.css?v=144" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=10" />
 </head>
 <body>
   <div class="app building-app phase-select" id="buildingApp">
@@ -18,8 +23,8 @@
           <span class="brand-title">设计桌</span>
         </div>
         <nav class="desk-switch-inline" aria-label="设计桌切换">
-          <a href="/">地形设计桌</a>
-          <a class="on" href="/web/building.html" aria-current="page">建筑设计桌</a>
+          <a href="/">地形<span class="desk-switch-rest">设计桌</span></a>
+          <a class="on" href="/web/building.html" aria-current="page">建筑<span class="desk-switch-rest">设计桌</span></a>
         </nav>
       </div>
       <div class="top-actions">
@@ -123,9 +128,10 @@
           <div class="canvas-zoom-inner" id="canvasZoomInner">
             <div class="canvas-frame" id="canvasFrame">
               <canvas id="buildingView" width="570" height="550"></canvas>
-              <div class="canvas-empty" id="canvasEmpty" hidden>
-                <strong>选择右侧户型</strong>
-                <span>地基会在场景正中显示，再点「开始设计」</span>
+              <div class="canvas-empty" id="canvasEmpty" hidden role="button" tabindex="0">
+                <strong>选择户型</strong>
+                <span class="desktop-workspace-only">先选户型，再点「开始设计」</span>
+                <span class="canvas-empty-action mobile-workspace-only">点这里选户型</span>
               </div>
               <div class="marquee-overlay" id="marqueeOverlay" hidden></div>
               <div class="selection-overlay" id="selectionOverlay" hidden><span class="selection-count"></span></div>
@@ -135,19 +141,23 @@
           </div>
 
           <div class="canvas-tool-dock" id="canvasToolDock">
+            <div class="mobile-sheet-handle mobile-workspace-only" aria-hidden="true"></div>
+            <div class="drawer-cap mobile-workspace-only">
+              <span id="buildingToolSheetTitle">工具 · 选择</span>
+              <button type="button" class="icon-x" id="btnBuildingToolsClose" aria-label="关闭工具"></button>
+            </div>
             <div class="canvas-toolrail" id="canvasToolrail" aria-label="画布工具">
               <button type="button" class="hud-drag-grip" id="toolHudGrip" aria-label="拖动画布工具" title="拖到任意位置 · 双击复位"></button>
+              <div class="mobile-tool-tabs mobile-workspace-only" role="tablist" aria-label="工具类别">
+                <button type="button" class="on" data-mobile-tool-family="select" aria-selected="true">选择</button>
+                <button type="button" data-mobile-tool-family="brush" aria-selected="false">绘制</button>
+              </div>
               <section class="tool-family" data-family="select">
                 <div class="select-modes" role="group" aria-label="点选方式">
                   <button type="button" class="tool-item on" data-tool="select" aria-pressed="true">
                     <svg class="tool-ico" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M4 2.5 15.5 11.2l-4.1.4 2.6 5.6-2.3 1.1-2.6-5.6-3.4 3.3z"/></svg>
                     <span class="tool-name">选择</span>
                     <kbd>V</kbd>
-                  </button>
-                  <button type="button" class="tool-item" data-tool="paint" aria-pressed="false">
-                    <svg class="tool-ico" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M12.4 2.6c.8-.8 2.2-.8 3 0l2 2c.8.8.8 2.2 0 3l-7.2 7.2c-1 2-2.6 3.5-4.7 4.3-.5.2-1.1-.3-1-.8.3-1.5.9-2.9 2-4z"/><path fill="currentColor" d="M3.8 16.4c1-.1 1.8-.6 2.5-1.4-.9-.2-1.6-.6-2.2-1.2-.7.7-1.1 1.6-1.2 2.6-.1.3.3.7.9.6z"/></svg>
-                    <span class="tool-name">纯笔刷</span>
-                    <kbd>N</kbd>
                   </button>
                 </div>
                 <div class="marquee-modes" role="group" aria-label="圈选方式">
@@ -165,6 +175,11 @@
               </section>
               <section class="tool-family" data-family="brush">
                 <div class="brush-grid">
+                  <button type="button" class="tool-item" data-tool="paint" aria-pressed="false">
+                    <svg class="tool-ico" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M12.4 2.6c.8-.8 2.2-.8 3 0l2 2c.8.8.8 2.2 0 3l-7.2 7.2c-1 2-2.6 3.5-4.7 4.3-.5.2-1.1-.3-1-.8.3-1.5.9-2.9 2-4z"/><path fill="currentColor" d="M3.8 16.4c1-.1 1.8-.6 2.5-1.4-.9-.2-1.6-.6-2.2-1.2-.7.7-1.1 1.6-1.2 2.6-.1.3.3.7.9.6z"/></svg>
+                    <span class="tool-name">纯笔刷</span>
+                    <kbd>N</kbd>
+                  </button>
                   <button type="button" class="tool-item" data-tool="stamp" aria-pressed="false">
                     <svg class="tool-ico" viewBox="0 0 20 20" aria-hidden="true"><circle fill="currentColor" cx="7" cy="7" r="2.2"/><circle fill="currentColor" cx="13.5" cy="8.5" r="1.5"/><circle fill="currentColor" cx="10" cy="14" r="2.6"/></svg>
                     <span class="tool-name">点刷</span>
@@ -225,6 +240,13 @@
               <button type="button" class="tool-btn" id="btnZoomIn" title="放大 Ctrl++">+</button>
             </div>
           </div>
+          <div class="mobile-selection-bar mobile-workspace-only" id="mobileSelectionBar" hidden aria-label="选中对象操作">
+            <button type="button" data-command="down" aria-label="下移一层">下移</button>
+            <button type="button" data-command="up" aria-label="上移一层">上移</button>
+            <button type="button" data-command="flip" aria-label="转向">转向</button>
+            <button type="button" data-command="duplicate" aria-label="复制">复制</button>
+            <button type="button" class="danger" data-command="delete" aria-label="删除">删除</button>
+          </div>
         </div>
 
         <div class="stage-bar">
@@ -250,7 +272,12 @@
         </div>
       </main>
 
-      <aside class="rail rail-right building-rail">
+      <aside class="rail rail-right building-rail mobile-sheet">
+        <div class="mobile-sheet-handle" aria-hidden="true"></div>
+        <div class="drawer-cap mobile-workspace-only">
+          <span id="buildingSheetTitle">素材</span>
+          <button type="button" class="icon-x" id="btnBuildingSheetClose" aria-label="关闭"></button>
+        </div>
         <button type="button" class="rail-resizer" id="railResizer" aria-label="调整侧栏宽度"></button>
         <div class="rail-panel" id="baseSelectSide">
           <div class="rail-head">
@@ -348,6 +375,14 @@
             </div>
           </div>
 
+        </div>
+        <div class="rail-panel building-project-pane" id="buildingProjectPane" hidden>
+          <div class="project-base-summary">
+            <span>当前户型</span>
+            <strong id="projectCurrentBase">无</strong>
+            <button type="button" class="btn btn-compact" id="btnProjectChooseBase">更换</button>
+          </div>
+          <p class="project-mobile-copy mobile-workspace-only">生成、导入和管理当前建筑图纸。</p>
           <div class="rail-foot">
             <label class="check keep-foundation">
               <input type="checkbox" id="keepFoundation" checked />
@@ -355,14 +390,85 @@
             </label>
             <div class="panel-actions">
               <button type="button" class="btn btn-primary btn-wide" id="btnMakeBuilding">生成图纸</button>
+              <button type="button" class="btn btn-wide" id="btnPlaceOnTerrain" title="把当前建筑和户型一起放到地形设计桌预览">放到地形桌</button>
               <button type="button" class="btn" id="btnImportDesign" title="清空当前内容后导入图纸">覆盖导入</button>
               <button type="button" class="btn" id="btnMergeDesign" title="保留当前内容，将另一张图纸合并进来">合并导入</button>
-              <button type="button" class="btn btn-wide" id="btnBatchPreview" title="选择本地文件夹，批量预览其中的图纸">批量预览</button>
+              <button type="button" class="btn btn-wide" id="btnBatchPreview" title="打开常驻图纸库；第一次会选择本地文件夹">图纸库</button>
             </div>
           </div>
         </div>
       </aside>
+
+      <section class="paper-library" id="paperLibrary" hidden aria-label="本地图纸库">
+        <header class="paper-library-bar">
+          <div class="paper-library-title">
+            <strong id="paperLibraryTitle">本地图纸库</strong>
+            <div class="paper-batch-status" id="paperBatchStatus">还没有载入图纸。选择文件夹后会一直留在这里，关掉再开不用重新解析。</div>
+          </div>
+          <div class="paper-library-tools">
+            <input class="input" id="paperBatchSearch" type="search" placeholder="搜索文件名…" autocomplete="off" />
+            <button type="button" class="btn" id="btnPaperLibraryFolder" title="重新选择文件夹并解析">更换文件夹</button>
+            <button type="button" class="btn btn-primary" id="btnPaperLibraryClose">返回设计桌</button>
+          </div>
+        </header>
+        <div class="paper-library-empty" id="paperLibraryEmpty">
+          <strong>图纸会留在这一页</strong>
+          <p>选择一个包含建筑图纸的文件夹。解析完成后关掉图纸库也不会卸载，再打开不用重新加载。</p>
+          <button type="button" class="btn btn-primary" id="btnPaperLibraryPick">选择文件夹</button>
+        </div>
+        <div class="paper-preview-grid" id="paperPreviewGrid" hidden></div>
+      </section>
+
+      <div class="paper-inspect" id="paperInspect" hidden role="dialog" aria-modal="true" aria-labelledby="paperInspectName">
+        <div class="paper-inspect-main">
+          <div class="paper-inspect-toolbar">
+            <button type="button" class="btn" id="btnPaperInspectBack">返回图纸库</button>
+            <div class="paper-inspect-zoombar" role="group" aria-label="预览缩放">
+              <button type="button" class="btn" id="btnPaperInspectZoomOut" title="缩小">−</button>
+              <span id="paperInspectZoomLabel">100%</span>
+              <button type="button" class="btn" id="btnPaperInspectZoomIn" title="放大">+</button>
+              <button type="button" class="btn" id="btnPaperInspectFit">适应</button>
+              <button type="button" class="btn" id="btnPaperInspect100">1:1</button>
+            </div>
+            <button type="button" class="icon-x" id="btnPaperInspectClose" aria-label="关闭明细"></button>
+          </div>
+          <div class="paper-inspect-viewport" id="paperInspectViewport" tabindex="0" aria-label="图纸预览，滚轮缩放，拖动平移">
+            <canvas id="paperInspectCanvas" width="570" height="550"></canvas>
+          </div>
+          <p class="paper-inspect-hint">滚轮缩放 · 拖动平移 · 双击复位到适应窗口</p>
+        </div>
+        <aside class="paper-inspect-side">
+          <h2 id="paperInspectName">图纸明细</h2>
+          <div class="paper-preview-summary" id="paperInspectSummary"></div>
+          <section class="paper-preview-materials">
+            <strong>所需材料</strong>
+            <div id="paperInspectMaterials"></div>
+          </section>
+          <div class="paper-inspect-actions">
+            <button type="button" class="btn" id="btnPaperInspectReplace">覆盖打开</button>
+            <button type="button" class="btn btn-primary" id="btnPaperInspectMerge">合并到当前</button>
+          </div>
+        </aside>
+      </div>
     </div>
+    <nav class="mobile-bottom-dock building-mobile-dock" id="buildingMobileDock" aria-label="移动端建筑工具">
+      <button type="button" class="mobile-dock-button" id="btnBuildingMobileAssets" aria-expanded="false">
+        <span class="mobile-dock-glyph">▦</span><span id="buildingMobileAssetsLabel">户型</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBuildingMobileTools" aria-pressed="false">
+        <span class="mobile-dock-glyph">✎</span><span>工具</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBuildingMobilePan" aria-pressed="false">
+        <span class="mobile-dock-glyph">✥</span><span>移动</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBuildingMobileUndo">
+        <span class="mobile-dock-glyph">↶</span><span>撤销</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBuildingMobileProject" aria-expanded="false">
+        <span class="mobile-dock-glyph">☰</span><span>项目</span>
+      </button>
+    </nav>
+    <button type="button" class="mobile-sheet-backdrop" id="buildingRailBackdrop" aria-label="关闭侧栏" hidden></button>
   </div>
 
   <div class="modal" id="dlgPreset" hidden>
@@ -425,16 +531,6 @@
             <button type="button" class="btn btn-primary" id="btnDownloadPaper">下载图纸</button>
           </div>
         </section>
-        <section class="paper-batch-preview" id="paperBatchPreview" hidden>
-          <div class="paper-batch-head">
-            <div>
-              <strong>本地图纸库</strong>
-              <div class="paper-batch-status" id="paperBatchStatus"></div>
-            </div>
-            <input class="input" id="paperBatchSearch" type="search" placeholder="搜索文件名…" autocomplete="off" />
-          </div>
-          <div class="paper-preview-grid" id="paperPreviewGrid"></div>
-        </section>
       </div>
     </div>
   </div>
@@ -463,7 +559,9 @@
   <input type="file" id="buildingFolder" accept=".txt,text/plain" multiple webkitdirectory directory hidden />
   <script src="/web/codec.js?v=43"></script>
   <script src="/web/app-dialog.js?v=1"></script>
+  <script src="/web/mobile-workspace.js?v=8"></script>
   <script src="/web/building-interactions.js?v=11"></script>
-  <script src="/web/building.js?v=144"></script>
+  <script src="/web/building-preview.js?v=3"></script>
+  <script src="/web/building.js?v=167"></script>
 </body>
 </html>

@@ -84,9 +84,18 @@ def test_building_pack_uids_match_proven_mixed_paper_packets():
     assert pack_uids.get("locked") is True
     mapping = pack_uids["mapping"]
     assert mapping["1"] == "europe"
-    assert mapping["7"] == "toy"
+    assert mapping["7"] == "flower1"
+    assert mapping["8"] == "flower1"
     assert mapping["10"] == "candy"
+    assert mapping["11"] == "fruit"
+    assert mapping["12"] == "sea"
     assert mapping["13"] == "space"
+    assert mapping["18"] == "paradise"
+    aliases = pack_uids.get("aliases") or {}
+    assert aliases["6"] == "toy"
+    assert aliases["17"] == "paradise"
+    assert "6" not in mapping
+    assert "17" not in mapping
     assert mapping["14"] == "bazaar"
     assert mapping["15"] == "supermarket"
     assert mapping["19"] == "giant"
@@ -119,7 +128,7 @@ def test_mixed_cafe_paper_resolves_directly_without_frame_borrow():
 
     def resolve(mat: int):
         uid, local = divmod(mat, 1000)
-        key = mapping.get(uid)
+        key = mapping.get(uid) or (pack_uids.get("aliases") or {}).get(str(uid))
         if not key:
             return None
         pack = packs[key]
@@ -138,6 +147,17 @@ def test_mixed_cafe_paper_resolves_directly_without_frame_borrow():
     assert resolve(21161) == "tds"
     missing = [mat for mat in mats if resolve(mat) is None]
     assert not missing
+    assert resolve(12506) == "sea"
+    assert resolve(12509) == "sea"
+    assert resolve(12110) == "sea"
+    assert resolve(18161) == "paradise"
+    assert resolve(11105) == "fruit"
+    assert resolve(11111) == "fruit"
+    assert resolve(17173) == "paradise"
+    assert resolve(7112) == "flower1"
+    assert resolve(6504) == "toy"
+    assert resolve(6532) == "toy"
+    assert resolve(6536) == "toy"
 
 
 if __name__ == "__main__":

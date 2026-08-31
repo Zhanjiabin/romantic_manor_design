@@ -19,8 +19,9 @@ User-verified 2026-08-30: the outer room volume is `base.tab` `maskimg` filled w
 - Keep the mask where it is.
 - Place `baseimg` so its **solid** front vertex (ignore the faint ALE fringe) sits on the mask’s front vertex (`floorSnugInMask`).
 - Importing a paper must not move the mask under the props (`baseAnchor`) or grow the plane from sprite AABBs. That zooms the 11×11 out and parks it high in the shell.
-- Paper records stay in paper coords. The mat=0 header’s x/y is the native mask origin (`ChgBaseMask` space), not a 5×5 baseno. Last-character `state` is frame/state (0–63), not `base.tab` 户型号 — 11×11 巨型建筑 is 212 and cannot fit there.
-- Paint offset: put the imported sprites’ **solid front vertex** on the floor’s **solid front vertex** (`paperContentFront` → `frontX/Y`). Image-rectangle bottoms include ALE fringe and leave a grass gap at the front.
+- Paper records stay in paper coords. `mat=0` is a `GDesignSubUser` person reference (`rc3.exe` `0x669022`), not a mask origin or 户型号. Do not invent a `mat=0` record on export. Last-character `state` on a person is pose/direction (`state * 45`); on sprites it is frame/state (0–63), not `base.tab` 户型号 — 11×11 巨型建筑 is 212 and cannot fit there.
+- Native `TxtInsert` (`0x6663e0`) writes decoded x/y with ox=oy=0. `TxtExport` (`0x6689b0`) saves those live layer coordinates — not the AddTemplate half-delta (that is kits / TEMPIMG). Desk coordinates are signed 15-bit (`-16384..16383`); values that used to look like `327xx` are negatives.
+- A maximized 1920×1080 client is `1690×1030` after `SetAutoSize(100,100,-230,-50)`. Import maps that live layer onto the locked frame: native floor is `trunc((1690−maskW)/2)+cx+ALE.anchorX` (same for y), aligned to `floorSnugInMask`. Do not guess 1370×850 / 1691×515 from record hits, never treat `mat=0` as an origin, and never infer either axis from `paperContentFront`.
 
 ## Forbidden "fixes"
 

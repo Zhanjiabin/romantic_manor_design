@@ -1,7 +1,7 @@
 """Lossless building papers: ``V1;`` plus nine-character records.
 
 Manor placement: xx(2) yy(2) item(4) dir(1)
-Design-desk materials: packed x/y uint15 pair(5) mat(3) frame/state(1)
+Design-desk materials: packed x/y signed-15 pair(5) mat(3) frame/state(1)
 
 These are different formats despite sharing the same prefix and record length.
 Callers that know the import context should pass ``kind="desk"`` or
@@ -16,6 +16,15 @@ from .b64 import CodecError, decode, encode
 VALID_KINDS = {"desk", "manor"}
 DESK_COORD_BITS = 15
 DESK_COORD_MASK = (1 << DESK_COORD_BITS) - 1
+DESK_COORD_SIGN = 1 << (DESK_COORD_BITS - 1)
+DESK_COORD_MIN = -DESK_COORD_SIGN
+DESK_COORD_MAX = DESK_COORD_SIGN - 1
+
+
+def decode_s15(value: int) -> int:
+    """rc3.exe 0x425370: values above 0x3fff are sign-extended 15-bit."""
+    value &= DESK_COORD_MASK
+    return value - 0x8000 if value > 0x3fff else value
 
 
 def parse_v1(text: str, kind: str | None = None) -> dict:
@@ -217,13 +226,13 @@ def unpack_desk_coordinates(token: str) -> tuple[int, int]:
     if len(token) != 5:
         raise CodecError("desk coordinate token must be 5 characters")
     packed = decode(token)
-    x = (packed >> DESK_COORD_BITS) & DESK_COORD_MASK
-    y = packed & DESK_COORD_MASK
+    x = decode_s15((packed >> DESK_COORD_BITS) & DESK_COORD_MASK)
+    y = decode_s15(packed & DESK_COORD_MASK)
     return x, y
 
 
 def pack_desk_coordinates(x: int, y: int) -> str:
-    if not 0 <= x <= DESK_COORD_MASK or not 0 <= y <= DESK_COORD_MASK:
-        raise CodecError(f"desk coordinates must fit unsigned 15-bit range: {(x, y)!r}")
-    packed = (x << DESK_COORD_BITS) | y
+    if not DESK_COORD_MIN <= x <= DESK_COORD_MAX or not DESK_COORD_MIN <= y <= DESK_COORD_MAX:
+        raise CodecError(f"desk coordinates must fit signed 15-bit range: {(x, y)!r}")
+    packed = ((x & DESK_COORD_MASK) << DESK_COORD_BITS) | (y & DESK_COORD_MASK)
     return encode(packed, 5)

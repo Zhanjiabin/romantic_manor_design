@@ -16,15 +16,17 @@ User-verified 2026-08-30 against the in-game café screenshot. **Do not change t
 | 1 | europe | 14 | bazaar |
 | 2 | egypt | 15 | supermarket |
 | 3 | greece | 16 | antique |
-| 4 | park | 19 | giant |
-| 5 | q | 20 | japan |
-| 7 | toy | 21 | tds |
-| 8 | flower1 | 25 | rose |
-| 9 | flower2 | 26 | shiqi |
-| 10 | candy | 27 | snow |
-| 13 | space | 28 | muguang |
+| 4 | park | 18 | paradise |
+| 5 | q | 19 | giant |
+| 7 | flower1 | 20 | japan |
+| 8 | flower1 | 21 | tds |
+| 9 | flower2 | 25 | rose |
+| 10 | candy | 26 | shiqi |
+| 11 | fruit | 27 | snow |
+| 12 | sea | 28 | muguang |
+| 13 | space | | |
 
-Café paper checks: `14124`→bazaar, `15512`→supermarket, `19160`→giant, `20129`→japan, `21161`→tds.
+Café paper checks: `14124`→bazaar, `15512`→supermarket, `19160`→giant, `20129`→japan, `21161`→tds, `7112`→flower1 butterfly stool.
 
 ## Resolution
 
@@ -36,10 +38,12 @@ sprite = pack.mat.cfg [素材][local]
 
 - Missing local stays missing. **No `框架` cross-pack borrow.**
 - `native.frameBorrow` stays `false`.
+- Read-only `aliases` may decode extra paper UIDs (6→toy, 17→paradise). Do not put aliases into `mapping`, or export will rewrite them.
+- UID 7 and 8 both decode as flower1; export of 花卉 uses 8. Toy is alias 6 only.
 - Center only records with `0 ≤ x,y ≤ 2047`. Do not use wrapped uint15 outliers.
 
 ## Forbidden "fixes"
 
 - Remapping 14/15/19/20/21 (space/redera/bazaar guesses).
-- Filling gaps 6/11/12/17/18 by shifting existing keys.
+- Filling remaining gap 17 by shifting existing keys.
 - Reintroducing `packFrames` / `packFrameOwners` fallback in `componentByUid`.

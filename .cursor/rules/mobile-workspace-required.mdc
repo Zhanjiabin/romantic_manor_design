@@ -1,0 +1,28 @@
+---
+description: Mobile-first requirements for both design desks and future UI work.
+alwaysApply: true
+---
+
+# Mobile workspace is required
+
+Every terrain-desk and building-desk feature must remain usable on phones and tablets.
+
+## Supported viewports
+
+- Verify at least 360×640 and 390×844 portrait, 844×390 landscape, 768×1024 tablet, and a desktop viewport.
+- Use `viewport-fit=cover`, safe-area insets, `visualViewport`, and the shared `web/mobile-workspace.css` / `web/mobile-workspace.js` infrastructure.
+- Never disable browser zoom with `maximum-scale` or `user-scalable=no`.
+
+## Interaction
+
+- Primary touch targets are at least 44×44 CSS pixels.
+- Canvas interaction uses Pointer Events and pointer capture. One finger operates the active tool; two fingers pan and zoom without leaving an accidental edit.
+- Every hover-only action needs an always-visible or tap-accessible equivalent.
+- Sheets and dialogs must trap focus, restore focus, close with Escape, and keep the covered workspace inert.
+
+## Layout
+
+- The canvas remains the main workspace. Phone portrait uses bottom navigation plus bottom sheets; phone landscape/tablet may use a side sheet.
+- Do not hard-code layout from `window.innerHeight`; use the shared visual viewport variables.
+- Inputs use at least 16px text on mobile to prevent unwanted browser zoom.
+- Preserve game coordinate systems, export formats, building UID mappings, and the locked building frame. Mobile adaptation changes viewport chrome, not native rendering geometry.

@@ -38,14 +38,17 @@ PROVEN_PACKETS = [
     (3, "greece", "希腊风格", "legacy packet table"),
     (4, "park", "园林风格", "legacy packet table"),
     (5, "q", "Q版风格", "mixed paper exact ground match"),
-    (7, "toy", "玩具天地", "legacy packet table"),
+    (7, "flower1", "花卉风格", "café 7112 is flower1 butterfly stool, not toy carnival"),
     (8, "flower1", "花卉风格", "legacy packet table"),
     (9, "flower2", "植物风格", "legacy packet table"),
     (10, "candy", "糖果乐园", "exact mixed-paper wall match"),
+    (11, "fruit", "水果系列", "café roof 11105/11111 are fruit orange-half / lime-stack"),
+    (12, "sea", "海洋世界", "café BAR 12506/12110 are sea scallop wall / coral lantern, not fruit"),
     (13, "space", "太空幻想", "mixed paper glass-wall match"),
     (14, "bazaar", "商业建筑", "mixed café paper geometry and ALE match"),
     (15, "supermarket", "超市建筑", "exact ALE screenshot matches"),
     (16, "antique", "古韵建筑", "vendor packet table"),
+    (18, "paradise", "欢快乐园", "user-named 18161; unmapped local 161 is paradise try01"),
     (19, "giant", "巨人国度", "exact giant ribbon/star matches"),
     (20, "japan", "唐韵和风", "exact repeated trim matches"),
     (21, "tds", "奇幻之塔", "exact repeated roof-edge match"),
@@ -54,6 +57,17 @@ PROVEN_PACKETS = [
     (27, "snow", "冰雪风格", "mixed paper match"),
     (28, "muguang", "暮光之城", "unique locals 244 and 326"),
 ]
+
+# Read-only aliases: extra paper UIDs that decode to an already-canonical pack.
+# Do not put these in ``mapping`` — packUidOf would then export the alias id.
+# 6: Putong folder is absent from the dump; café 6532 is toy wall_30 LEGO.
+# 7 is in mapping as flower1 (café 7112). Toy stays alias-only so export
+# still uses 8 for 花卉 and does not rewrite LEGO 6xxx.
+# 17: desktop papers 17122/17130/17110/17173; local 173 exists only in paradise.
+ALIASES = {
+    6: ("toy", "user 6532 is toy LEGO; Putong folder missing from dump"),
+    17: ("paradise", "corpus 17xxx locals 110/122/130/173; only paradise owns 173"),
+}
 
 
 def read_text(path: Path) -> str:
@@ -136,6 +150,11 @@ def main() -> None:
             continue
         mapping[str(entry["uid"])] = entry["key"]
     frames = mat_cfg_frames(keys)
+    aliases = {
+        str(uid): key
+        for uid, (key, _source) in ALIASES.items()
+        if key in keys and str(uid) not in mapping
+    }
     payload = {
         "schema": 3,
         "locked": True,
@@ -148,12 +167,14 @@ def main() -> None:
             "frameMeaning": "mat.cfg 框架 lists compatible building frames, not packet UIDs",
         },
         "mapping": mapping,
+        "aliases": aliases,
         "frames": frames,
         "packs": entries,
     }
     OUTPUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print("wrote", OUTPUT)
     print("mapping", json.dumps(mapping, ensure_ascii=False))
+    print("aliases", json.dumps(aliases, ensure_ascii=False))
     print("frames", len(frames), "packs")
 
 

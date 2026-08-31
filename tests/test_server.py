@@ -210,6 +210,24 @@ def test_http_saves_roundtrip():
         assert got_asset.getheader("Content-Type") == "image/png"
         assert got_asset.read() == asset
         conn.close()
+
+        papers = '{"replace":true,"papers":[{"name":"garden/hut.txt","data":"VjE7dGVzdA=="}]}'
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("PUT", "/api/saves/building/papers", body=papers, headers=headers)
+        put_papers = conn.getresponse()
+        put_body = put_papers.read()
+        assert put_papers.status == 200
+        assert b'"saved": 1' in put_body
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/building/papers", headers={"Authorization": "Basic " + token})
+        got_papers = conn.getresponse()
+        papers_body = got_papers.read()
+        assert got_papers.status == 200
+        assert b"hut.txt" in papers_body
+        assert b"VjE7dGVzdA==" in papers_body
+        conn.close()
     finally:
         httpd.shutdown()
         httpd.server_close()

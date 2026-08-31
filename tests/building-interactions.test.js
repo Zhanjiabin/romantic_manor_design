@@ -534,6 +534,22 @@ test("building desk selection, line brush, and guide affordances follow the ctrl
   assert.match(css, /\.snap-guide\.is-core/);
 });
 
+test("building designs and uploaded paper libraries persist explicitly", () => {
+  const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  const buildingHtml = fs.readFileSync(path.join(__dirname, "../web/building.html"), "utf8");
+  assert.match(buildingHtml, /id="btnSaveDesign"/);
+  assert.match(buildingHtml, /id="paperFileName"/);
+  assert.match(buildingJs, /async function saveDesignNow/);
+  assert.match(buildingJs, /designName: state\.designName \|\| ""/);
+  assert.match(buildingJs, /state\.designName = String\(snap\.designName \|\| ""\)/);
+  assert.match(buildingJs, /async function openServerPaperLibrary/);
+  assert.match(buildingJs, /const MAX_BATCH_BYTES = 6 \* 1024 \* 1024/);
+  assert.doesNotMatch(buildingJs, /const CHUNK = 80/);
+  assert.match(buildingJs, /function currentPaperDownloadName/);
+  assert.match(buildingJs, /anchor\.download = currentPaperDownloadName\("txt"\)/);
+  assert.doesNotMatch(buildingJs, /anchor\.download = "build\.txt"/);
+});
+
 test("scene preview entities persist in project v2 but stay out of game exports", () => {
   const source = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
   assert.match(source, /function projectSnapshot[\s\S]*v: 2,[\s\S]*previewBuildings:/);

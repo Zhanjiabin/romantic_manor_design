@@ -661,6 +661,11 @@ function syncDesignResetButtons() {
   }
 }
 
+function paperFileStem() {
+  const short = String(state.designName || "").replace(/\\/g, "/").split("/").pop() || "";
+  return short.replace(/\.txt$/i, "").trim();
+}
+
 function updatePaperFileLabel() {
   const row = document.getElementById("paperFileRow");
   const label = document.getElementById("paperFileName");
@@ -670,6 +675,11 @@ function updatePaperFileLabel() {
   row.hidden = !short;
   label.textContent = short;
   label.title = full;
+}
+
+function currentPaperDownloadName(ext = "txt") {
+  const stem = paperFileStem().replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "").slice(0, 80);
+  return `${stem || "build"}.${ext}`;
 }
 
 async function clearCurrentDesign({ ask = false } = {}) {
@@ -6841,7 +6851,9 @@ function openCurrentPaperPreview() {
       .slice(0, 4)
       .map(([reason, count]) => `· ${reason}：${count} 件`)
       .join("\n");
+    const paperName = paperFileStem();
     summary.textContent =
+      (paperName ? `图纸：${paperName}.txt\n` : "") +
       `户型：${state.base?.name || "当前户型"}\n` +
       `占地：${footprintText}\n` +
       `素材：${visible} 件\n` +
@@ -6851,6 +6863,8 @@ function openCurrentPaperPreview() {
       `地基：${state.keepFoundation ? "保留" : "不保留"}\n\n` +
       "确认画面和遮挡关系后再下载。";
   }
+  const title = document.getElementById("paperPreviewTitle");
+  if (title) title.textContent = paperFileStem() ? `建筑图纸预览 · ${paperFileStem()}.txt` : "建筑图纸预览";
   fillMaterialList(document.getElementById("paperPreviewMaterials"));
   showPaperPreviewPane("current");
   setModalVisible("dlgPaperPreview", true);
@@ -6863,7 +6877,7 @@ function saveCurrentPaperPreview() {
     if (!blob) return;
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(blob);
-    anchor.download = "building-preview.png";
+    anchor.download = currentPaperDownloadName("png");
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(anchor.href), 0);
   }, "image/png");
@@ -7514,15 +7528,30 @@ function base64ToBytes(text) {
 }
 
 async function persistPaperLibrary(uploads, replace) {
-  // 上传原始图纸字节到服务器；分批发送避免超过服务端 8MB 请求上限。
-  const CHUNK = 80;
+  // 按实际 JSON 字节数分批，确保低于服务端 8MB 请求上限。固定按张数
+  // 分批在单张图纸较大时仍可能触发 413。
+  const MAX_BATCH_BYTES = 6 * 1024 * 1024;
+  const batches = [];
+  let batch = [];
+  let batchBytes = 32;
+  uploads.forEach((paper) => {
+    const paperBytes = String(paper.name || "").length * 3 + String(paper.data || "").length + 64;
+    if (batch.length && batchBytes + paperBytes > MAX_BATCH_BYTES) {
+      batches.push(batch);
+      batch = [];
+      batchBytes = 32;
+    }
+    batch.push(paper);
+    batchBytes += paperBytes;
+  });
+  if (batch.length) batches.push(batch);
   let saved = 0;
-  for (let i = 0; i < uploads.length; i += CHUNK) {
+  for (const [index, papers] of batches.entries()) {
     const response = await fetch("/api/saves/building/papers", {
       method: "PUT",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ replace: replace && i === 0, papers: uploads.slice(i, i + CHUNK) }),
+      body: JSON.stringify({ replace: replace && index === 0, papers }),
     });
     if (!response.ok) throw new Error(`图纸库同步失败 (${response.status})`);
     saved += Number((await response.json())?.saved || 0);
@@ -7826,7 +7855,7 @@ async function placeCurrentBuildingOnTerrain() {
   }
   const payload = {
     v: 1,
-    name: state.base?.name || "设计建筑",
+    name: paperFileStem() || state.base?.name || "设计建筑",
     baseNo: Number(state.base.no),
     localPackKey: state.pack?.key || "",
     coordinateSpace: state.paperLayout ? "paper" : "editor",
@@ -7853,7 +7882,7 @@ async function exportDesign() {
   const blob = await response.blob();
   const anchor = document.createElement("a");
   anchor.href = URL.createObjectURL(blob);
-  anchor.download = "build.txt";
+  anchor.download = currentPaperDownloadName("txt");
   anchor.click();
   URL.revokeObjectURL(anchor.href);
 }

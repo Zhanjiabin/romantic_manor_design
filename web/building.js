@@ -1,7 +1,16 @@
 const DESIGN_W = 570;
 const DESIGN_H = 550;
-/** 对齐 builddesign.cfg 素材列表 / 截图顺序 */
-const CATEGORY_ORDER = ["装饰", "门窗", "地面", "屋顶", "墙壁", "套件"];
+const ALL_CATEGORY = "全部";
+const CUSTOM_CATEGORY = "组件";
+const UNGROUPED_FOLDER = "__ungrouped__";
+const THEME_ALL = "*";
+const ASSET_TILE_MIN = 72;
+const ASSET_TILE_GAP = 5;
+const ASSET_WINDOW_PAD_ROWS = 3;
+const ASSET_VIRTUAL_MIN = 80;
+const MATERIAL_CATEGORIES = ["装饰", "门窗", "地面", "屋顶", "墙壁"];
+/** 对齐 builddesign.cfg 素材列表 / 截图顺序；首格全部，末格用自定义组件顶替原版套件 */
+const CATEGORY_ORDER = [ALL_CATEGORY, ...MATERIAL_CATEGORIES, CUSTOM_CATEGORY];
 /** 截图与常见主题优先排序 */
 const THEME_ORDER = [
   "redera",
@@ -39,13 +48,42 @@ const BASE_KIND_TABS = [
 ];
 const CUSTOMS_KEY = "manor-building-customs-v1";
 const SESSION_KEY = "manor-building-session-v1";
+const ASSET_PREFS_KEY = "manor-building-asset-prefs-v1";
+const HUD_LAYOUT_KEY = "manor-building-hud-layout-v1";
 const OBJECT_SNAP_PX = 6;
-const MAX_PLANE = 2560;
+const MAX_PLANE = 8192;
 // Locked: ignore wrapped uint15 outliers so mixed papers stay canvas-centered.
 const MAX_CONTENT_COORD = 2047;
 const IMAGE_INFLIGHT_MAX = 8;
+const IMAGE_RETRY_MAX = 2;
 const LAYER_ROW_H = 52;
 const LAYER_WINDOW_PAD = 10;
+const SELECTION_DETAIL_LIMIT = 12;
+const SPRITE_ALPHA_HIT = 16;
+const MARQUEE_MIN_PX = 4;
+const DRAG_PREVIEW_MAX = 32;
+const STAMP_CAP = 360;
+const STAMP_PREVIEW_MAX = 80;
+const PLACE_TOOLS = new Set(["paint", "stamp", "tile", "rect", "line", "circle", "triangle", "diamond", "ring"]);
+const TOOL_INFO = {
+  select: { label: "选择", hint: "拖动圈选 · 左侧切换碰到 / 包含" },
+  paint: { label: "纯笔刷", hint: "只铺不选 · 点到哪画到哪" },
+  stamp: { label: "点刷", hint: "点击盖一枚，拖着连续盖" },
+  tile: { label: "平铺", hint: "拖出区域错缝铺满 · Shift 整齐网格" },
+  rect: { label: "矩形", hint: "拖出矩形铺满 · Shift 正方形" },
+  line: { label: "直线", hint: "沿线铺放 · Shift 锁定 45° 斜线" },
+  circle: { label: "圆形", hint: "拖出圆形铺放 · Shift 正圆" },
+  triangle: { label: "三角", hint: "拖出三角形区域铺放" },
+  diamond: { label: "菱形", hint: "斜向菱形铺满，贴地块 · Shift 正菱" },
+  ring: { label: "描边", hint: "沿一圈铺放 · Shift 圆圈" },
+};
+const BI = globalThis.BuildingInteractions;
+if (!BI) throw new Error("building-interactions.js 未加载");
+const hitProbe = document.createElement("canvas");
+hitProbe.width = 1;
+hitProbe.height = 1;
+const hitProbeCtx = hitProbe.getContext("2d", { willReadFrequently: true, alpha: true });
+const DRAG_LAYER_MAX_AREA = 12 * 1024 * 1024;
 const COMPONENT_LOOKUP = new Map();
 const PACK_INDEX = new Map();
 
@@ -53,16 +91,21 @@ const state = {
   catalog: null,
   uidCatalog: null,
   packUids: {},
+  itemIcons: {},
   packs: [],
   pack: null,
+  themeFilter: "",
   category: "装饰",
   component: null,
   base: null,
   baseKind: 0,
   baseLayout: null,
   paperLayout: false,
+  paperOrigin: null,
   basePicked: false,
   paperBaseHint: "",
+  baseOverridden: false,
+  baseAnchor: null,
   phase: "select",
   records: [],
   source: null,
@@ -76,17 +119,29 @@ const state = {
   redo: [],
   keepFoundation: true,
   brushState: 0,
-  snap: { enabled: true, step: 4, object: true },
+  snap: { enabled: true, step: 4, object: true, grid: true, edges: true, centers: true, axis: "iso" },
   veil: { enabled: true, opacity: 0.42 },
   zoom: 1,
   guides: [],
   clipboard: null,
   customs: [],
+  customFolders: [],
   customBrush: null,
   railTab: "assets",
   layerCollapsed: new Set(),
   layerFilter: "",
+  layerSelectedOnly: false,
   paletteDrag: null,
+  interaction: null,
+  tool: "select",
+  shapeStroke: null,
+  marqueeMode: "touch",
+  spacePan: false,
+  railCollapsed: false,
+  railWidth: 340,
+  assetMode: "all",
+  assetFavorites: new Set(),
+  assetRecent: [],
   sessionDirty: false,
 };
 
@@ -100,12 +155,230 @@ const imageQueue = [];
 let layerItemsCache = [];
 let layerListBound = false;
 let layerWindowRaf = 0;
+let assetRowsCache = [];
+let assetListBound = false;
+let assetWindowRaf = 0;
+let assetFilterKey = "";
 let lastSceneKey = "";
+let paintedOffset = { dx: 0, dy: 0 };
+const spriteBoundsCache = new WeakMap();
+const unresolvedMaterials = new Set();
+const visualBoundsQueue = [];
+let visualBoundsScheduled = false;
+
+function upgradeWorkspaceChrome() {
+  const stage = document.getElementById("buildingStage");
+  const shell = document.getElementById("canvasShell");
+  const dock = document.getElementById("designDock");
+  if (stage && shell && dock) {
+    dock.classList.add("stage-commandbar");
+    stage.insertBefore(dock, shell);
+  }
+  const frame = document.getElementById("canvasFrame");
+  ["marqueeOverlay", "selectionOverlay", "shapeOverlay", "guideOverlay"].forEach((id) => {
+    const element = document.getElementById(id);
+    if (frame && element && element.parentElement !== frame) frame.appendChild(element);
+  });
+  if (stage && shell && !document.getElementById("viewportOverlayRoot")) {
+    const root = document.createElement("div");
+    root.id = "viewportOverlayRoot";
+    root.className = "viewport-overlay-root";
+    shell.after(root);
+    ["designDock", "canvasToolDock", "hudStack"].forEach((id) => {
+      const element = document.getElementById(id);
+      if (element) root.appendChild(element);
+    });
+  }
+  bindFloatingHuds();
+}
+
+function hudLayoutParent() {
+  return document.getElementById("viewportOverlayRoot");
+}
+
+function loadHudLayout() {
+  try {
+    return JSON.parse(localStorage.getItem(HUD_LAYOUT_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveHudLayout() {
+  const command = document.getElementById("designDock");
+  const tools = document.getElementById("canvasToolDock");
+  const payload = {};
+  if (command?.classList.contains("is-placed")) {
+    payload.command = { left: parseFloat(command.style.left), top: parseFloat(command.style.top) };
+  }
+  if (tools?.classList.contains("is-placed")) {
+    payload.tools = { left: parseFloat(tools.style.left), top: parseFloat(tools.style.top) };
+  }
+  localStorage.setItem(HUD_LAYOUT_KEY, JSON.stringify(payload));
+}
+
+function clampHudPosition(el, left, top) {
+  const parent = hudLayoutParent();
+  if (!parent || !el) return { left: 0, top: 0 };
+  const pad = 6;
+  const width = el.offsetWidth;
+  const height = el.offsetHeight;
+  if (width < 8 || height < 8) return { left, top };
+  const maxL = Math.max(pad, parent.clientWidth - width - pad);
+  const maxT = Math.max(pad, parent.clientHeight - height - pad);
+  return {
+    left: Math.min(maxL, Math.max(pad, left)),
+    top: Math.min(maxT, Math.max(pad, top)),
+  };
+}
+
+function applyHudPosition(el, pos) {
+  if (!el || !pos || !Number.isFinite(pos.left) || !Number.isFinite(pos.top)) return;
+  el.classList.add("is-placed");
+  el.style.left = `${Math.round(pos.left)}px`;
+  el.style.top = `${Math.round(pos.top)}px`;
+  el.style.right = "auto";
+  el.style.bottom = "auto";
+  el.style.transform = "none";
+}
+
+function resetHudPosition(el) {
+  if (!el) return;
+  el.classList.remove("is-placed");
+  el.style.left = "";
+  el.style.top = "";
+  el.style.right = "";
+  el.style.bottom = "";
+  el.style.transform = "";
+  saveHudLayout();
+}
+
+function layoutFloatingHuds() {
+  const parent = hudLayoutParent();
+  if (!parent || parent.clientWidth < 32 || parent.clientHeight < 32) return;
+  const saved = loadHudLayout();
+  const command = document.getElementById("designDock");
+  const tools = document.getElementById("canvasToolDock");
+  const rail = document.getElementById("canvasToolrail");
+  if (rail) rail.style.maxHeight = `${Math.max(120, parent.clientHeight - 16)}px`;
+  [
+    [command, "command"],
+    [tools, "tools"],
+  ].forEach(([el, key]) => {
+    if (!el || el.hidden) return;
+    const current = el.classList.contains("is-placed")
+      ? { left: parseFloat(el.style.left), top: parseFloat(el.style.top) }
+      : saved[key];
+    if (Number.isFinite(current?.left) && Number.isFinite(current?.top)) {
+      applyHudPosition(el, clampHudPosition(el, current.left, current.top));
+    }
+  });
+}
+
+function hudDragAllowed(event, mode) {
+  if (event.button !== 0) return false;
+  if (mode === "grip") return !!event.target.closest(".hud-drag-grip");
+  if (event.target.closest("button:not(.hud-drag-grip), input, select, textarea, a, .tool-item, [data-command], [data-tool], [data-align], [data-marquee-mode]")) {
+    return false;
+  }
+  return true;
+}
+
+function bindFloatingHud(el, mode, listenOn) {
+  const node = listenOn || el;
+  if (!el || !node || node.dataset.hudDragBound) return;
+  node.dataset.hudDragBound = "1";
+  node.addEventListener("pointerdown", (event) => {
+    if (!hudDragAllowed(event, mode)) return;
+    const parent = hudLayoutParent();
+    if (!parent) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const rect = el.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    const originLeft = rect.left - parentRect.left;
+    const originTop = rect.top - parentRect.top;
+    let dragging = false;
+    const pointerId = event.pointerId;
+    const onMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      if (!dragging && dx * dx + dy * dy < 16) return;
+      dragging = true;
+      el.classList.add("is-dragging-hud");
+      applyHudPosition(el, clampHudPosition(el, originLeft + dx, originTop + dy));
+    };
+    const onUp = (upEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+      el.classList.remove("is-dragging-hud");
+      if (dragging) {
+        saveHudLayout();
+        const swallow = (clickEvent) => {
+          clickEvent.preventDefault();
+          clickEvent.stopPropagation();
+        };
+        el.addEventListener("click", swallow, { capture: true, once: true });
+      }
+    };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+  });
+  el.querySelector(".hud-drag-grip")?.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resetHudPosition(el);
+  });
+}
+
+function bindFloatingHuds() {
+  const command = document.getElementById("designDock");
+  const tools = document.getElementById("canvasToolDock");
+  bindFloatingHud(command, "chrome");
+  bindFloatingHud(tools, "grip", tools?.querySelector(".hud-drag-grip"));
+  layoutFloatingHuds();
+}
+
+function loadAssetPreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ASSET_PREFS_KEY) || "{}");
+    state.assetFavorites = new Set(Array.isArray(saved.favorites) ? saved.favorites : []);
+    state.assetRecent = Array.isArray(saved.recent) ? saved.recent.slice(0, 40) : [];
+  } catch {
+    state.assetFavorites = new Set();
+    state.assetRecent = [];
+  }
+}
+
+function saveAssetPreferences() {
+  localStorage.setItem(
+    ASSET_PREFS_KEY,
+    JSON.stringify({ favorites: [...state.assetFavorites], recent: state.assetRecent.slice(0, 40) })
+  );
+}
+
+function assetKey(component, pack = component?._pack || state.pack) {
+  return `${pack?.key || ""}:${component?.id ?? ""}`;
+}
+
+function rememberAsset(component, pack = component?._pack || state.pack) {
+  const key = assetKey(component, pack);
+  state.assetRecent = [key, ...state.assetRecent.filter((row) => row !== key)].slice(0, 40);
+  saveAssetPreferences();
+}
 
 async function bootBuilding() {
   document.documentElement.classList.add("boot-pending");
+  upgradeWorkspaceChrome();
+  loadAssetPreferences();
   loadImage("/bdesign/imgs/glsbg.gif");
-  const [catalog, uidCatalog, packUids] = await Promise.all([
+  const [catalog, uidCatalog, packUids, itemIcons] = await Promise.all([
     fetch("/api/editor-catalog").then((response) => response.json()),
     fetch("/data/building_uid_map.json")
       .then((response) => (response.ok ? response.json() : { packs: [] }))
@@ -113,10 +386,14 @@ async function bootBuilding() {
     fetch("/data/building_pack_uids.json")
       .then((response) => (response.ok ? response.json() : { mapping: {} }))
       .catch(() => ({ mapping: {} })),
+    fetch("/api/item-icons")
+      .then((response) => (response.ok ? response.json() : { icons: {} }))
+      .catch(() => ({ icons: {} })),
   ]);
   state.catalog = catalog;
   state.uidCatalog = uidCatalog;
   state.packUids = packUids.mapping || {};
+  state.itemIcons = itemIcons.icons || {};
   state.packs = sortThemes(catalog.building.packs.filter((pack) => pack.kind === "theme"));
   state.indexedPacks = (catalog.building.packs || []).filter(
     (pack) => pack.kind === "theme" || pack.kind === "item"
@@ -129,6 +406,7 @@ async function bootBuilding() {
   });
   state.pack =
     state.packs.find((pack) => pack.key === "redera") || state.packs[0] || null;
+  state.themeFilter = state.pack?.key || THEME_ALL;
   ensureActiveCategory();
   state.base =
     catalog.building.bases.find((base) => base.kind === 0) || catalog.building.bases[0] || null;
@@ -147,7 +425,9 @@ async function bootBuilding() {
     updateBase();
   }
   syncSnapUi();
+  syncMarqueeModeUi();
   syncVeilControls();
+  updateToolHint();
   applyZoom();
   updateAlignBar();
   updateSelectionCaption();
@@ -155,6 +435,7 @@ async function bootBuilding() {
   requestAnimationFrame(() => {
     document.documentElement.classList.remove("boot-pending");
     document.documentElement.classList.add("boot-ready");
+    fitStageToShell();
   });
 }
 
@@ -168,22 +449,53 @@ function sortThemes(packs) {
   });
 }
 
-function categoryCounts(pack) {
+function isCustomCategory(category = state.category) {
+  return category === CUSTOM_CATEGORY;
+}
+
+function isAllCategory(category = state.category) {
+  return category === ALL_CATEGORY;
+}
+
+function isAllThemes() {
+  return state.themeFilter === THEME_ALL;
+}
+
+function isBrowsableComponent(component) {
+  if (!component || component.kind === "kit") return false;
+  if (component.category === CUSTOM_CATEGORY || component.category === "套件") return false;
+  return true;
+}
+
+function activeThemePacks() {
+  if (isAllThemes()) return state.packs || [];
+  const pack = packByKey(state.themeFilter) || state.pack;
+  return pack ? [pack] : [];
+}
+
+function categoryCounts() {
   const counts = new Map(CATEGORY_ORDER.map((category) => [category, 0]));
-  if (!pack) return counts;
-  pack.components.forEach((component) => {
-    if (counts.has(component.category)) {
-      counts.set(component.category, counts.get(component.category) + 1);
-    }
+  counts.set(CUSTOM_CATEGORY, state.customs.length);
+  let all = 0;
+  activeThemePacks().forEach((pack) => {
+    (pack.components || []).forEach((component) => {
+      if (!isBrowsableComponent(component)) return;
+      all += 1;
+      if (counts.has(component.category)) {
+        counts.set(component.category, counts.get(component.category) + 1);
+      }
+    });
   });
+  counts.set(ALL_CATEGORY, all);
   return counts;
 }
 
 function ensureActiveCategory() {
-  if (!state.pack) return;
-  const counts = categoryCounts(state.pack);
+  if (state.category === "套件") state.category = CUSTOM_CATEGORY;
+  if (isCustomCategory() || isAllCategory()) return;
+  const counts = categoryCounts();
   if ((counts.get(state.category) || 0) > 0) return;
-  const next = CATEGORY_ORDER.find((category) => (counts.get(category) || 0) > 0);
+  const next = MATERIAL_CATEGORIES.find((category) => (counts.get(category) || 0) > 0);
   if (next) state.category = next;
 }
 
@@ -192,17 +504,30 @@ function themeSearchQuery() {
   return (input?.value || "").trim().toLowerCase();
 }
 
+function themeFilterLabel() {
+  if (isAllThemes()) return "全部主题";
+  const pack = packByKey(state.themeFilter) || state.pack;
+  return pack?.name || "主题";
+}
+
 function updateAssetFilterSummary() {
   const summary = document.getElementById("assetFilterSummary");
   if (!summary) return;
-  if (!state.pack) {
+  if (isCustomCategory()) {
+    const count = state.customs.length;
+    summary.textContent = count ? `组件 · ${count} 件` : "还没有自定义组件";
+    return;
+  }
+  if (!activeThemePacks().length) {
     summary.textContent = "选择主题与类别";
     return;
   }
-  const count = state.pack.components.filter((component) => component.category === state.category).length;
+  const counts = categoryCounts();
+  const count = isAllCategory() ? counts.get(ALL_CATEGORY) || 0 : counts.get(state.category) || 0;
+  const catLabel = isAllCategory() ? "全部" : state.category;
   summary.textContent = count
-    ? `${state.pack.name} · ${state.category} · ${count} 项素材`
-    : `${state.pack.name} · ${state.category} · 无素材`;
+    ? `${themeFilterLabel()} · ${catLabel} · ${count} 项素材`
+    : `${themeFilterLabel()} · ${catLabel} · 无素材`;
 }
 
 function setPhase(phase) {
@@ -214,14 +539,19 @@ function setPhase(phase) {
   document.getElementById("baseSelectSide").hidden = phase !== "select";
   const designDock = document.getElementById("designDock");
   if (designDock) designDock.hidden = phase !== "design";
+  layoutFloatingHuds();
   if (phase !== "design") {
     state.ghost = null;
     state.hover = null;
     state.marquee = null;
     state.dragging = null;
+    state.shapeStroke = null;
     state.guides = [];
+    syncMarqueeOverlay();
+    syncShapeOverlay();
   }
   updateAlignBar();
+  updateToolHint();
   markBuildingDirty();
 }
 
@@ -232,6 +562,8 @@ function placedDesignCount() {
 function invalidateBaseLayout() {
   state.baseLayout = null;
   lastSceneKey = "";
+  paperFrontCache = null;
+  paperFrontKey = "";
 }
 
 function syncDesignResetButtons() {
@@ -250,20 +582,27 @@ function syncDesignResetButtons() {
   }
 }
 
-function clearCurrentDesign({ ask = false } = {}) {
+async function clearCurrentDesign({ ask = false } = {}) {
   const count = placedDesignCount();
   if (count < 1) {
-    if (ask) alert("当前没有可清空的装修。");
+    if (ask) await appAlert("当前没有可清空的装修。");
     return false;
   }
   if (ask) {
     const name = state.base?.name || "当前户型";
-    if (!confirm(`清空「${name}」上的 ${count} 件装修，只留空地基？`)) return false;
+    const ok = await appConfirm(`清空「${name}」上的 ${count} 件装修，只留空地基？`, {
+      title: "清空装修",
+      okLabel: "清空",
+      danger: true,
+    });
+    if (!ok) return false;
   }
   pushHistory();
   state.records = [];
   state.paperLayout = false;
+  state.paperOrigin = null;
   state.source = null;
+  state.baseAnchor = null;
   state.redo = [];
   invalidateBaseLayout();
   cancelPick();
@@ -274,17 +613,25 @@ function clearCurrentDesign({ ask = false } = {}) {
   return true;
 }
 
-function beginDesign() {
+async function beginDesign() {
   if (!state.base) {
-    alert("请先选择户型。");
+    await appAlert("请先选择户型。", { title: "还没选户型" });
     return;
   }
   const count = placedDesignCount();
   if (count > 0) {
     const name = state.base.name;
-    const wipe = confirm(
-      `当前已有 ${count} 件装修。\n要用「${name}」清空后重新开始吗？\n\n确定：清空现有设计\n取消：只换户型，保留装修`
+    const wipe = await appConfirm(
+      `当前已有 ${count} 件装修。要用「${name}」开始设计吗？\n\n清空后开始会丢掉现有装修；保留装修只换户型。`,
+      {
+        title: "开始设计",
+        okLabel: "清空后开始",
+        cancelLabel: "保留装修",
+        danger: true,
+        dismiss: "abort",
+      }
     );
+    if (wipe == null) return;
     if (wipe) clearCurrentDesign({ ask: false });
   }
   invalidateBaseLayout();
@@ -296,22 +643,168 @@ function beginDesign() {
 }
 
 function setRailTab(tab) {
+  if (tab === "customs") {
+    state.category = CUSTOM_CATEGORY;
+    tab = "assets";
+  }
   state.railTab = tab;
   document.querySelectorAll(".rail-tab").forEach((button) => {
     button.classList.toggle("on", button.dataset.tab === tab);
   });
   document.getElementById("tabAssets").hidden = tab !== "assets";
   document.getElementById("tabLayers").hidden = tab !== "layers";
-  document.getElementById("tabCustoms").hidden = tab !== "customs";
   if (tab === "layers") fillLayers();
-  if (tab === "customs") fillCustoms();
+  if (tab === "assets") syncAssetCategoryView();
 }
 
 function syncSnapUi() {
   const enabled = document.getElementById("snapEnabled");
+  const grid = document.getElementById("snapGrid");
+  const edges = document.getElementById("snapEdges");
+  const centers = document.getElementById("snapCenters");
   const step = document.getElementById("snapStep");
+  const axis = document.getElementById("snapAxis");
   if (enabled) enabled.checked = !!state.snap.enabled;
+  if (grid) grid.checked = state.snap.grid !== false;
+  if (edges) edges.checked = state.snap.edges !== false;
+  if (centers) centers.checked = state.snap.centers !== false;
   if (step) step.value = String(state.snap.step);
+  if (axis) axis.value = snapAxis();
+}
+
+function currentMarqueeMode() {
+  return state.marqueeMode === "contain" ? "contain" : "touch";
+}
+
+function syncMarqueeModeUi() {
+  const mode = currentMarqueeMode();
+  document.querySelectorAll("[data-marquee-mode]").forEach((button) => {
+    const on = button.dataset.marqueeMode === mode;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+function setMarqueeMode(mode) {
+  state.marqueeMode = mode === "contain" ? "contain" : "touch";
+  if (state.marquee) state.marquee.mode = state.marqueeMode;
+  syncMarqueeModeUi();
+  syncMarqueeOverlay();
+  updateToolHint();
+  markBuildingDirty();
+}
+
+function isPlaceTool(tool = state.tool) {
+  return PLACE_TOOLS.has(tool);
+}
+
+function isStampLike(tool = state.tool) {
+  return tool === "stamp" || tool === "paint";
+}
+
+function armPaintBrush() {
+  if (state.tool === "select") setActiveTool("paint");
+}
+
+function stampTemplate() {
+  if (state.customBrush?.records?.length) return { type: "custom", custom: state.customBrush };
+  if (state.component?.kind === "kit") return null;
+  if (state.component?.kind === "sprite") {
+    return { type: "sprite", component: state.component, pack: state.component._pack || state.pack };
+  }
+  if (state.selected.length === 1) {
+    const record = state.records[state.selected[0]];
+    if (record && Number(record.mat) && !record.hidden) return { type: "record", record };
+  }
+  return null;
+}
+
+function stampGeometry(template = stampTemplate()) {
+  if (!template) return { width: 32, height: 24 };
+  if (template.type === "custom") {
+    const bounds = customBrushBounds(template.custom);
+    return { width: Math.max(8, bounds.width), height: Math.max(8, bounds.height) };
+  }
+  if (template.type === "sprite") return frameGeometry(template.component, state.brushState);
+  if (template.type === "record") {
+    const component = recordComponent(template.record);
+    return frameGeometry(component, template.record.state ?? template.record.flip ?? 0);
+  }
+  return { width: 32, height: 24 };
+}
+
+function stampPitch(aligned = false) {
+  const geometry = stampGeometry();
+  if (aligned) {
+    return {
+      x: Math.max(8, Math.round(geometry.width) || 16),
+      y: Math.max(8, Math.round(geometry.height) || 16),
+    };
+  }
+  return {
+    x: Math.max(8, Math.round((geometry.width || 16) / 2)),
+    y: Math.max(8, Math.round((geometry.height || 16) / 2)),
+  };
+}
+
+function lineStampStep(stroke) {
+  const geometry = stampGeometry();
+  const dx = Number(stroke?.end?.x) - Number(stroke?.start?.x);
+  const dy = Number(stroke?.end?.y) - Number(stroke?.start?.y);
+  const length = Math.hypot(dx, dy);
+  if (length < 0.001) return 8;
+  const ux = Math.abs(dx / length);
+  const uy = Math.abs(dy / length);
+  // Building sprites are upright on a 2:1 ground plane. Their full image
+  // height is not footprint depth; using it creates huge gaps for lamps.
+  const groundWidth = Math.max(12, Math.min(64, (Number(geometry.width) || 24) * 0.5));
+  const groundDepth = Math.max(8, groundWidth * 0.5);
+  return Math.max(8, (ux * groundWidth + uy * groundDepth) * 1.08);
+}
+
+function depthSortedStampPoints(points, tool) {
+  const rows = points.slice();
+  if (tool === "line") rows.sort((a, b) => a.y - b.y || a.x - b.x);
+  return rows;
+}
+
+function currentShapeEnd(event) {
+  const stroke = state.shapeStroke;
+  if (!stroke) return null;
+  const raw = stroke.transform.clientToScene(event.clientX, event.clientY);
+  const aligned = !!(event.shiftKey || stroke.aligned);
+  return BI.constrainShapeEnd(stroke.tool, stroke.start, raw, stroke.tool !== "tile" && !isStampLike(stroke.tool) && aligned);
+}
+
+function shapeStampPoints(stroke = state.shapeStroke) {
+  if (!stroke) return [];
+  if (isStampLike(stroke.tool) && stroke.points?.length) return stroke.points.slice(0, STAMP_CAP);
+  const gridAligned =
+    stroke.tool === "rect" ||
+    stroke.tool === "diamond" ||
+    (stroke.tool === "tile" && !!stroke.aligned);
+  const ringEllipse = stroke.tool === "ring" && !!stroke.aligned;
+  return BI.collectStampPoints(stroke.tool, stroke.start, stroke.end, stampPitch(gridAligned), {
+    aligned: gridAligned || ringEllipse,
+    cap: STAMP_CAP,
+    lineStep: stroke.tool === "line" ? lineStampStep(stroke) : 0,
+  });
+}
+
+function updateToolHint() {
+  const hint = document.getElementById("toolHint");
+  const app = document.getElementById("buildingApp");
+  const info = TOOL_INFO[state.tool] || TOOL_INFO.select;
+  if (app) app.dataset.canvasTool = state.tool;
+  if (!hint) return;
+  hint.hidden = false;
+  if (state.phase !== "design") return;
+  if (isPlaceTool() && !stampTemplate()) {
+    hint.textContent = "先点右侧素材，或先点选一件";
+    return;
+  }
+  const extra = state.shapeStroke ? ` · ${shapeStampPoints().length} 件` : "";
+  hint.textContent = `${info.hint}${extra}`;
 }
 
 function packUidOf(pack = state.pack) {
@@ -328,11 +821,12 @@ function packForPaperUid(paperUid) {
   return key ? packByKey(key) : null;
 }
 
-function componentUid(componentId) {
-  const component = state.pack?.components.find((row) => row.id === componentId);
+function componentUid(componentId, pack = state.pack) {
+  const usePack = pack || state.pack;
+  const component = usePack?.components.find((row) => row.id === componentId);
   if (component?.kind !== "sprite") return null;
   const usesGlobal = state.records.some((record) => Number(record.mat) >= 1000);
-  const packUid = packUidOf(state.pack);
+  const packUid = packUidOf(usePack);
   if (usesGlobal && packUid != null) return packUid * 1000 + componentId;
   return componentId;
 }
@@ -390,6 +884,9 @@ function recordPack(record) {
 
 function recordComponent(record) {
   if (!record) return null;
+  if (record.localPackUnknown && Number(record.mat) > 0 && Number(record.mat) < 1000) {
+    return null;
+  }
   if (record.component) return record.component;
   const pack = recordPack(record);
   const component = componentByUid(record.mat, pack);
@@ -421,7 +918,10 @@ function buildingBaseUrl(base, preferWork = false) {
 
 function buildingMaskUrl(base) {
   if (!base?.maskImage) return "";
-  return `/bdesign/imgs/${base.maskImage.split("/").map(encodeURIComponent).join("/")}`;
+  const path = base.maskImage.split("/").map(encodeURIComponent).join("/");
+  return base.maskImage.toLowerCase().endsWith(".ale")
+    ? `/bdesign/imgs/${path}.png?f=0`
+    : `/bdesign/imgs/${path}`;
 }
 
 function pumpImageQueue() {
@@ -430,17 +930,37 @@ function pumpImageQueue() {
     if (!image || image._started) continue;
     image._started = true;
     imageInflight += 1;
-    const finish = () => {
+    const finish = (loaded) => {
+      image.onload = null;
+      image.onerror = null;
       imageInflight = Math.max(0, imageInflight - 1);
+      if (loaded) {
+        image._failed = false;
+        unresolvedMaterials.delete(image._url);
+        syncUnresolvedDiagnostics();
+        paperFrontCache = null;
+        paperFrontKey = "";
+        queueVisualBounds(image);
+        if (String(image._url || "").includes("glsbg")) invalidateGrassLayers();
+      } else if ((image._attempt || 0) < IMAGE_RETRY_MAX) {
+        image._attempt = (image._attempt || 0) + 1;
+        image._started = false;
+        setTimeout(() => {
+          imageQueue.push(image);
+          pumpImageQueue();
+        }, 160 * image._attempt);
+      } else {
+        image._failed = true;
+        unresolvedMaterials.add(image._url);
+        syncUnresolvedDiagnostics();
+      }
       pumpImageQueue();
       scheduleRender();
     };
-    image.addEventListener("load", finish, { once: true });
-    image.addEventListener("error", finish, { once: true });
-    if (String(image._url || "").includes("glsbg")) {
-      image.addEventListener("load", () => invalidateGrassLayers(), { once: true });
-    }
-    image.src = image._url;
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+    const retry = image._attempt || 0;
+    image.src = retry ? `${image._url}${image._url.includes("?") ? "&" : "?"}_retry=${retry}` : image._url;
   }
 }
 
@@ -450,10 +970,78 @@ function loadImage(url) {
   const image = new Image();
   image.decoding = "async";
   image._url = url;
+  image._attempt = 0;
   state.images.set(url, image);
   imageQueue.push(image);
   pumpImageQueue();
   return image;
+}
+
+function syncUnresolvedDiagnostics() {
+  const status = document.getElementById("resourceStatus");
+  if (status) {
+    status.hidden = unresolvedMaterials.size < 1;
+    status.textContent = unresolvedMaterials.size ? `缺失素材 ${unresolvedMaterials.size}` : "";
+    status.title = [...unresolvedMaterials].join("\n");
+  }
+  if (unresolvedMaterials.size) {
+    console.warn("未能解析的建筑素材（已重试）", [...unresolvedMaterials]);
+  }
+}
+
+function queueVisualBounds(image) {
+  if (!image?.naturalWidth || spriteBoundsCache.has(image)) return;
+  visualBoundsQueue.push(image);
+  if (visualBoundsScheduled) return;
+  visualBoundsScheduled = true;
+  const schedule = globalThis.requestIdleCallback || ((callback) => setTimeout(callback, 16));
+  schedule(function drain(deadline) {
+    visualBoundsScheduled = false;
+    let count = 0;
+    while (visualBoundsQueue.length && (count < 2 || !deadline?.timeRemaining || deadline.timeRemaining() > 3)) {
+      cacheSpriteOpaqueBounds(visualBoundsQueue.shift());
+      count += 1;
+    }
+    if (visualBoundsQueue.length) queueVisualBounds(visualBoundsQueue.shift());
+    else scheduleRender();
+  });
+}
+
+function cacheSpriteOpaqueBounds(image) {
+  if (!image?.complete || !image.naturalWidth) return null;
+  if (spriteBoundsCache.has(image)) return spriteBoundsCache.get(image);
+  const width = image.naturalWidth;
+  const height = image.naturalHeight;
+  let bounds = { x: 0, y: 0, width, height };
+  try {
+    const sheet = document.createElement("canvas");
+    sheet.width = width;
+    sheet.height = height;
+    const c = sheet.getContext("2d", { willReadFrequently: true, alpha: true });
+    c.drawImage(image, 0, 0);
+    const pixels = c.getImageData(0, 0, width, height).data;
+    let left = width;
+    let top = height;
+    let right = -1;
+    let bottom = -1;
+    for (let y = 0; y < height; y++) {
+      const row = y * width * 4;
+      for (let x = 0; x < width; x++) {
+        if (pixels[row + x * 4 + 3] <= SPRITE_ALPHA_HIT) continue;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+    if (right >= left && bottom >= top) {
+      bounds = { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+    }
+  } catch (error) {
+    console.debug("素材透明边界读取失败，使用稳定帧边界", error);
+  }
+  spriteBoundsCache.set(image, bounds);
+  return bounds;
 }
 
 function scheduleRender() {
@@ -520,22 +1108,88 @@ function fillGrassPattern(targetCtx, grass, width, height, lighten, offsetX = 0,
     // Bright design volume: keep grass grain, only lift exposure slightly.
     targetCtx.fillStyle = "rgba(255, 255, 220, 0.10)";
     targetCtx.fillRect(0, 0, width, height);
-  } else if (state.veil.enabled) {
-    const alpha = Math.max(0, Math.min(0.95, Number(state.veil.opacity) || 0));
-    if (alpha > 0.001) {
-      targetCtx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
-      targetCtx.fillRect(0, 0, width, height);
-    }
   }
+  // Unlit darkening is applied after sprites (drawUnlitCover) so props that
+  // stick out of the mask pick up the same veil as the surrounding grass.
 }
 
 function invalidateGrassLayers() {
   for (const key of [...state.images.keys()]) {
-    if (String(key).startsWith("room-tight:")) state.images.delete(key);
+    const name = String(key);
+    if (name.startsWith("room-mask:") || name.startsWith("room-shadow:")) state.images.delete(key);
   }
 }
 
+function nativeMaskAlpha(mask) {
+  const key = `mask-alpha:${mask.src}:${mask.naturalWidth}x${mask.naturalHeight}`;
+  if (state.images.has(key)) return state.images.get(key);
+  const sheet = document.createElement("canvas");
+  sheet.width = mask.naturalWidth;
+  sheet.height = mask.naturalHeight;
+  const c = sheet.getContext("2d", { willReadFrequently: true });
+  c.drawImage(mask, 0, 0);
+  const pixels = c.getImageData(0, 0, sheet.width, sheet.height);
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const luminance = Math.max(pixels.data[i], pixels.data[i + 1], pixels.data[i + 2]);
+    pixels.data[i] = 255;
+    pixels.data[i + 1] = 255;
+    pixels.data[i + 2] = 255;
+    pixels.data[i + 3] = Math.round((pixels.data[i + 3] * luminance) / 255);
+  }
+  c.putImageData(pixels, 0, 0);
+  state.images.set(key, sheet);
+  return sheet;
+}
+
+function opaqueBottomVertex(image, threshold = 32) {
+  if (!image?.complete || !image.naturalWidth) return null;
+  const key = `opaque-bottom:${threshold}:${image.src}:${image.naturalWidth}x${image.naturalHeight}`;
+  if (state.images.has(key)) return state.images.get(key);
+  const width = image.naturalWidth;
+  const height = image.naturalHeight;
+  const sheet = document.createElement("canvas");
+  sheet.width = width;
+  sheet.height = height;
+  const c = sheet.getContext("2d", { willReadFrequently: true });
+  c.drawImage(image, 0, 0);
+  const pixels = c.getImageData(0, 0, width, height).data;
+  for (let y = height - 1; y >= 0; y--) {
+    let left = -1;
+    let right = -1;
+    const row = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      const i = row + x * 4;
+      const cover = (Math.max(pixels[i], pixels[i + 1], pixels[i + 2]) * pixels[i + 3]) / 255;
+      if (cover < threshold) continue;
+      if (left < 0) left = x;
+      right = x;
+    }
+    if (left >= 0) {
+      const vertex = { x: (left + right) >> 1, y };
+      state.images.set(key, vertex);
+      return vertex;
+    }
+  }
+  return null;
+}
+
+/** Locked frame: maskimg stays put. Floor's visible front vertex sits on the mask front vertex. */
+function floorSnugInMask(floor, mask, fw, fh, mw, mh) {
+  const maskBottom = opaqueBottomVertex(mask, 32);
+  // Floor ALE has a faint fringe below the grey tiles; use the solid surface
+  // so the visible foundation sits on the mask's front edge, not the halo.
+  const floorBottom = opaqueBottomVertex(floor, 96);
+  if (maskBottom && floorBottom) {
+    return { x: maskBottom.x - floorBottom.x, y: maskBottom.y - floorBottom.y };
+  }
+  return {
+    x: Math.round((mw - fw) / 2),
+    y: Math.max(0, mh - fh),
+  };
+}
+
 function syncVeilControls() {
+  invalidateGrassLayers();
   const enabled = document.getElementById("veilEnabled");
   const opacity = document.getElementById("veilOpacity");
   const label = document.getElementById("veilOpacityLabel");
@@ -553,20 +1207,40 @@ function syncVeilControls() {
   }
 }
 
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 3;
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 4;
 const ZOOM_STEP = 0.1;
+const VIEW_NUDGE_Y = 20;
+
+function fitStageToShell() {
+  applyZoom();
+  requestAnimationFrame(() => {
+    centerCanvasInShell();
+    renderBuilding();
+  });
+}
+
+function shellViewSize() {
+  const shell = document.getElementById("canvasShell");
+  return {
+    w: Math.max(1, Math.floor(shell?.clientWidth || DESIGN_W)),
+    h: Math.max(1, Math.floor(shell?.clientHeight || DESIGN_H)),
+  };
+}
+
+function houseFitScale(cssW, cssH) {
+  return Math.min(cssW / DESIGN_W, cssH / DESIGN_H);
+}
 
 function fitCanvasBaseWidth() {
-  const shell = document.getElementById("canvasShell");
-  if (!shell) return DESIGN_W;
-  const cw = Math.max(1, canvas.width || DESIGN_W);
-  const ch = Math.max(1, canvas.height || DESIGN_H);
-  const padX = 0;
-  const padY = 0;
-  const byWidth = Math.max(200, shell.clientWidth - padX);
-  const byHeight = Math.max(200, ((shell.clientHeight || 400) - padY) * (cw / ch));
-  return Math.min(byWidth, byHeight);
+  return Math.max(200, shellViewSize().w);
+}
+
+function panGutter(sw, sh) {
+  return {
+    x: Math.max(160, Math.round(sw * 0.45)),
+    y: Math.max(160, Math.round(sh * 0.45)),
+  };
 }
 
 function applyZoom() {
@@ -576,19 +1250,22 @@ function applyZoom() {
   const label = document.getElementById("btnZoomReset");
   if (!frame || !shell) return;
   state.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(state.zoom) || 1));
-  const cw = Math.max(1, canvas.width || DESIGN_W);
-  const ch = Math.max(1, canvas.height || DESIGN_H);
-  const base = fitCanvasBaseWidth();
-  const width = Math.max(160, Math.round(base * state.zoom));
-  const height = Math.round(width * (ch / cw));
+  const { w: sw, h: sh } = shellViewSize();
+  // The workspace is the canvas. Never letterbox a smaller rectangle of grass.
+  const width = Math.max(sw, Math.round(sw * state.zoom));
+  const height = Math.max(sh, Math.round(sh * state.zoom));
+  const gutter = panGutter(sw, sh);
   frame.style.width = `${width}px`;
   frame.style.height = `${height}px`;
-  frame.style.aspectRatio = `${cw} / ${ch}`;
+  frame.style.aspectRatio = `${width} / ${height}`;
   if (inner) {
-    inner.style.width = `${Math.max(shell.clientWidth, width)}px`;
-    inner.style.height = `${Math.max(shell.clientHeight, height)}px`;
+    inner.style.width = `${width + gutter.x * 2}px`;
+    inner.style.height = `${height + gutter.y * 2}px`;
   }
+  shell.style.overflow = "auto";
   if (label) label.textContent = `${Math.round(state.zoom * 100)}%`;
+  syncViewportOverlays();
+  requestAnimationFrame(() => syncViewportOverlays());
 }
 
 function centerCanvasInShell() {
@@ -597,7 +1274,8 @@ function centerCanvasInShell() {
   const maxX = Math.max(0, shell.scrollWidth - shell.clientWidth);
   const maxY = Math.max(0, shell.scrollHeight - shell.clientHeight);
   shell.scrollLeft = maxX / 2;
-  shell.scrollTop = maxY / 2;
+  const nudge = state.zoom > 1.01 ? VIEW_NUDGE_Y : 0;
+  shell.scrollTop = Math.max(0, maxY / 2 - nudge);
 }
 
 function setZoom(next, clientX, clientY) {
@@ -607,209 +1285,110 @@ function setZoom(next, clientX, clientY) {
     state.zoom = clamped;
     applyZoom();
     markBuildingDirty();
+    renderBuilding();
     return;
   }
+  const { w: sw, h: sh } = shellViewSize();
+  const gutter = panGutter(sw, sh);
+  const oldW = Math.max(sw, Math.round(sw * state.zoom));
+  const oldH = Math.max(sh, Math.round(sh * state.zoom));
   const rect = shell.getBoundingClientRect();
   const anchorX = clientX != null ? clientX - rect.left : shell.clientWidth / 2;
   const anchorY = clientY != null ? clientY - rect.top : shell.clientHeight / 2;
-  const contentX = shell.scrollLeft + anchorX;
-  const contentY = shell.scrollTop + anchorY;
-  const ratio = clamped / state.zoom;
+  const frameX = shell.scrollLeft + anchorX - gutter.x;
+  const frameY = shell.scrollTop + anchorY - gutter.y;
   state.zoom = clamped;
   applyZoom();
-  shell.scrollLeft = contentX * ratio - anchorX;
-  shell.scrollTop = contentY * ratio - anchorY;
+  const newW = Math.max(sw, Math.round(sw * state.zoom));
+  const newH = Math.max(sh, Math.round(sh * state.zoom));
+  const scaleX = oldW ? newW / oldW : 1;
+  const scaleY = oldH ? newH / oldH : 1;
+  shell.scrollLeft = gutter.x + frameX * scaleX - anchorX;
+  shell.scrollTop = gutter.y + frameY * scaleY - anchorY;
   markBuildingDirty();
+  renderBuilding();
 }
 
 function zoomBy(delta, clientX, clientY) {
   setZoom(state.zoom + delta, clientX, clientY);
 }
 
-function floorOpaqueDiamond(floor) {
-  const key = `floor-opaque:${floor.src}:${floor.naturalWidth}x${floor.naturalHeight}`;
-  if (state.images.has(key)) return state.images.get(key);
-  const width = floor.naturalWidth;
-  const height = floor.naturalHeight;
-  const sheet = document.createElement("canvas");
-  sheet.width = width;
-  sheet.height = height;
-  const c = sheet.getContext("2d");
-  c.drawImage(floor, 0, 0);
-  const { data } = c.getImageData(0, 0, width, height);
-  const solid = (x, y) => data[(y * width + x) * 4 + 3] >= 200;
-  let topY = -1;
-  let botY = -1;
-  let leftX = width;
-  let rightX = -1;
-  let leftY = 0;
-  let rightY = 0;
-  let topX0 = 0;
-  let topX1 = 0;
-  let botX0 = 0;
-  let botX1 = 0;
-  for (let y = 0; y < height; y++) {
-    let lo = -1;
-    let hi = -1;
-    for (let x = 0; x < width; x++) {
-      if (!solid(x, y)) continue;
-      if (lo < 0) lo = x;
-      hi = x;
-      if (x < leftX) {
-        leftX = x;
-        leftY = y;
-      }
-      if (x > rightX) {
-        rightX = x;
-        rightY = y;
-      }
-    }
-    if (lo < 0) continue;
-    if (topY < 0) {
-      topY = y;
-      topX0 = lo;
-      topX1 = hi;
-    }
-    botY = y;
-    botX0 = lo;
-    botX1 = hi;
-  }
-  if (topY < 0 || rightX < 0) return null;
-  const diamond = {
-    top: [(topX0 + topX1) >> 1, topY],
-    bottom: [(botX0 + botX1) >> 1, botY],
-    left: [leftX, leftY],
-    right: [rightX, rightY],
-  };
-  state.images.set(key, diamond);
-  return diamond;
-}
-
-function roomWallHeight(diamond, mask) {
-  const floorW = Math.max(8, diamond.right[0] - diamond.left[0]);
-  const floorH = Math.max(8, diamond.bottom[1] - diamond.top[1]);
-  const mw = mask?.naturalWidth || 0;
-  const mh = mask?.naturalHeight || 0;
-  if (mw > 8 && mh > 8) {
-    const fromMask = Math.round((mh * floorW) / mw - floorH);
-    if (fromMask > 8) return fromMask;
-  }
-  return Math.round(floorH);
-}
-
-function roomHexagon(diamond, wallH) {
-  return [
-    [diamond.top[0], diamond.top[1] - wallH],
-    [diamond.right[0], diamond.right[1] - wallH],
-    diamond.right,
-    diamond.bottom,
-    diamond.left,
-    [diamond.left[0], diamond.left[1] - wallH],
-  ];
-}
-
-function pathFromVerts(ctx, verts, dx, dy) {
-  ctx.beginPath();
-  verts.forEach((point, index) => {
-    const x = point[0] + dx + 0.5;
-    const y = point[1] + dy + 0.5;
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.closePath();
-}
-
-/** Bright volume + yellow outline built from the stone diamond — no gaps, no overflow. */
-function roomVolumeLayer(floor, grass, diamond, wallH, originX, originY) {
-  const hex = roomHexagon(diamond, wallH);
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  hex.forEach((point) => {
-    minX = Math.min(minX, point[0]);
-    minY = Math.min(minY, point[1]);
-    maxX = Math.max(maxX, point[0]);
-    maxY = Math.max(maxY, point[1]);
-  });
-  const pad = 1;
-  const dx = pad - minX;
-  const dy = pad - minY;
-  const width = Math.ceil(maxX - minX + pad * 2);
-  const height = Math.ceil(maxY - minY + pad * 2);
+/** Native ChgBaseMask behavior: tile the bright grass through base.tab maskimg. */
+function roomMaskLayer(mask, grass, originX, originY) {
+  if (!mask?.complete || !mask.naturalWidth) return null;
+  const width = mask.naturalWidth;
+  const height = mask.naturalHeight;
   const grassReady = !!(grass?.complete && grass.naturalWidth);
-  const key = `room-tight:${floor.src}:${grass?.src || ""}:${grassReady ? "g" : "nog"}:${wallH}:${width}x${height}`;
+  const key = `room-mask:${mask.src}:${grass?.src || ""}:${grassReady ? "g" : "nog"}:${width}x${height}`;
   if (state.images.has(key)) return state.images.get(key);
   const sheet = document.createElement("canvas");
   sheet.width = width;
   sheet.height = height;
   const c = sheet.getContext("2d");
-  fillGrassPattern(c, grass, width, height, true, originX - dx, originY - dy);
+  fillGrassPattern(c, grass, width, height, true, originX, originY);
   c.save();
-  pathFromVerts(c, hex, dx, dy);
-  c.clip();
-  c.fillStyle = "rgba(0, 0, 0, 0.16)";
-  c.beginPath();
-  c.moveTo(hex[0][0] + dx, hex[0][1] + dy);
-  c.lineTo(hex[5][0] + dx, hex[5][1] + dy);
-  c.lineTo(hex[4][0] + dx, hex[4][1] + dy);
-  c.lineTo(diamond.top[0] + dx, diamond.top[1] + dy);
-  c.closePath();
-  c.fill();
-  c.fillStyle = "rgba(255, 255, 220, 0.08)";
-  c.beginPath();
-  c.moveTo(hex[0][0] + dx, hex[0][1] + dy);
-  c.lineTo(diamond.top[0] + dx, diamond.top[1] + dy);
-  c.lineTo(hex[2][0] + dx, hex[2][1] + dy);
-  c.lineTo(hex[1][0] + dx, hex[1][1] + dy);
-  c.closePath();
-  c.fill();
-  c.restore();
-  c.save();
-  pathFromVerts(c, hex, dx, dy);
   c.globalCompositeOperation = "destination-in";
-  c.fillStyle = "#fff";
-  c.fill();
+  c.drawImage(nativeMaskAlpha(mask), 0, 0, width, height);
   c.restore();
-  c.save();
-  pathFromVerts(c, hex, dx, dy);
-  c.strokeStyle = "#ffed4a";
-  c.lineWidth = 1;
-  c.setLineDash([4, 3]);
-  c.lineJoin = "miter";
-  c.stroke();
-  c.restore();
-  const layer = { sheet, dx, dy };
+  const layer = { sheet };
   // Only cache when grass is ready — avoid locking in the solid-color fallback.
   if (grassReady) state.images.set(key, layer);
   return layer;
 }
 
+/** Darken everything outside maskimg so overflow props match in-game 遮罩. */
+function unlitCoverLayer(layout, mask) {
+  const width = canvas.width;
+  const height = canvas.height;
+  if (width < 2 || height < 2) return null;
+  const alpha = state.veil.enabled
+    ? Math.max(0, Math.min(0.95, Number(state.veil.opacity) || 0))
+    : 0;
+  if (alpha < 0.001) return null;
+  const mx = layout?.maskX || 0;
+  const my = layout?.maskY || 0;
+  const maskKey = mask?.complete && mask.naturalWidth ? mask.src : "none";
+  const key = `room-shadow:${width}x${height}:${mx},${my}:${maskKey}:${alpha.toFixed(3)}`;
+  if (state.images.has(key)) return state.images.get(key);
+  const sheet = document.createElement("canvas");
+  sheet.width = width;
+  sheet.height = height;
+  const c = sheet.getContext("2d");
+  c.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+  c.fillRect(0, 0, width, height);
+  if (mask?.complete && mask.naturalWidth) {
+    c.globalCompositeOperation = "destination-out";
+    c.drawImage(nativeMaskAlpha(mask), mx, my);
+    c.globalCompositeOperation = "source-over";
+  }
+  const layer = { sheet };
+  state.images.set(key, layer);
+  return layer;
+}
+
+function drawUnlitCover() {
+  const layout = state.baseLayout;
+  if (!layout?.maskW) return;
+  const maskUrl = buildingMaskUrl(state.base);
+  const mask = maskUrl ? loadImage(maskUrl) : null;
+  if (!mask?.complete || !mask.naturalWidth) return;
+  const overlay = unlitCoverLayer(layout, mask);
+  if (overlay?.sheet) ctx.drawImage(overlay.sheet, 0, 0);
+}
+
 function baseLayout(base, floor, mask) {
-  const frame = base?.assets?.baseImage?.frameTable?.[0] || {};
   const fw = floor.naturalWidth || floor.width;
   const fh = floor.naturalHeight || floor.height;
   const mw = mask?.naturalWidth || mask?.width || fw;
   const mh = mask?.naturalHeight || mask?.height || fh;
-  // Allow negative X when floor sprite is wider than mask (common for 3×3).
-  const floorInMaskX = Math.round((mw - fw) / 2);
-  const floorInMaskY = Math.max(0, mh - fh);
-
-  let mx;
-  let my;
-  if (Number.isFinite(frame.valueA) && Number.isFinite(frame.valueB) && (frame.valueA || frame.valueB)) {
-    mx = frame.valueA - floorInMaskX;
-    my = frame.valueB - floorInMaskY;
-  } else if (mw > DESIGN_W || mh > DESIGN_H) {
-    mx = 0;
-    my = 0;
-  } else {
-    mx = Math.round((DESIGN_W - mw) / 2);
-    my = Math.round((DESIGN_H - mh) / 2);
-  }
-
-  const floorX = mx + floorInMaskX;
-  const floorY = my + floorInMaskY;
+  const snug = floorSnugInMask(floor, mask, fw, fh, mw, mh);
+  // Locked: the house frame stays where the empty 11×11 (etc.) preview put it.
+  // Importing a paper must not drag the mask under the props or the frame
+  // jumps up and the fit-to-shell zoom makes it look smaller.
+  const mx = Math.round((Math.max(DESIGN_W, mw) - mw) / 2);
+  const my = Math.round((Math.max(DESIGN_H, mh) - mh) / 2);
+  const floorX = mx + snug.x;
+  const floorY = my + snug.y;
   return {
     planeW: Math.max(DESIGN_W, Math.ceil(Math.max(mx + mw, floorX + fw, 0))),
     planeH: Math.max(DESIGN_H, Math.ceil(Math.max(my + mh, floorY + fh, 0))),
@@ -824,50 +1403,12 @@ function baseLayout(base, floor, mask) {
   };
 }
 
-/** Center the full building volume (walls + floor + paper props) in the design scene. */
-function centerBuildingInPlane(layout, diamond, wallH) {
-  let left = layout.floorX;
-  let right = layout.floorX + layout.floorW;
-  let top = layout.floorY;
-  let bottom = layout.floorY + layout.floorH;
-  if (diamond) {
-    const hex = roomHexagon(diamond, Math.max(0, wallH || 0));
-    left = Infinity;
-    right = -Infinity;
-    top = Infinity;
-    bottom = -Infinity;
-    hex.forEach(([x, y]) => {
-      left = Math.min(left, layout.floorX + x);
-      right = Math.max(right, layout.floorX + x);
-      top = Math.min(top, layout.floorY + y);
-      bottom = Math.max(bottom, layout.floorY + y);
-    });
-  }
-  // House-select preview must ignore leftover paper props, or the empty
-  // base is shoved into a corner of the previous design's huge plane.
-  if (state.phase === "design") {
-    state.records.forEach((record) => {
-      if (record.hidden || record.mat === 0) return;
-      // Native papers can retain off-plane helper/deleted records (notably
-      // wrapped uint15 x values near 32768). They render clipped in-game and
-      // must not pull the visible building away from the canvas center.
-      if (
-        (record.x || 0) < 0 ||
-        (record.y || 0) < 0 ||
-        (record.x || 0) > MAX_CONTENT_COORD ||
-        (record.y || 0) > MAX_CONTENT_COORD
-      ) {
-        return;
-      }
-      const box = recordBox(record);
-      const width = Math.max(8, box.width || 80);
-      const height = Math.max(8, box.height || 80);
-      left = Math.min(left, box.x);
-      right = Math.max(right, box.x + width);
-      top = Math.min(top, box.y);
-      bottom = Math.max(bottom, box.y + height);
-    });
-  }
+/** Center only the house frame. Paper sprites stay in paper coords via contentDx/Dy. */
+function centerBuildingInPlane(layout) {
+  let left = layout.maskW ? layout.maskX : layout.floorX;
+  let right = layout.maskW ? layout.maskX + layout.maskW : layout.floorX + layout.floorW;
+  let top = layout.maskH ? layout.maskY : layout.floorY;
+  let bottom = layout.maskH ? layout.maskY + layout.maskH : layout.floorY + layout.floorH;
   if (!Number.isFinite(left) || !Number.isFinite(top)) {
     layout.contentDx = 0;
     layout.contentDy = 0;
@@ -877,10 +1418,13 @@ function centerBuildingInPlane(layout, diamond, wallH) {
   }
   const bw = Math.max(1, right - left);
   const bh = Math.max(1, bottom - top);
-  const pad = 36;
+  const padX = 40;
+  // Locked rendering baseline: interaction code must not move the verified frame.
+  const padTop = 40;
+  const padBottom = 40;
 
-  let planeW = Math.max(DESIGN_W, Math.ceil(bw + pad * 2));
-  let planeH = Math.max(DESIGN_H, Math.ceil(bh + pad * 2));
+  let planeW = Math.max(DESIGN_W, Math.ceil(bw + padX * 2));
+  let planeH = Math.max(DESIGN_H, Math.ceil(bh + padTop + padBottom));
   planeW = Math.min(MAX_PLANE, planeW);
   planeH = Math.min(MAX_PLANE, planeH);
   const dx = Math.round((planeW - bw) / 2 - left);
@@ -897,11 +1441,109 @@ function centerBuildingInPlane(layout, diamond, wallH) {
   return layout;
 }
 
-function layoutContentOffset() {
+function paperNativeOrigin() {
+  const origin = state.paperOrigin;
+  if (origin && Number.isFinite(origin.x) && Number.isFinite(origin.y)) return origin;
+  const header = state.records.find((record) => Number(record.mat) === 0);
+  if (
+    state.paperLayout &&
+    header &&
+    Number.isFinite(Number(header.x)) &&
+    Number.isFinite(Number(header.y))
+  ) {
+    return { x: Number(header.x) || 0, y: Number(header.y) || 0 };
+  }
+  return null;
+}
+
+let paperFrontCache = null;
+let paperFrontKey = "";
+
+/** Lowest solid pixel of imported sprites, in paper coords (ignore ALE fringe). */
+function paperContentFront() {
+  const key = `${state.records.length}:${state.images.size}`;
+  if (paperFrontCache && paperFrontKey === key) return paperFrontCache;
+  let maxY = -Infinity;
+  const row = [];
+  state.records.forEach((record) => {
+    if (record.hidden || Number(record.mat) === 0) return;
+    if (
+      Number(record.x) < 0 ||
+      Number(record.y) < 0 ||
+      Number(record.x) > MAX_CONTENT_COORD ||
+      Number(record.y) > MAX_CONTENT_COORD
+    ) {
+      return;
+    }
+    const component = recordComponent(record);
+    const pack = recordPack(record) || component?._pack;
+    const url = spriteUrl(component, pack, record.state ?? record.flip ?? 0);
+    const image = loadImage(url);
+    let vx;
+    let vy;
+    if (image?.complete && image.naturalWidth) {
+      const vertex = opaqueBottomVertex(image, 96);
+      if (!vertex) return;
+      vx = record.x + vertex.x;
+      vy = record.y + vertex.y;
+    } else {
+      const box = recordBox(record);
+      vx = record.x + Math.round((box.width || 0) / 2);
+      vy = record.y + Math.max(8, box.height || 80);
+    }
+    if (vy > maxY) {
+      maxY = vy;
+      row.length = 0;
+      row.push(vx);
+    } else if (vy >= maxY - 1) {
+      row.push(vx);
+    }
+  });
+  if (!Number.isFinite(maxY) || !row.length) return null;
+  let left = row[0];
+  let right = row[0];
+  row.forEach((x) => {
+    if (x < left) left = x;
+    if (x > right) right = x;
+  });
+  paperFrontCache = { x: (left + right) >> 1, y: maxY };
+  paperFrontKey = key;
+  return paperFrontCache;
+}
+
+function computeLiveContentOffset() {
+  const layout = state.baseLayout;
+  if (!layout) return { dx: 0, dy: 0 };
+  if (state.paperLayout && state.records.length) {
+    const origin = paperNativeOrigin();
+    if (origin) {
+      // The mat=0 record is the native ChgBaseMask origin. Keep every imported
+      // sprite at its authored offset from that origin; normalising sparse
+      // papers by their lowest prop wrongly drags those props to the front tip.
+      const frameX = layout.maskW ? layout.maskX : layout.contentDx || 0;
+      const frameY = layout.maskH ? layout.maskY : layout.contentDy || 0;
+      return {
+        dx: Math.round(frameX - origin.x),
+        dy: Math.round(frameY - origin.y),
+      };
+    }
+    const front = paperContentFront();
+    if (front && Number.isFinite(layout.frontX) && Number.isFinite(layout.frontY)) {
+      return {
+        dx: Math.round(layout.frontX - front.x),
+        dy: Math.round(layout.frontY - front.y),
+      };
+    }
+  }
   return {
-    dx: state.baseLayout?.contentDx || 0,
-    dy: state.baseLayout?.contentDy || 0,
+    dx: layout.contentDx || 0,
+    dy: layout.contentDy || 0,
   };
+}
+
+function layoutContentOffset() {
+  if (state.interaction?.offset) return state.interaction.offset;
+  return paintedOffset;
 }
 
 function isBaseLayoutReady() {
@@ -929,7 +1571,7 @@ function computeBaseLayout(base, floor, mask) {
     contentDy: 0,
   };
 
-  if (!floor?.complete || !floor.naturalWidth) return layout;
+  if (!floor?.complete || !floor.naturalWidth) return expandPlaneToShell(layout);
 
   if (mask?.complete && mask.naturalWidth) {
     layout = baseLayout(base, floor, mask);
@@ -947,10 +1589,64 @@ function computeBaseLayout(base, floor, mask) {
     layout.planeH = Math.max(DESIGN_H, layout.floorY + layout.floorH);
   }
 
-  const diamond = floorOpaqueDiamond(floor);
-  const wallH = diamond ? roomWallHeight(diamond, mask) : 0;
-  // Always center the base + props. Paper imports keep relative coords via contentDx/Dy.
-  return centerBuildingInPlane(layout, diamond, wallH);
+  layout = centerBuildingInPlane(layout);
+  layout = attachFloorFront(layout, floor);
+  return expandPlaneToShell(layout);
+}
+
+function attachFloorFront(layout, floor) {
+  const local = opaqueBottomVertex(floor, 96);
+  if (local) {
+    layout.frontX = layout.floorX + local.x;
+    layout.frontY = layout.floorY + local.y;
+  } else {
+    layout.frontX = layout.floorX + Math.round((layout.floorW || 0) / 2);
+    layout.frontY = layout.floorY + (layout.floorH || 0);
+  }
+  return layout;
+}
+
+/** Grow grass+veil to the whole workspace. Do not move the locked 570×550 house frame. */
+function expandPlaneToShell(layout) {
+  const { w: cssW, h: cssH } = shellViewSize();
+  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(state.zoom) || 1));
+  const fit = houseFitScale(cssW, cssH);
+  // Zooming out grows grass around the house instead of shrinking a rectangle.
+  const scale = fit * Math.min(1, zoom);
+  const curW = Math.max(DESIGN_W, layout.planeW || DESIGN_W);
+  const curH = Math.max(DESIGN_H, layout.planeH || DESIGN_H);
+  if (!(scale > 0.001)) {
+    layout.planeW = curW;
+    layout.planeH = curH;
+    return layout;
+  }
+  let needW = Math.min(MAX_PLANE, Math.max(curW, Math.ceil(cssW / scale)));
+  let needH = Math.min(MAX_PLANE, Math.max(curH, Math.ceil(cssH / scale)));
+  const aspect = cssW / cssH;
+  if (needW / needH < aspect - 0.001) {
+    needW = Math.min(MAX_PLANE, Math.ceil(needH * aspect));
+  } else if (needW / needH > aspect + 0.001) {
+    needH = Math.min(MAX_PLANE, Math.ceil(needW / aspect));
+  }
+  const padX = Math.max(0, Math.ceil((needW - curW) / 2));
+  const padY = Math.max(0, Math.ceil((needH - curH) / 2));
+  if (padX) {
+    layout.maskX += padX;
+    layout.floorX += padX;
+    if (Number.isFinite(layout.frontX)) layout.frontX += padX;
+    layout.contentDx = (layout.contentDx || 0) + padX;
+  }
+  if (padY) {
+    layout.maskY += padY;
+    layout.floorY += padY;
+    if (Number.isFinite(layout.frontY)) layout.frontY += padY;
+    layout.contentDy = (layout.contentDy || 0) + padY;
+  }
+  layout.planeW = Math.min(MAX_PLANE, curW + padX * 2);
+  layout.planeH = Math.min(MAX_PLANE, curH + padY * 2);
+  layout.viewPadX = padX;
+  layout.viewPadY = padY;
+  return layout;
 }
 
 function ensureDesignPlane(width, height) {
@@ -959,77 +1655,96 @@ function ensureDesignPlane(width, height) {
   canvas.height = height;
 }
 
+function applyThemePack(pack) {
+  if (pack) {
+    if (state.themeFilter === pack.key && pack === state.pack) return;
+    state.themeFilter = pack.key;
+    state.pack = pack;
+  } else {
+    if (state.themeFilter === THEME_ALL) return;
+    state.themeFilter = THEME_ALL;
+  }
+  state.component = null;
+  state.customBrush = null;
+  state.brushState = 0;
+  ensureActiveCategory();
+  fillThemes();
+  fillCategories();
+  fillComponents();
+  fillCustoms();
+  updateSelectionCaption();
+  renderBuilding();
+}
+
 function fillThemes() {
   const list = document.getElementById("themeList");
-  list.innerHTML = "";
+  if (!list) return;
   const query = themeSearchQuery();
   let packs = state.packs.filter((pack) => !query || pack.name.toLowerCase().includes(query));
-  if (state.pack && query && !packs.includes(state.pack)) {
-    packs = [state.pack, ...packs];
+  const current = packByKey(state.themeFilter) || state.pack;
+  if (current && query && !packs.includes(current) && !isAllThemes()) {
+    packs = [current, ...packs];
   }
-  if (!packs.length) {
-    const empty = document.createElement("div");
-    empty.className = "theme-empty";
-    empty.textContent = query ? "无匹配主题" : "暂无主题";
-    list.appendChild(empty);
+  list.innerHTML = "";
+  const allOpt = document.createElement("option");
+  allOpt.value = THEME_ALL;
+  allOpt.textContent = "全部";
+  list.appendChild(allOpt);
+  if (!packs.length && !state.packs.length) {
+    list.disabled = true;
     updateAssetFilterSummary();
     return;
   }
+  list.disabled = false;
   packs.forEach((pack) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = pack.name;
-    button.title = pack.name;
-    const selected = pack === state.pack;
-    button.className = selected ? "on" : "";
-    button.setAttribute("role", "option");
-    button.setAttribute("aria-selected", selected ? "true" : "false");
-    button.onclick = () => {
-      state.pack = pack;
-      state.component = null;
-      state.customBrush = null;
-      state.brushState = 0;
-      ensureActiveCategory();
-      fillThemes();
-      fillCategories();
-      fillComponents();
-      fillCustoms();
-      updateSelectionCaption();
-      renderBuilding();
-    };
-    list.appendChild(button);
-    if (selected) {
-      requestAnimationFrame(() => button.scrollIntoView({ block: "nearest" }));
-    }
+    const option = document.createElement("option");
+    option.value = pack.key;
+    option.textContent = pack.name;
+    list.appendChild(option);
   });
+  list.value = isAllThemes() ? THEME_ALL : current?.key || THEME_ALL;
   updateAssetFilterSummary();
 }
 
 function fillCategories() {
   const list = document.getElementById("componentKinds");
   list.innerHTML = "";
-  const counts = categoryCounts(state.pack);
+  const counts = categoryCounts();
   CATEGORY_ORDER.forEach((category) => {
     const button = document.createElement("button");
     button.type = "button";
-    const count = counts.get(category) || 0;
-    button.className = category === state.category ? "on" : "";
-    button.disabled = count === 0;
+    const customSlot = isCustomCategory(category);
+    const allSlot = isAllCategory(category);
+    const count = customSlot
+      ? state.customs.length
+      : allSlot
+        ? counts.get(ALL_CATEGORY) || 0
+        : counts.get(category) || 0;
+    button.className = (category === state.category ? "on" : "") + (allSlot ? " cat-all" : "");
+    button.disabled = !customSlot && !allSlot && count === 0;
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", category === state.category ? "true" : "false");
-    button.title = count ? `${category}（${count}）` : `${category}（此主题无）`;
+    button.title = customSlot
+      ? count
+        ? `组件（${count}）`
+        : "自定义组件"
+      : allSlot
+        ? count
+          ? `全部类别（${count}）`
+          : "全部类别"
+        : count
+          ? `${category}（${count}）`
+          : `${category}（此主题无）`;
     const label = document.createElement("span");
     label.className = "cat-label";
     label.textContent = category;
     button.append(label);
-    if (count > 0) {
-      const badge = document.createElement("span");
-      badge.className = "cat-count";
-      badge.textContent = String(count);
-      button.append(badge);
-    }
+    const badge = document.createElement("span");
+    badge.className = "cat-count";
+    badge.textContent = String(count);
+    button.append(badge);
     button.onclick = () => {
-      if (count === 0) return;
+      if (!customSlot && !allSlot && count === 0) return;
       state.category = category;
       state.component = null;
       state.customBrush = null;
@@ -1042,6 +1757,21 @@ function fillCategories() {
     list.appendChild(button);
   });
   updateAssetFilterSummary();
+  syncAssetCategoryView();
+}
+
+function syncAssetCategoryView() {
+  const custom = isCustomCategory();
+  const themePicker = document.querySelector("#tabAssets .theme-picker");
+  const quick = document.getElementById("assetQuickFilters");
+  const list = document.getElementById("componentList");
+  const customs = document.getElementById("tabCustoms");
+  if (themePicker) themePicker.hidden = custom;
+  if (quick) quick.hidden = custom;
+  if (list) list.hidden = custom;
+  const wasHidden = !customs || customs.hidden;
+  if (customs) customs.hidden = !custom;
+  if (custom && wasHidden) fillCustoms();
 }
 
 function directionLabel(component) {
@@ -1051,79 +1781,217 @@ function directionLabel(component) {
   return `${frames}方向`;
 }
 
+function assetCardBadge(component, pack) {
+  if (isAllThemes()) return pack?.name || directionLabel(component);
+  if (isAllCategory()) return component.category || directionLabel(component);
+  return directionLabel(component);
+}
+
+function collectAssetRows() {
+  const query = themeSearchQuery();
+  const rows = [];
+  activeThemePacks().forEach((pack) => {
+    (pack.components || []).forEach((component) => {
+      if (!isBrowsableComponent(component)) return;
+      if (!isAllCategory() && component.category !== state.category) return;
+      const key = assetKey(component, pack);
+      if (state.assetMode === "favorite" && !state.assetFavorites.has(key)) return;
+      if (state.assetMode === "recent" && !state.assetRecent.includes(key)) return;
+      if (query) {
+        const hay = `${pack.name} ${component.category} ${component.id} ${(component.materials || [])
+          .map((item) => item.name)
+          .join(" ")}`.toLowerCase();
+        if (!hay.includes(query)) return;
+      }
+      rows.push({ component, pack, key });
+    });
+  });
+  return rows;
+}
+
+function currentAssetFilterKey() {
+  return [state.category, state.themeFilter, state.assetMode, themeSearchQuery()].join("|");
+}
+
+function assetGridMetrics(list) {
+  const pad = 12;
+  const width = Math.max(1, (list.clientWidth || list.parentElement?.clientWidth || 260) - pad);
+  const gap = ASSET_TILE_GAP;
+  const cols = Math.max(1, Math.floor((width + gap) / (ASSET_TILE_MIN + gap)));
+  const cellW = (width - gap * (cols - 1)) / cols;
+  const rowH = cellW + 32 + gap;
+  return { cols, rowH };
+}
+
+function bindAssetListScroll() {
+  if (assetListBound) return;
+  const list = document.getElementById("componentList");
+  if (!list) return;
+  assetListBound = true;
+  const refresh = () => {
+    if (!assetRowsCache.length) return;
+    if (assetWindowRaf) return;
+    assetWindowRaf = requestAnimationFrame(() => {
+      assetWindowRaf = 0;
+      paintAssetWindow();
+    });
+  };
+  list.addEventListener("scroll", refresh, { passive: true });
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(refresh).observe(list);
+  }
+}
+
+function appendAssetTile(parent, row) {
+  const { component, pack, key } = row;
+  if (!component._pack) component._pack = pack;
+  const tile = document.createElement("div");
+  tile.className = "component-tile";
+  const button = document.createElement("button");
+  button.type = "button";
+  const uid = componentUid(component.id, pack);
+  const missing = component.kind === "sprite" && uid == null;
+  button.className =
+    "component-card" +
+    (component === state.component && !state.customBrush ? " on" : "") +
+    (missing ? " missing" : "");
+  const image = document.createElement("img");
+  if (component.kind === "sprite") image.src = spriteUrl(component, pack, 0, true);
+  image.draggable = false;
+  const label = document.createElement("span");
+  label.className = "asset-card-badge";
+  label.textContent = assetCardBadge(component, pack);
+  button.title =
+    `${pack.name} / ${component.category} #${component.id}` +
+    (component.kind === "kit" ? " · 套件" : missing ? " · 缺失图像" : " · 拖到画布或点击选用") +
+    "\n" +
+    (component.materials || []).map((item) => `${item.name}×${item.count}`).join(" ");
+  button.append(image, label);
+  const selectBrush = () => {
+    component._pack = pack;
+    rememberAsset(component, pack);
+    if (pack) state.pack = pack;
+    state.component = component;
+    state.customBrush = null;
+    state.brushState = 0;
+    state.selected = [];
+    armPaintBrush();
+    updateSelectionCaption();
+    updateCurrentMaterials(component);
+    fillComponents();
+    fillCustoms();
+    fillLayers();
+    updateAlignBar();
+    updateFacingControl();
+    renderBuilding();
+  };
+  button.onpointerdown = (event) => {
+    if (missing || component.kind === "kit") return;
+    if (event.button !== 0) return;
+    event.preventDefault();
+    selectBrush();
+    beginPaletteDrag("component", component, event, button);
+  };
+  button.onclick = (event) => {
+    if (state.paletteClickIgnore) {
+      state.paletteClickIgnore = false;
+      return;
+    }
+    event.preventDefault();
+    if (component === state.component && !state.customBrush) {
+      cancelPick();
+      return;
+    }
+    selectBrush();
+  };
+  const favorite = document.createElement("button");
+  favorite.type = "button";
+  favorite.className = "favorite-toggle" + (state.assetFavorites.has(key) ? " on" : "");
+  favorite.innerHTML =
+    '<svg class="favorite-star" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.1 12.5 7.3 18 8l-4.2 3.7 1.3 5.5L10 14.5 4.9 17.2 6.2 11.7 2 8l5.5-.7z"/></svg>';
+  favorite.title = state.assetFavorites.has(key) ? "取消收藏" : "收藏素材";
+  favorite.setAttribute("aria-label", favorite.title);
+  favorite.onclick = (event) => {
+    event.stopPropagation();
+    if (state.assetFavorites.has(key)) state.assetFavorites.delete(key);
+    else state.assetFavorites.add(key);
+    saveAssetPreferences();
+    fillComponents();
+  };
+  tile.append(button, favorite);
+  parent.appendChild(tile);
+}
+
+function paintAssetWindow() {
+  const list = document.getElementById("componentList");
+  if (!list) return;
+  const rows = assetRowsCache;
+  if (!rows.length) return;
+  const scrollTop = list.scrollTop;
+  const viewH = Math.max(1, list.clientHeight || 400);
+  const { cols, rowH } = assetGridMetrics(list);
+  const virtual = rows.length > ASSET_VIRTUAL_MIN;
+  let start = 0;
+  let end = rows.length;
+  if (virtual) {
+    const startRow = Math.max(0, Math.floor(scrollTop / rowH) - ASSET_WINDOW_PAD_ROWS);
+    const visibleRows = Math.ceil(viewH / rowH) + ASSET_WINDOW_PAD_ROWS * 2;
+    start = startRow * cols;
+    end = Math.min(rows.length, start + visibleRows * cols);
+  }
+  const fragment = document.createDocumentFragment();
+  if (virtual && start > 0) {
+    const topPad = document.createElement("div");
+    topPad.className = "asset-pad";
+    topPad.style.height = `${(start / cols) * rowH}px`;
+    fragment.appendChild(topPad);
+  }
+  for (let i = start; i < end; i++) appendAssetTile(fragment, rows[i]);
+  if (virtual && end < rows.length) {
+    const botPad = document.createElement("div");
+    botPad.className = "asset-pad";
+    const endRow = Math.ceil(end / cols);
+    const totalRows = Math.ceil(rows.length / cols);
+    botPad.style.height = `${Math.max(0, totalRows - endRow) * rowH}px`;
+    fragment.appendChild(botPad);
+  }
+  list.replaceChildren(fragment);
+  if (virtual) list.scrollTop = scrollTop;
+}
+
 function fillComponents() {
   const list = document.getElementById("componentList");
-  list.innerHTML = "";
-  if (!state.pack) {
+  if (!list) return;
+  bindAssetListScroll();
+  if (isCustomCategory()) {
+    assetRowsCache = [];
+    list.replaceChildren();
+    syncAssetCategoryView();
     updateAssetFilterSummary();
     return;
   }
-  const components = state.pack.components.filter(
-    (component) => component.category === state.category
-  );
-  if (!components.length) {
+  syncAssetCategoryView();
+  if (!activeThemePacks().length) {
+    assetRowsCache = [];
+    list.replaceChildren();
+    updateAssetFilterSummary();
+    return;
+  }
+  const filterKey = currentAssetFilterKey();
+  if (filterKey !== assetFilterKey) {
+    assetFilterKey = filterKey;
+    list.scrollTop = 0;
+  }
+  assetRowsCache = collectAssetRows();
+  if (!assetRowsCache.length) {
     const empty = document.createElement("div");
     empty.className = "base-icon-empty";
-    empty.textContent = "当前主题在此类别下没有素材";
-    list.appendChild(empty);
+    empty.textContent = "没有匹配的素材。试试改搜索，或换个类别 / 主题。";
+    list.replaceChildren(empty);
     updateAssetFilterSummary();
     return;
   }
-  components.forEach((component) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    const uid = componentUid(component.id);
-    const missing = component.kind === "sprite" && uid == null;
-    button.className =
-      "component-card" +
-      (component === state.component && !state.customBrush ? " on" : "") +
-      (missing ? " missing" : "");
-    const image = document.createElement("img");
-    if (component.kind === "sprite") image.src = spriteUrl(component, state.pack, 0, true);
-    image.draggable = false;
-    const label = document.createElement("span");
-    label.textContent = directionLabel(component);
-    button.title =
-      `${state.pack.name} / ${component.category} #${component.id}` +
-      (component.kind === "kit" ? " · 套件" : missing ? " · 缺失图像" : " · 拖到画布或点击选用") +
-      "\n" +
-      (component.materials || []).map((item) => `${item.name}×${item.count}`).join(" ");
-    button.append(image, label);
-    const selectBrush = () => {
-      state.component = component;
-      state.customBrush = null;
-      state.brushState = 0;
-      state.selected = [];
-      updateSelectionCaption();
-      updateCurrentMaterials(component);
-      fillComponents();
-      fillCustoms();
-      fillLayers();
-      updateAlignBar();
-      updateFacingControl();
-      renderBuilding();
-    };
-    button.onpointerdown = (event) => {
-      if (missing || component.kind === "kit") return;
-      if (event.button !== 0) return;
-      event.preventDefault();
-      selectBrush();
-      beginPaletteDrag("component", component, event, button);
-    };
-    button.onclick = (event) => {
-      if (state.paletteClickIgnore) {
-        state.paletteClickIgnore = false;
-        return;
-      }
-      event.preventDefault();
-      if (component === state.component && !state.customBrush) {
-        cancelPick();
-        return;
-      }
-      selectBrush();
-    };
-    list.appendChild(button);
-  });
+  paintAssetWindow();
   updateAssetFilterSummary();
 }
 
@@ -1195,6 +2063,8 @@ function fillBaseIcons() {
     button.onclick = () => {
       state.base = base;
       state.basePicked = true;
+      state.baseOverridden = false;
+      state.paperBaseHint = "";
       invalidateBaseLayout();
       fillBaseIcons();
       updateBase();
@@ -1219,6 +2089,19 @@ function fillBaseMaterials(base) {
   materials.forEach((item) => {
     const row = document.createElement("div");
     row.className = "base-mat-row";
+    const url = materialIconUrl(item.name);
+    if (url) {
+      const icon = document.createElement("img");
+      icon.className = "mat-icon";
+      icon.src = url;
+      icon.alt = item.name;
+      icon.draggable = false;
+      row.appendChild(icon);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "mat-icon-slot";
+      row.appendChild(spacer);
+    }
     const name = document.createElement("span");
     name.textContent = item.name;
     const count = document.createElement("span");
@@ -1282,6 +2165,8 @@ function updateSelectionCaption() {
   if (btnClearPick) btnClearPick.hidden = !picking;
   if (actions) actions.hidden = count < 1;
   updateFacingControl();
+  updateLayerOrderControl();
+  updateToolHint();
 
   const groupNames = new Set(
     state.selected
@@ -1304,7 +2189,7 @@ function updateSelectionCaption() {
   if (btnUnlockSel) btnUnlockSel.hidden = lockedCount < 1;
 
   if (count > 1) {
-    selected.textContent = `已选 ${count} 项${groupHint}${lockHint}${lockedCount === count ? "" : "（可一起移动）"}`;
+    selected.textContent = `已选 ${count} 项${groupHint}${lockHint}${lockedCount === count ? "" : " · 可一起移动变换"}`;
     updateCurrentMaterials(null);
     updateAlignBar();
     return;
@@ -1334,16 +2219,49 @@ function updateSelectionCaption() {
   updateAlignBar();
 }
 
+function materialIconUrl(name) {
+  const row = state.itemIcons?.[name];
+  if (!row?.file) return "";
+  const file = String(row.file).replace(/\\/g, "/").replace(/^\/+/, "");
+  const frame = Number(row.frame) || 0;
+  const path = file.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  return `/item-ale/${path}.png?f=${frame}`;
+}
+
+function renderMaterialChip(name, count) {
+  const chip = document.createElement("span");
+  chip.className = "mat-chip";
+  chip.title = `${name}×${count}`;
+  const url = materialIconUrl(name);
+  if (url) {
+    const icon = document.createElement("img");
+    icon.className = "mat-icon";
+    icon.src = url;
+    icon.alt = name;
+    icon.draggable = false;
+    chip.appendChild(icon);
+  }
+  const label = document.createElement("span");
+  label.className = "mat-name";
+  label.textContent = name;
+  const em = document.createElement("em");
+  em.textContent = `×${count}`;
+  chip.append(label, em);
+  return chip;
+}
+
 function updateCurrentMaterials(component) {
-  document.getElementById("currentMaterials").textContent = component
-    ? (component.materials || []).map((item) => `${item.name}×${item.count}`).join("　")
-    : "";
+  const host = document.getElementById("currentMaterials");
+  if (!host) return;
+  host.replaceChildren();
+  (component?.materials || []).forEach((item) => {
+    host.appendChild(renderMaterialChip(item.name, item.count));
+  });
 }
 
 function updateAlignBar() {
   const bar = document.getElementById("alignBar");
-  if (!bar) return;
-  bar.hidden = state.phase !== "design" || state.selected.length < 2;
+  if (bar) bar.hidden = false;
 }
 
 function frameGeometry(component, stateValue = 0) {
@@ -1355,14 +2273,36 @@ function frameGeometry(component, stateValue = 0) {
   };
 }
 
+function isInCanvasBounds(record) {
+  const x = Number(record?.x) || 0;
+  const y = Number(record?.y) || 0;
+  // Native papers park leftovers at uint15 wrap (~32000). Keep those off the grass.
+  // New stamps left/above the house origin are negative paper coords and must still paint.
+  if (x >= 32000 || y >= 32000) return false;
+  const offset = state.interaction?.offset || paintedOffset || { dx: 0, dy: 0 };
+  const px = x + (Number(offset.dx) || 0);
+  const py = y + (Number(offset.dy) || 0);
+  const w = canvas?.width || DESIGN_W;
+  const h = canvas?.height || DESIGN_H;
+  return px > -w && py > -h && px < w * 2 && py < h * 2;
+}
+
+function isCanvasRecord(record) {
+  return !!(record && !record.hidden && Number(record.mat) !== 0 && isInCanvasBounds(record));
+}
+
+function isSelectableRecord(record) {
+  return !!(record && Number(record.mat) !== 0 && isInCanvasBounds(record));
+}
+
 function recordBox(record) {
   const component = recordComponent(record);
   const geometry = frameGeometry(component, record.state ?? record.flip ?? 0);
   return {
     x: record.x,
     y: record.y,
-    width: geometry.width,
-    height: geometry.height,
+    width: geometry.width || 0,
+    height: geometry.height || 0,
     hotX: record.x,
     hotY: record.y,
   };
@@ -1388,11 +2328,9 @@ function drawBase() {
   ensureDesignPlane(layout.planeW, layout.planeH);
   fillGrassPattern(ctx, grass, canvas.width, canvas.height, false);
 
-  const diamond = floorOpaqueDiamond(floor);
-  if (diamond) {
-    const wallH = roomWallHeight(diamond, mask);
-    const volume = roomVolumeLayer(floor, grass, diamond, wallH, layout.floorX, layout.floorY);
-    ctx.drawImage(volume.sheet, layout.floorX - volume.dx, layout.floorY - volume.dy);
+  if (mask?.complete && mask.naturalWidth) {
+    const volume = roomMaskLayer(mask, grass, layout.maskX, layout.maskY);
+    if (volume) ctx.drawImage(volume.sheet, layout.maskX, layout.maskY);
   }
 
   if (!floor?.complete || !floor.naturalWidth) return;
@@ -1402,9 +2340,9 @@ function drawBase() {
 
 function afterBaseDrawn() {
   const key = `${state.base?.no || "?"}|${canvas.width}x${canvas.height}|${Number(state.zoom) || 1}`;
-  applyZoom();
   if (key === lastSceneKey) return;
   lastSceneKey = key;
+  applyZoom();
   requestAnimationFrame(() => centerCanvasInShell());
 }
 
@@ -1430,6 +2368,7 @@ function customBrushBounds(custom) {
 }
 
 function drawGhost() {
+  if (state.shapeStroke) return;
   if (!state.ghost || state.phase !== "design" || !hasBrush()) return;
   if (state.customBrush) {
     const custom = state.customBrush;
@@ -1475,62 +2414,65 @@ function drawGhost() {
   ctx.restore();
 }
 
-function drawMarquee() {
-  if (!state.marquee) return;
-  const { x0, y0, x1, y1 } = state.marquee;
-  const x = Math.min(x0, x1);
-  const y = Math.min(y0, y1);
-  const w = Math.abs(x1 - x0);
-  const h = Math.abs(y1 - y0);
+function drawStampGhostAt(template, cx, cy) {
+  if (template.type === "custom") {
+    const custom = template.custom;
+    const bounds = customBrushBounds(custom);
+    const originX = Math.round(cx - (bounds.left + bounds.right) / 2);
+    const originY = Math.round(cy - (bounds.top + bounds.bottom) / 2);
+    custom.records.forEach((row) => {
+      const pack = packByKey(row.packKey) || state.pack;
+      const component = componentByUid(row.mat, pack);
+      const face = facingOffset(row.state ?? 0, component);
+      const url = spriteUrl(component, pack, face);
+      const image = loadImage(url);
+      const geometry = frameGeometry(component, face);
+      const x = originX + row.dx;
+      const y = originY + row.dy;
+      if (image?.complete && image.naturalWidth) ctx.drawImage(image, x, y);
+      else ctx.fillRect(x, y, Math.max(16, geometry.width), Math.max(16, geometry.height));
+    });
+    return;
+  }
+  const record = template.type === "record" ? template.record : null;
+  const component = template.component || recordComponent(record);
+  const pack = template.pack || recordPack(record) || component?._pack;
+  const face = record ? record.state ?? record.flip ?? 0 : state.brushState;
+  const geometry = frameGeometry(component, face);
+  const x = Math.round(cx - geometry.width / 2);
+  const y = Math.round(cy - geometry.height / 2);
+  const url = spriteUrl(component, pack, face);
+  const image = loadImage(url);
+  if (image?.complete && image.naturalWidth) ctx.drawImage(image, x, y);
+  else {
+    ctx.fillStyle = "#7ec8a0";
+    ctx.fillRect(x, y, Math.max(16, geometry.width), Math.max(16, geometry.height));
+  }
+}
+
+function drawShapePreview() {
+  const stroke = state.shapeStroke;
+  const template = stampTemplate();
+  if (!stroke || !template) return;
   ctx.save();
-  ctx.fillStyle = "rgba(80, 160, 255, 0.18)";
-  ctx.strokeStyle = "rgba(60, 130, 230, 0.9)";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 3]);
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+  ctx.globalAlpha = 0.42;
+  ctx.fillStyle = "#7ec8a0";
+  depthSortedStampPoints(shapeStampPoints(stroke), stroke.tool)
+    .slice(0, STAMP_PREVIEW_MAX)
+    .forEach((point) => drawStampGhostAt(template, point.x, point.y));
   ctx.restore();
+}
+
+function drawMarquee() {
+  /* Selection rubber-band is a DOM overlay so it is not clipped by the canvas bitmap. */
 }
 
 function drawGroupBounds() {
-  if (state.selected.length < 2) return;
-  const boxes = selectionBoxes(state.selected);
-  const union = unionBox(boxes);
-  if (!union) return;
-  const hasGroup = state.selected.some((index) => state.records[index]?.group);
-  ctx.save();
-  ctx.strokeStyle = hasGroup ? "rgba(70, 190, 120, 0.95)" : "rgba(255, 237, 74, 0.75)";
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash(hasGroup ? [] : [6, 4]);
-  ctx.strokeRect(
-    union.left - 2,
-    union.top - 2,
-    union.right - union.left + 4,
-    union.bottom - union.top + 4
-  );
-  ctx.restore();
+  /* Selection bounds live in the viewport overlay, outside the bitmap render. */
 }
 
 function drawGuides() {
-  if (!state.guides.length) return;
-  ctx.save();
-  ctx.strokeStyle = "rgba(255, 90, 120, 0.85)";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([5, 4]);
-  state.guides.forEach((guide) => {
-    if (guide.type === "v") {
-      ctx.beginPath();
-      ctx.moveTo(guide.pos + 0.5, 0);
-      ctx.lineTo(guide.pos + 0.5, canvas.height);
-      ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(0, guide.pos + 0.5);
-      ctx.lineTo(canvas.width, guide.pos + 0.5);
-      ctx.stroke();
-    }
-  });
-  ctx.restore();
+  /* Snap feedback lives in the viewport overlay. */
 }
 
 function paintBuilding() {
@@ -1538,87 +2480,568 @@ function paintBuilding() {
   const prevH = canvas.height;
   drawBase();
   const layoutReady = isBaseLayoutReady();
-  const { dx, dy } = layoutContentOffset();
+  const offset = state.interaction?.offset || computeLiveContentOffset();
+  if (!state.interaction) paintedOffset = offset;
+  const { dx, dy } = offset;
+  const frameEl = document.getElementById("canvasFrame");
+  if (frameEl) {
+    frameEl.dataset.paintDx = String(dx);
+    frameEl.dataset.paintDy = String(dy);
+  }
   if (state.phase === "design" && layoutReady) {
-    const selectedSet = new Set(state.selected);
+    const drag = state.dragging;
+    const movingSet = drag?.movingSet;
+    const selectedSet = null;
     ctx.save();
     ctx.translate(dx, dy);
     state.records.forEach((record, index) => {
-      if (record.hidden) return;
+      if (!isCanvasRecord(record)) return;
+      const moving = !!movingSet?.has(index);
+      if (moving && drag.preview?.sheet) return;
       const component = recordComponent(record);
       const pack = recordPack(record) || component?._pack;
       const url = spriteUrl(component, pack, record.state ?? record.flip ?? 0);
       const image = loadImage(url);
       const box = recordBox(record);
+      const offsetX = moving ? drag.offsetX || 0 : 0;
+      const offsetY = moving ? drag.offsetY || 0 : 0;
       if (image?.complete && image.naturalWidth) {
-        ctx.drawImage(image, box.x, box.y);
+        ctx.drawImage(image, box.x + offsetX, box.y + offsetY);
       } else {
         ctx.fillStyle = "#d75d44";
-        ctx.fillRect(box.hotX - 4, box.hotY - 4, 8, 8);
+        ctx.fillRect(box.hotX + offsetX - 4, box.hotY + offsetY - 4, 8, 8);
         ctx.fillStyle = "#fff";
-        ctx.fillText(String(record.mat), box.hotX + 6, box.hotY);
+        ctx.fillText(String(record.mat), box.hotX + offsetX + 6, box.hotY + offsetY);
       }
-      if (selectedSet.has(index)) {
+    });
+    if (drag?.preview?.sheet && drag.bounds) {
+      ctx.drawImage(
+        drag.preview.sheet,
+        Math.round(drag.bounds.left + (drag.offsetX || 0)),
+        Math.round(drag.bounds.top + (drag.offsetY || 0))
+      );
+    }
+    ctx.restore();
+    drawUnlitCover();
+    ctx.save();
+    ctx.translate(dx, dy);
+    drawGhost();
+    drawShapePreview();
+    if (selectedSet) {
+      state.records.forEach((record, index) => {
+        if (record.hidden || !selectedSet.has(index)) return;
+        const moving = !!movingSet?.has(index);
+        const offsetX = moving ? drag.offsetX || 0 : 0;
+        const offsetY = moving ? drag.offsetY || 0 : 0;
         ctx.strokeStyle = record.locked ? "#9aa7b2" : "#ffed4a";
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 2]);
-        ctx.strokeRect(box.x - 1, box.y - 1, Math.max(8, box.width + 2), Math.max(8, box.height + 2));
+        const hitBox = recordHitBox(record);
+        ctx.strokeRect(
+          hitBox.x + offsetX - 1,
+          hitBox.y + offsetY - 1,
+          Math.max(8, hitBox.width + 2),
+          Math.max(8, hitBox.height + 2)
+        );
         ctx.setLineDash([]);
-      }
-    });
-    drawGhost();
+      });
+    }
     drawGroupBounds();
     drawMarquee();
     drawGuides();
     ctx.restore();
+  } else {
+    drawUnlitCover();
   }
   if (canvas.width !== prevW || canvas.height !== prevH || state.base) afterBaseDrawn();
   if (!state.dragging && !state.marquee) updateAllMaterials();
+  syncViewportOverlays();
 }
 
 function renderBuilding() {
   scheduleRender();
 }
 
-function updateAllMaterials() {
+function materialResolutionReason(record) {
+  const mat = Math.max(0, Math.round(Number(record?.mat) || 0));
+  if (!mat) return "";
+  if (mat < 1000) {
+    if (record?.localPackUnknown) return `三位素材 #${mat} 无法从图纸确定主题`;
+    const pack = recordPack(record);
+    return pack
+      ? `${pack.name || pack.key} 缺少素材 #${mat}`
+      : `三位素材 #${mat} 尚未指定主题`;
+  }
+  const uid = Math.floor(mat / 1000);
+  const local = mat % 1000;
+  const pack = packForPaperUid(uid);
+  return pack
+    ? `${pack.name || pack.key} 缺少素材 #${local}`
+    : `素材包 UID ${uid} 尚未登记`;
+}
+
+function buildingMaterialReport(records = state.records) {
   const totals = new Map();
+  const unresolvedReasons = new Map();
+  let visible = 0;
+  let resolved = 0;
   (state.base?.baseMaterials || []).forEach((item) => totals.set(item.name, item.count));
-  state.records.forEach((record) => {
+  records.forEach((record) => {
+    if (record.hidden || Number(record.mat) === 0) return;
+    visible += 1;
     const component = recordComponent(record);
+    if (!component) {
+      const reason = materialResolutionReason(record);
+      unresolvedReasons.set(reason, (unresolvedReasons.get(reason) || 0) + 1);
+      return;
+    }
+    resolved += 1;
     (component?.materials || []).forEach((item) => {
       totals.set(item.name, (totals.get(item.name) || 0) + item.count);
     });
   });
-  const strip = document.getElementById("allMaterials");
-  strip.innerHTML = "";
-  [...totals].forEach(([name, count]) => {
-    const chip = document.createElement("span");
-    chip.className = "mat-chip";
-    chip.innerHTML = `${name}<em>×${count}</em>`;
-    strip.appendChild(chip);
+  return { totals, visible, resolved, unresolved: visible - resolved, unresolvedReasons };
+}
+
+function buildingMaterialTotals(records = state.records) {
+  return buildingMaterialReport(records).totals;
+}
+
+function fillMaterialList(host, totals = null, unresolved = null) {
+  if (!host) return;
+  host.replaceChildren();
+  let rows = totals;
+  let missing = unresolved;
+  if (!rows) {
+    const report = buildingMaterialReport();
+    rows = report.totals;
+    missing = report.unresolved;
+  }
+  if (Number(missing) > 0) {
+    const warning = document.createElement("span");
+    warning.className = "material-warning";
+    warning.textContent = `部分统计：${missing} 件素材未解析`;
+    warning.title = "未解析素材无法可靠计算所需材料，不会用其他素材包猜测补齐。";
+    host.appendChild(warning);
+  }
+  [...rows].forEach(([name, count]) => {
+    host.appendChild(renderMaterialChip(name, count));
   });
 }
 
-function canvasPoint(event) {
-  const rect = canvas.getBoundingClientRect();
-  const { dx, dy } = layoutContentOffset();
+function updateAllMaterials() {
+  const strip = document.getElementById("allMaterials");
+  fillMaterialList(strip);
+}
+
+function sceneRectToFrame(rect, transform = viewportTransform()) {
+  const frame = document.getElementById("canvasFrame");
+  const row = BI.normalizeRect(rect);
+  const width = Math.max(1, frame?.clientWidth || transform.display.width);
+  const height = Math.max(1, frame?.clientHeight || transform.display.height);
+  const scaleX = width / Math.max(1, transform.bitmapWidth);
+  const scaleY = height / Math.max(1, transform.bitmapHeight);
   return {
-    x: ((event.clientX - rect.left) * canvas.width) / rect.width - dx,
-    y: ((event.clientY - rect.top) * canvas.height) / rect.height - dy,
+    left: (row.left + transform.offsetX) * scaleX,
+    top: (row.top + transform.offsetY) * scaleY,
+    width: row.width * scaleX,
+    height: row.height * scaleY,
   };
 }
 
-function hitRecord(x, y, { includeLocked = false } = {}) {
-  for (let index = state.records.length - 1; index >= 0; index--) {
+function bitmapRectToFrame(rect, transform = viewportTransform()) {
+  const frame = document.getElementById("canvasFrame");
+  const row = BI.normalizeRect(rect);
+  const width = Math.max(1, frame?.clientWidth || transform.display.width);
+  const height = Math.max(1, frame?.clientHeight || transform.display.height);
+  const scaleX = width / Math.max(1, transform.bitmapWidth);
+  const scaleY = height / Math.max(1, transform.bitmapHeight);
+  return {
+    left: row.left * scaleX,
+    top: row.top * scaleY,
+    width: row.width * scaleX,
+    height: row.height * scaleY,
+  };
+}
+
+function selectionDisplayBounds(indices, dragOffset) {
+  const ox = Number(dragOffset?.x) || 0;
+  const oy = Number(dragOffset?.y) || 0;
+  const paint = layoutContentOffset();
+  const painted = [];
+  indices.forEach((index) => {
     const record = state.records[index];
-    if (record.hidden) continue;
-    if (record.locked && !includeLocked) continue;
-    const box = recordBox(record);
-    if (x >= box.x && x < box.x + box.width && y >= box.y && y < box.y + box.height) {
-      return index;
+    if (!isCanvasRecord(record)) return;
+    const box = recordHitBox(record);
+    painted.push({
+      box: {
+        x: box.x + paint.dx + ox,
+        y: box.y + paint.dy + oy,
+        width: box.width,
+        height: box.height,
+      },
+    });
+  });
+  return unionBox(painted);
+}
+
+function scenePointToFrame(x, y, transform = viewportTransform()) {
+  const frame = document.getElementById("canvasFrame");
+  const width = Math.max(1, frame?.clientWidth || transform.display.width);
+  const height = Math.max(1, frame?.clientHeight || transform.display.height);
+  return {
+    x: (Number(x) + transform.offsetX) * (width / Math.max(1, transform.bitmapWidth)),
+    y: (Number(y) + transform.offsetY) * (height / Math.max(1, transform.bitmapHeight)),
+  };
+}
+
+function viewportTransform(offset = layoutContentOffset()) {
+  return BI.createViewportTransform({
+    canvasRect: canvas.getBoundingClientRect(),
+    bitmapWidth: canvas.width,
+    bitmapHeight: canvas.height,
+    offsetX: offset.dx,
+    offsetY: offset.dy,
+    objectFit: "fill",
+  });
+}
+
+function clientToBitmap(clientX, clientY) {
+  return viewportTransform().clientToBitmap(clientX, clientY);
+}
+
+function clientToContent(clientX, clientY) {
+  return viewportTransform().clientToScene(clientX, clientY);
+}
+
+function canvasPoint(event) {
+  return clientToContent(event.clientX, event.clientY);
+}
+
+function spriteOpaqueAt(image, lx, ly) {
+  if (!image?.complete || !image.naturalWidth) return false;
+  if (lx < 0 || ly < 0 || lx >= image.naturalWidth || ly >= image.naturalHeight) return false;
+  try {
+    hitProbeCtx.clearRect(0, 0, 1, 1);
+    hitProbeCtx.drawImage(image, lx, ly, 1, 1, 0, 0, 1, 1);
+    return hitProbeCtx.getImageData(0, 0, 1, 1).data[3] > SPRITE_ALPHA_HIT;
+  } catch {
+    return false;
+  }
+}
+
+function recordHitBox(record) {
+  const box = recordBox(record);
+  if (box.width <= 0 || box.height <= 0) return box;
+  const component = recordComponent(record);
+  const pack = recordPack(record) || component?._pack;
+  const image = loadImage(spriteUrl(component, pack, record.state ?? record.flip ?? 0));
+  const opaque = cacheSpriteOpaqueBounds(image);
+  if (!opaque) return box;
+  const sx = box.width / Math.max(1, image.naturalWidth);
+  const sy = box.height / Math.max(1, image.naturalHeight);
+  return {
+    x: box.x + opaque.x * sx,
+    y: box.y + opaque.y * sy,
+    width: Math.max(1, opaque.width * sx),
+    height: Math.max(1, opaque.height * sy),
+  };
+}
+
+function selectionHitBoxes(indices) {
+  return indices
+    .filter((index) => isCanvasRecord(state.records[index]))
+    .map((index) => ({ index, box: recordHitBox(state.records[index]) }));
+}
+
+function recordSolidAt(record, x, y) {
+  const box = recordBox(record);
+  const lx = Math.floor(x - box.x);
+  const ly = Math.floor(y - box.y);
+  if (lx < 0 || ly < 0 || lx >= box.width || ly >= box.height) return false;
+  const component = recordComponent(record);
+  const pack = recordPack(record) || component?._pack;
+  const image = loadImage(spriteUrl(component, pack, record.state ?? record.flip ?? 0));
+  return spriteOpaqueAt(image, lx, ly);
+}
+
+function boxesOverlap(a, b) {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + b.height > b.y;
+}
+
+function marqueeMoved(marquee) {
+  if (!marquee) return false;
+  const dx = (marquee.cx1 ?? marquee.x1) - (marquee.cx0 ?? marquee.x0);
+  const dy = (marquee.cy1 ?? marquee.y1) - (marquee.cy0 ?? marquee.y0);
+  return Math.abs(dx) >= MARQUEE_MIN_PX || Math.abs(dy) >= MARQUEE_MIN_PX;
+}
+
+function collectMarqueeHits(marquee) {
+  const result = BI.selectFromRect(
+    marquee.index,
+    marquee.startScene,
+    marquee.endScene,
+    { mode: marquee.mode || currentMarqueeMode() }
+  );
+  return result.matches.map((item) => item.value);
+}
+
+function syncMarqueeOverlay() {
+  const el = document.getElementById("marqueeOverlay");
+  if (!el) return;
+  const marquee = state.marquee;
+  if (!marquee) {
+    el.hidden = true;
+    return;
+  }
+  const rect = sceneRectToFrame(
+    BI.rectFromPoints(marquee.startScene, marquee.endScene),
+    marquee.transform
+  );
+  if (rect.width < 1 && rect.height < 1) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.style.left = `${rect.left}px`;
+  el.style.top = `${rect.top}px`;
+  el.style.width = `${Math.max(1, rect.width)}px`;
+  el.style.height = `${Math.max(1, rect.height)}px`;
+  const mode = marquee.mode || currentMarqueeMode();
+  el.classList.toggle("is-contain", mode === "contain");
+  el.dataset.mode = mode === "contain" ? "完整包含" : "碰到就选";
+}
+
+function syncShapeOverlay() {
+  const svg = document.getElementById("shapeOverlay");
+  if (!svg) return;
+  const stroke = state.shapeStroke;
+  if (!stroke || !isPlaceTool(stroke.tool)) {
+    svg.hidden = true;
+    svg.replaceChildren();
+    return;
+  }
+  const transform = stroke.transform || viewportTransform();
+  const a = scenePointToFrame(stroke.start.x, stroke.start.y, transform);
+  const b = scenePointToFrame(stroke.end.x, stroke.end.y, transform);
+  const left = Math.min(a.x, b.x);
+  const top = Math.min(a.y, b.y);
+  const width = Math.max(1, Math.abs(b.x - a.x));
+  const height = Math.max(1, Math.abs(b.y - a.y));
+  const ns = "http://www.w3.org/2000/svg";
+  const style = (node, fill) => {
+    node.setAttribute("fill", fill);
+    node.setAttribute("stroke", "#7ed9a0");
+    node.setAttribute("stroke-width", "1.5");
+    node.setAttribute("stroke-dasharray", "5 4");
+    return node;
+  };
+  let node;
+  if (isStampLike(stroke.tool)) {
+    node = document.createElementNS(ns, "polyline");
+    const pts = (stroke.points || []).map((point) => {
+      const frame = scenePointToFrame(point.x, point.y, transform);
+      return `${frame.x},${frame.y}`;
+    });
+    node.setAttribute("points", pts.join(" "));
+    style(node, "none");
+  } else if (stroke.tool === "line") {
+    node = document.createElementNS(ns, "line");
+    node.setAttribute("x1", String(a.x));
+    node.setAttribute("y1", String(a.y));
+    node.setAttribute("x2", String(b.x));
+    node.setAttribute("y2", String(b.y));
+    style(node, "none");
+  } else if (stroke.tool === "circle" || (stroke.tool === "ring" && stroke.aligned)) {
+    node = document.createElementNS(ns, "ellipse");
+    node.setAttribute("cx", String(left + width / 2));
+    node.setAttribute("cy", String(top + height / 2));
+    node.setAttribute("rx", String(width / 2));
+    node.setAttribute("ry", String(height / 2));
+    style(node, stroke.tool === "ring" ? "none" : "rgba(126, 215, 160, 0.12)");
+  } else if (stroke.tool === "triangle") {
+    node = document.createElementNS(ns, "polygon");
+    node.setAttribute("points", `${left + width / 2},${top} ${left},${top + height} ${left + width},${top + height}`);
+    style(node, "rgba(126, 215, 160, 0.12)");
+  } else if (stroke.tool === "diamond") {
+    node = document.createElementNS(ns, "polygon");
+    node.setAttribute(
+      "points",
+      `${left + width / 2},${top} ${left + width},${top + height / 2} ${left + width / 2},${top + height} ${left},${top + height / 2}`
+    );
+    style(node, "rgba(126, 215, 160, 0.12)");
+  } else {
+    node = document.createElementNS(ns, "rect");
+    node.setAttribute("x", String(left));
+    node.setAttribute("y", String(top));
+    node.setAttribute("width", String(width));
+    node.setAttribute("height", String(height));
+    style(node, stroke.tool === "ring" ? "none" : "rgba(126, 215, 160, 0.12)");
+  }
+  svg.replaceChildren(node);
+  svg.hidden = false;
+}
+
+function syncViewportOverlays() {
+  syncMarqueeOverlay();
+  syncShapeOverlay();
+  const shell = document.getElementById("canvasShell");
+  const selection = document.getElementById("selectionOverlay");
+  const guideLayer = document.getElementById("guideOverlay");
+  if (!shell || !selection || !guideLayer) return;
+  const shellRect = shell.getBoundingClientRect();
+  const root = document.getElementById("viewportOverlayRoot");
+  if (root) {
+    const stage = document.getElementById("buildingStage");
+    const stageRect = stage?.getBoundingClientRect();
+    if (stageRect) {
+      root.style.left = `${shellRect.left - stageRect.left}px`;
+      root.style.top = `${shellRect.top - stageRect.top}px`;
+      root.style.width = `${shellRect.width}px`;
+      root.style.height = `${shellRect.height}px`;
     }
   }
+  const transform = state.interaction?.transform || viewportTransform();
+  const bounds = state.marquee
+    ? null
+    : selectionDisplayBounds(state.selected, {
+        x: state.dragging?.offsetX || 0,
+        y: state.dragging?.offsetY || 0,
+      });
+  if (!bounds) {
+    selection.hidden = true;
+  } else {
+    const frameRect = bitmapRectToFrame(bounds, transform);
+    selection.hidden = false;
+    selection.style.left = `${frameRect.left}px`;
+    selection.style.top = `${frameRect.top}px`;
+    selection.style.width = `${Math.max(1, frameRect.width)}px`;
+    selection.style.height = `${Math.max(1, frameRect.height)}px`;
+    selection.dataset.count = `${state.selected.length} 项`;
+    const badge = selection.querySelector(".selection-count");
+    if (badge) {
+      badge.textContent = `${state.selected.length} 项`;
+      badge.style.top = "";
+      badge.style.right = "";
+      badge.style.bottom = "";
+    }
+  }
+  layoutFloatingHuds();
+
+  const frame = document.getElementById("canvasFrame");
+  guideLayer.replaceChildren();
+  state.guides.forEach((guide) => {
+    const line = document.createElement("i");
+    line.className = `snap-guide ${guide.type === "v" ? "is-vertical" : "is-horizontal"}`;
+    const point = scenePointToFrame(
+      guide.type === "v" ? guide.pos : 0,
+      guide.type === "h" ? guide.pos : 0,
+      transform
+    );
+    if (guide.type === "iso-u" || guide.type === "iso-v") {
+      const left = transform.clientToScene(shell.getBoundingClientRect().left, shell.getBoundingClientRect().top);
+      const right = transform.clientToScene(shell.getBoundingClientRect().right, shell.getBoundingClientRect().top);
+      const x0 = left.x - 400;
+      const x1 = right.x + 400;
+      const yAt = (x) =>
+        guide.type === "iso-u" ? 2 * guide.pos - x / 2 : x / 2 - 2 * guide.pos;
+      const a = scenePointToFrame(x0, yAt(x0), transform);
+      const b = scenePointToFrame(x1, yAt(x1), transform);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      line.className = "snap-guide is-iso";
+      line.style.left = `${a.x}px`;
+      line.style.top = `${a.y}px`;
+      line.style.width = `${Math.max(1, Math.hypot(dx, dy))}px`;
+      line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+    } else if (guide.type === "v") {
+      line.style.left = `${point.x}px`;
+      line.style.top = "0px";
+      line.style.height = `${frame?.clientHeight || shell.clientHeight}px`;
+    } else {
+      line.style.left = "0px";
+      line.style.top = `${point.y}px`;
+      line.style.width = `${frame?.clientWidth || shell.clientWidth}px`;
+    }
+    guideLayer.appendChild(line);
+  });
+}
+
+function buildRecordSpatialIndex(excluded = new Set(), { includeLocked = true } = {}) {
+  const skip = excluded instanceof Set ? excluded : new Set();
+  const index = new BI.SpatialIndex(128);
+  state.records.forEach((record, recordIndex) => {
+    if (!isCanvasRecord(record) || skip.has(recordIndex)) return;
+    if (!includeLocked && record.locked) return;
+    index.insert(recordIndex, recordHitBox(record), recordIndex);
+  });
+  return index;
+}
+
+function pointInSelectionUnion(x, y) {
+  if (state.selected.length < 2) return false;
+  const union = unionBox(selectionHitBoxes(state.selected));
+  if (!union) return false;
+  const pad = 4;
+  return x >= union.left - pad && x <= union.right + pad && y >= union.top - pad && y <= union.bottom + pad;
+}
+
+function hitRecord(x, y, { includeLocked = false, solid = false } = {}) {
+  for (let index = state.records.length - 1; index >= 0; index--) {
+    const record = state.records[index];
+    if (!isCanvasRecord(record)) continue;
+    if (record.locked && !includeLocked) continue;
+    if (solid) {
+      const tight = recordHitBox(record);
+      if (x < tight.x || y < tight.y || x >= tight.x + tight.width || y >= tight.y + tight.height) continue;
+      if (!recordSolidAt(record, x, y)) continue;
+      return index;
+    }
+    const box = recordBox(record);
+    if (x >= box.x && x < box.x + box.width && y >= box.y && y < box.y + box.height) return index;
+  }
   return -1;
+}
+
+function workingSet(indices) {
+  return [...new Set(indices)].filter((index) => state.records[index] && !state.records[index].hidden);
+}
+
+function beginRecordDrag(x, y, indices, transform = viewportTransform()) {
+  const dragIndices = workingSet(indices).filter((index) => !state.records[index].locked);
+  if (!dragIndices.length) return false;
+  const preview = buildDragLayer(dragIndices);
+  const movingSet = preview.movingSet;
+  state.dragging = {
+    x,
+    y,
+    origins: dragIndices.map((index) => ({
+      i: index,
+      x: state.records[index].x,
+      y: state.records[index].y,
+    })),
+    bounds: preview.bounds,
+    movingSet,
+    preview,
+    transform,
+    snapIndex: buildRecordSpatialIndex(movingSet),
+    snapLatch: { x: null, y: null },
+    offsetX: 0,
+    offsetY: 0,
+    moved: false,
+    before: null,
+  };
+  state.guides = [];
+  return true;
+}
+
+function updateMarqueePointer(clientX, clientY) {
+  if (!state.marquee) return;
+  state.marquee.cx1 = clientX;
+  state.marquee.cy1 = clientY;
+  state.marquee.endScene = state.marquee.transform.clientToScene(clientX, clientY);
+  if (marqueeMoved(state.marquee)) state.marquee.pendingPlace = false;
+  syncMarqueeOverlay();
 }
 
 function expandGroupSelection(indices) {
@@ -1635,20 +3058,22 @@ function expandGroupSelection(indices) {
   return [...set].sort((a, b) => a - b);
 }
 
-function setSelection(indices, { expandGroup = false } = {}) {
+function setSelection(indices, { expandGroup = false, layers = true } = {}) {
   let next = [...new Set(indices)].filter((index) => index >= 0 && index < state.records.length);
   if (expandGroup) next = expandGroupSelection(next);
   state.selected = next;
   updateSelectionCaption();
   updateAlignBar();
-  fillLayers();
+  syncViewportOverlays();
+  if (layers) fillLayers();
 }
 
-function clearSelection() {
+function clearSelection({ layers = true } = {}) {
   state.selected = [];
   updateSelectionCaption();
   updateAlignBar();
-  fillLayers();
+  syncViewportOverlays();
+  if (layers) fillLayers();
 }
 
 function cancelPick() {
@@ -1656,6 +3081,8 @@ function cancelPick() {
   state.customBrush = null;
   state.brushState = 0;
   state.ghost = null;
+  state.marquee = null;
+  syncMarqueeOverlay();
   clearSelection();
   fillComponents();
   fillCustoms();
@@ -1665,6 +3092,15 @@ function cancelPick() {
 
 function hasBrush() {
   return !!(state.customBrush || state.component);
+}
+
+function clearBrushHighlight() {
+  state.component = null;
+  state.customBrush = null;
+  state.ghost = null;
+  document.querySelectorAll(".component-card.on, .custom-card.on").forEach((node) => {
+    node.classList.remove("on");
+  });
 }
 
 function componentFrameCount(component) {
@@ -1691,10 +3127,14 @@ function currentFacingFrames() {
     });
     return max;
   }
-  if (state.selected.length === 1) {
-    const record = state.records[state.selected[0]];
-    const component = record?.component || componentByUid(record?.mat, record?.pack || state.pack);
-    if (component) return componentFrameCount(component);
+  if (state.selected.length) {
+    let max = 1;
+    state.selected.forEach((index) => {
+      const record = state.records[index];
+      const component = record?.component || componentByUid(record?.mat, record?.pack || state.pack);
+      max = Math.max(max, componentFrameCount(component));
+    });
+    return max;
   }
   return 4;
 }
@@ -1710,12 +3150,11 @@ function updateFacingControl() {
   if (!label) return;
   const frames = normalizeBrushState();
   label.textContent = `${state.brushState + 1}/${frames}`;
-  const control = document.getElementById("facingControl");
-  if (control) {
-    control.title =
-      "放置朝向 / 粘贴与自定义组件的旋转偏移 · 当前 " +
-      `${state.brushState + 1}/${frames}（空格或◀▶切换，0 偏移即保持原朝向）`;
-  }
+  applyHoverTip(
+    document.getElementById("facingLabel"),
+    `朝向 ${state.brushState + 1}/${frames}`,
+    "Q / E"
+  );
 }
 
 function stepFacing(delta) {
@@ -1737,6 +3176,65 @@ function stepFacing(delta) {
   updateFacingControl();
   updateSelectionCaption();
   renderBuilding();
+}
+
+const LAYER_DEPTHS = 4;
+
+function currentLayerSlot() {
+  const n = state.records.length;
+  const indices = selectedUnlockedIndices();
+  if (!n || !indices.length) return 0;
+  if (n === 1) return LAYER_DEPTHS;
+  const pos = Math.round((Math.min(...indices) + Math.max(...indices)) / 2);
+  if (pos <= 0) return 1;
+  if (pos >= n - 1) return LAYER_DEPTHS;
+  return pos * 2 < n - 1 ? 2 : 3;
+}
+
+function moveSelectedToLayerSlot(slot) {
+  const indices = selectedUnlockedIndices().sort((a, b) => a - b);
+  if (!indices.length) return;
+  const depth = Math.min(LAYER_DEPTHS, Math.max(1, Number(slot) || 1));
+  if (depth === 1) {
+    reorderSelected("bottom");
+    return;
+  }
+  if (depth === LAYER_DEPTHS) {
+    reorderSelected("top");
+    return;
+  }
+  pushHistory();
+  const moving = indices.map((index) => state.records[index]);
+  const keep = state.records.filter((_, index) => !indices.includes(index));
+  const insertAt = depth === 2
+    ? Math.round(keep.length / 3)
+    : Math.round((2 * keep.length) / 3);
+  state.records = [...keep.slice(0, insertAt), ...moving, ...keep.slice(insertAt)];
+  const idSet = new Set(moving);
+  const newSelected = [];
+  state.records.forEach((record, index) => {
+    if (idSet.has(record)) newSelected.push(index);
+  });
+  setSelection(newSelected);
+  renderBuilding();
+}
+
+function updateLayerOrderControl() {
+  const label = document.getElementById("layerOrderLabel");
+  if (!label) return;
+  const slot = currentLayerSlot();
+  label.textContent = slot ? `${slot}/${LAYER_DEPTHS}` : `-/4`;
+  applyHoverTip(label, slot ? `图层 ${slot}/${LAYER_DEPTHS}` : "图层循环", "Z / X");
+  applyHoverTip(document.getElementById("btnLayerBack"), "图层向后循环", "Z");
+  applyHoverTip(document.getElementById("btnLayerFront"), "图层向前循环", "X");
+}
+
+function stepLayerOrder(delta) {
+  const indices = selectedUnlockedIndices();
+  if (!indices.length) return;
+  const slot = currentLayerSlot() || 1;
+  const next = ((slot - 1 + Number(delta) + LAYER_DEPTHS) % LAYER_DEPTHS) + 1;
+  moveSelectedToLayerSlot(next);
 }
 
 function facingAbsolute(component) {
@@ -1771,18 +3269,19 @@ function clipboardBounds(rows) {
 }
 
 function canvasPointFromClient(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / Math.max(1, rect.width);
-  const scaleY = canvas.height / Math.max(1, rect.height);
-  const { dx, dy } = layoutContentOffset();
+  const transform = viewportTransform();
+  const scene = transform.clientToScene(clientX, clientY);
+  const shell = document.getElementById("canvasShell");
+  const rect = shell?.getBoundingClientRect();
   return {
-    x: (clientX - rect.left) * scaleX - dx,
-    y: (clientY - rect.top) * scaleY - dy,
-    inside:
-      clientX >= rect.left &&
-      clientX <= rect.right &&
-      clientY >= rect.top &&
-      clientY <= rect.bottom,
+    x: scene.x,
+    y: scene.y,
+    inside: rect
+      ? clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      : true,
   };
 }
 
@@ -1837,6 +3336,7 @@ function updatePaletteDrag(event) {
       state.brushState = 0;
     } else {
       state.component = drag.payload;
+      if (drag.payload?._pack) state.pack = drag.payload._pack;
       state.customBrush = null;
       state.selected = [];
       state.brushState = 0;
@@ -1904,7 +3404,10 @@ function serializeSessionRecords() {
     y: record.y,
     mat: record.mat,
     state: record.state ?? record.flip ?? 0,
-    packKey: record.packKey || record.pack?.key || state.pack?.key || "",
+    packKey: record.localPackUnknown
+      ? ""
+      : record.packKey || record.pack?.key || state.pack?.key || "",
+    localPackUnknown: !!record.localPackUnknown,
     group: record.group || null,
     groupName: record.groupName || null,
     label: record.label || null,
@@ -1923,6 +3426,7 @@ function buildingSessionSnapshot() {
     baseName: state.base?.name || "",
     baseKind: state.baseKind,
     packKey: state.pack?.key || "",
+    themeFilter: state.themeFilter || state.pack?.key || "",
     category: state.category,
     records: serializeSessionRecords(),
     keepFoundation: !!state.keepFoundation,
@@ -1930,16 +3434,22 @@ function buildingSessionSnapshot() {
     snap: { ...state.snap },
     veil: { ...state.veil },
     zoom: state.zoom || 1,
+    marqueeMode: currentMarqueeMode(),
     source: state.source
       ? { encoding: state.source.encoding || "gbk" }
       : null,
     selected: [...state.selected],
     railTab: state.railTab || "assets",
+    railWidth: state.railWidth,
+    railCollapsed: !!state.railCollapsed,
     layerCollapsed: [...state.layerCollapsed],
     layerFilter: state.layerFilter || "",
     paperLayout: !!state.paperLayout,
+    paperOrigin: state.paperOrigin ? { ...state.paperOrigin } : null,
     basePicked: !!state.basePicked,
     paperBaseHint: state.paperBaseHint || "",
+    baseOverridden: !!state.baseOverridden,
+    baseAnchor: state.baseAnchor ? { ...state.baseAnchor } : null,
   };
 }
 
@@ -1985,18 +3495,31 @@ function restoreBuildingSession() {
     if (snap.packKey) {
       state.pack = packByKey(snap.packKey) || state.pack;
     }
+    if (snap.themeFilter === THEME_ALL) state.themeFilter = THEME_ALL;
+    else if (snap.themeFilter && packByKey(snap.themeFilter)) state.themeFilter = snap.themeFilter;
+    else state.themeFilter = state.pack?.key || THEME_ALL;
     if (snap.category) state.category = snap.category;
     ensureActiveCategory();
     if (snap.snap) state.snap = { ...state.snap, ...snap.snap };
     if (snap.veil) state.veil = { ...state.veil, ...snap.veil };
     if (Number.isFinite(snap.zoom)) state.zoom = snap.zoom;
+    state.marqueeMode = snap.marqueeMode === "contain" ? "contain" : "touch";
     state.keepFoundation = snap.keepFoundation !== false;
     state.brushState = Number(snap.brushState) || 0;
     state.source = snap.source || null;
     state.paperLayout = !!snap.paperLayout;
+    state.paperOrigin =
+      snap.paperOrigin && Number.isFinite(snap.paperOrigin.x) && Number.isFinite(snap.paperOrigin.y)
+        ? { x: Number(snap.paperOrigin.x), y: Number(snap.paperOrigin.y) }
+        : null;
     state.basePicked = snap.basePicked !== false && snap.baseNo != null;
     state.paperBaseHint = snap.paperBaseHint || "";
+    state.baseOverridden = !!snap.baseOverridden;
+    state.baseAnchor = null;
     state.layerFilter = snap.layerFilter || "";
+    state.railWidth = Math.max(300, Math.min(520, Number(snap.railWidth) || 340));
+    state.railCollapsed = !!snap.railCollapsed;
+    applyRailState();
     state.layerCollapsed = new Set(Array.isArray(snap.layerCollapsed) ? snap.layerCollapsed : []);
     const keep = document.getElementById("keepFoundation");
     if (keep) keep.checked = state.keepFoundation;
@@ -2041,22 +3564,29 @@ function wireDeskSwitchSave(saveFn) {
 }
 
 function hydrateRecord(record) {
-  const packKey = record.packKey || record.pack?.key || state.pack?.key || "";
-  const pack = packByKey(packKey) || state.pack;
+  const localPackUnknown = !!record.localPackUnknown;
+  const packKey = localPackUnknown
+    ? ""
+    : record.packKey || record.pack?.key || state.pack?.key || "";
+  const pack = localPackUnknown ? null : packByKey(packKey) || state.pack;
+  const x = Number(record.x) || 0;
+  const y = Number(record.y) || 0;
+  const mat = Number(record.mat) || 0;
   return {
     mode: record.mode || "desk",
-    x: Number(record.x) || 0,
-    y: Number(record.y) || 0,
-    mat: Number(record.mat) || 0,
+    x,
+    y,
+    mat,
     state: record.state ?? record.flip ?? 0,
     packKey,
     pack,
+    localPackUnknown,
     component: null,
     group: record.group || null,
     groupName: record.groupName || null,
     label: record.label || null,
     locked: !!record.locked,
-    hidden: !!record.hidden,
+    hidden: !!record.hidden || mat === 0 || x >= 32000 || y >= 32000,
   };
 }
 
@@ -2083,16 +3613,20 @@ function redo() {
   renderBuilding();
 }
 
-function snapGridValue(value) {
-  if (!state.snap.enabled) return Math.round(value);
-  const step = Math.max(1, Number(state.snap.step) || 1);
-  return Math.round(value / step) * step;
+function snapAxis() {
+  const axis = state.snap.axis;
+  return axis === "ortho" || axis === "both" ? axis : "iso";
+}
+
+function snapGridPoint(x, y) {
+  if (!state.snap.enabled) return { x: Math.round(x), y: Math.round(y) };
+  return BI.snapGridPoint(x, y, state.snap.step, snapAxis());
 }
 
 function clampRecordPos(x, y) {
   return {
-    x: Math.max(0, Math.round(x)),
-    y: Math.max(0, Math.min(0x7fff, Math.round(y))),
+    x: Math.round(x),
+    y: Math.round(y),
   };
 }
 
@@ -2109,116 +3643,98 @@ function unionBox(boxes) {
   return { x: left, y: top, width: right - left, height: bottom - top, left, top, right, bottom };
 }
 
-function objectSnapDelta(movingIndices, proposedOrigins) {
-  const guides = [];
-  if (!state.snap.enabled || !state.snap.object) return { dx: 0, dy: 0, guides };
-  const movingSet = new Set(movingIndices);
-  const movers = proposedOrigins.map(({ i, x, y }) => {
-    const box = recordBox({ ...state.records[i], x, y });
-    return {
-      index: i,
-      left: box.x,
-      right: box.x + box.width,
-      top: box.y,
-      bottom: box.y + box.height,
-      cx: box.x + box.width / 2,
-      cy: box.y + box.height / 2,
-    };
-  });
-  const others = [];
-  state.records.forEach((record, index) => {
-    if (movingSet.has(index) || record.hidden) return;
+function buildDragLayer(indices) {
+  const boxes = selectionBoxes(indices);
+  const bounds = unionBox(boxes);
+  const movingSet = new Set(indices);
+  if (!bounds) return { bounds: null, movingSet, sheet: null };
+  const width = Math.max(1, Math.ceil(bounds.width));
+  const height = Math.max(1, Math.ceil(bounds.height));
+  if (
+    indices.length > DRAG_PREVIEW_MAX ||
+    width * height > DRAG_LAYER_MAX_AREA ||
+    width > 4096 ||
+    height > 4096
+  ) {
+    return { bounds, movingSet, sheet: null };
+  }
+  const sheet = document.createElement("canvas");
+  sheet.width = width;
+  sheet.height = height;
+  const c = sheet.getContext("2d");
+  let allReady = true;
+  indices.forEach((index) => {
+    const record = state.records[index];
+    if (!record || record.hidden) return;
+    const component = recordComponent(record);
+    const pack = recordPack(record) || component?._pack;
+    const image = loadImage(spriteUrl(component, pack, record.state ?? record.flip ?? 0));
     const box = recordBox(record);
-    others.push({
-      left: box.x,
-      right: box.x + box.width,
-      top: box.y,
-      bottom: box.y + box.height,
-      cx: box.x + box.width / 2,
-      cy: box.y + box.height / 2,
-    });
+    if (image?.complete && image.naturalWidth) {
+      c.drawImage(image, Math.round(box.x - bounds.left), Math.round(box.y - bounds.top));
+    } else allReady = false;
   });
-  if (!others.length || !movers.length) return { dx: 0, dy: 0, guides };
-
-  let bestDx = 0;
-  let bestDy = 0;
-  let bestAbsX = OBJECT_SNAP_PX + 1;
-  let bestAbsY = OBJECT_SNAP_PX + 1;
-  let guideX = null;
-  let guideY = null;
-
-  movers.forEach((mover) => {
-    const mx = [mover.left, mover.cx, mover.right];
-    const my = [mover.top, mover.cy, mover.bottom];
-    others.forEach((other) => {
-      const ox = [other.left, other.cx, other.right];
-      const oy = [other.top, other.cy, other.bottom];
-      mx.forEach((value, mi) => {
-        ox.forEach((target) => {
-          const delta = target - value;
-          const abs = Math.abs(delta);
-          if (abs <= OBJECT_SNAP_PX && abs < bestAbsX) {
-            bestAbsX = abs;
-            bestDx = delta;
-            guideX = target;
-          }
-        });
-      });
-      my.forEach((value) => {
-        oy.forEach((target) => {
-          const delta = target - value;
-          const abs = Math.abs(delta);
-          if (abs <= OBJECT_SNAP_PX && abs < bestAbsY) {
-            bestAbsY = abs;
-            bestDy = delta;
-            guideY = target;
-          }
-        });
-      });
-    });
-  });
-
-  if (guideX != null) guides.push({ type: "v", pos: guideX });
-  if (guideY != null) guides.push({ type: "h", pos: guideY });
-  return { dx: bestAbsX <= OBJECT_SNAP_PX ? bestDx : 0, dy: bestAbsY <= OBJECT_SNAP_PX ? bestDy : 0, guides };
+  return { bounds, movingSet, sheet: allReady ? sheet : null };
 }
 
-function applyDragPositions(pointerX, pointerY) {
+function applyDragPositions(pointerX, pointerY, modifiers = {}) {
   if (!state.dragging) return;
-  const rawDx = pointerX - state.dragging.x;
-  const rawDy = pointerY - state.dragging.y;
-  if (Math.abs(rawDx) > 0.5 || Math.abs(rawDy) > 0.5) state.dragging.moved = true;
-
-  let proposed = state.dragging.origins.map(({ i, x, y }) => {
-    let nx = x + rawDx;
-    let ny = y + rawDy;
-    if (state.snap.enabled) {
-      nx = snapGridValue(nx);
-      ny = snapGridValue(ny);
-    } else {
-      nx = Math.round(nx);
-      ny = Math.round(ny);
-    }
-    return { i, x: nx, y: ny };
-  });
-
-  const soft = objectSnapDelta(
-    proposed.map((row) => row.i),
-    proposed
-  );
-  if (soft.dx || soft.dy) {
-    proposed = proposed.map((row) => ({
-      i: row.i,
-      x: row.x + soft.dx,
-      y: row.y + soft.dy,
-    }));
+  let rawDx = pointerX - state.dragging.x;
+  let rawDy = pointerY - state.dragging.y;
+  if (modifiers.shiftKey) {
+    if (Math.abs(rawDx) >= Math.abs(rawDy)) rawDy = 0;
+    else rawDx = 0;
   }
-  state.guides = soft.guides;
+  if (Math.abs(rawDx) > 0.5 || Math.abs(rawDy) > 0.5) {
+    state.dragging.moved = true;
+    if (!state.dragging.before) state.dragging.before = recordsHistoryPayload();
+  }
+  const drag = state.dragging;
+  let dx = Math.round(rawDx);
+  let dy = Math.round(rawDy);
+  if (state.snap.enabled && drag.bounds && !modifiers.altKey) {
+    const threshold = drag.transform.pxToScene(OBJECT_SNAP_PX);
+    const area = {
+      x: drag.bounds.left + rawDx - threshold - 512,
+      y: drag.bounds.top + rawDy - threshold - 512,
+      width: drag.bounds.width + (threshold + 512) * 2,
+      height: drag.bounds.height + (threshold + 512) * 2,
+    };
+    const targets = drag.snapIndex.query(area);
+    const snapped = BI.snapMove({
+      bounds: drag.bounds,
+      offsetX: rawDx,
+      offsetY: rawDy,
+      threshold,
+      axis: snapAxis(),
+      gridEnabled: state.snap.grid !== false,
+      gridStep: state.snap.step,
+      objectEnabled:
+        state.snap.object !== false && (state.snap.edges !== false || state.snap.centers !== false),
+      edgeEnabled: state.snap.edges !== false,
+      centerEnabled: state.snap.centers !== false,
+      targets,
+      latch: drag.snapLatch,
+    });
+    dx = snapped.x;
+    dy = snapped.y;
+    drag.snapLatch = snapped.latch;
+    state.guides = snapped.guides;
+  } else {
+    drag.snapLatch = { x: null, y: null };
+    state.guides = [];
+  }
+  drag.offsetX = Math.round(dx);
+  drag.offsetY = Math.round(dy);
+}
 
-  proposed.forEach(({ i, x, y }) => {
+function commitDragPositions() {
+  const drag = state.dragging;
+  if (!drag) return;
+  drag.origins.forEach(({ i, x, y }) => {
     const record = state.records[i];
     if (!record || record.locked) return;
-    const clamped = clampRecordPos(x, y);
+    const clamped = clampRecordPos(x + drag.offsetX, y + drag.offsetY);
     record.x = clamped.x;
     record.y = clamped.y;
   });
@@ -2235,17 +3751,19 @@ function addComponent(x, y) {
     addKitComponent(state.component, x, y);
     return;
   }
-  const uid = componentUid(state.component.id);
+  const pack = state.component._pack || state.pack;
+  const uid = componentUid(state.component.id, pack);
   if (uid == null) {
-    alert("原版素材表中没有这个组件对应的图像记录。");
+    appAlert("原版素材表中没有这个组件对应的图像记录。");
     return;
   }
   const geometry = frameGeometry(state.component, state.brushState);
   let px = x - geometry.width / 2;
   let py = y - geometry.height / 2;
   if (state.snap.enabled) {
-    px = snapGridValue(px);
-    py = snapGridValue(py);
+    const snapped = snapGridPoint(px, py);
+    px = snapped.x;
+    py = snapped.y;
   }
   const pos = clampRecordPos(px, py);
   pushHistory();
@@ -2256,10 +3774,89 @@ function addComponent(x, y) {
     mat: uid,
     state: facingAbsolute(state.component),
     component: state.component,
-    pack: state.pack,
-    packKey: state.pack?.key,
+    pack,
+    packKey: pack?.key,
   });
   setSelection([state.records.length - 1]);
+  renderBuilding();
+}
+
+function appendSpriteStamp(component, pack, face, cx, cy, seen) {
+  const usePack = pack || component?._pack || state.pack;
+  const uid = componentUid(component?.id, usePack);
+  if (uid == null || !component) return -1;
+  const geometry = frameGeometry(component, face);
+  let px = cx - geometry.width / 2;
+  let py = cy - geometry.height / 2;
+  if (state.snap.enabled) {
+    const snapped = snapGridPoint(px, py);
+    px = snapped.x;
+    py = snapped.y;
+  }
+  const pos = clampRecordPos(px, py);
+  const key = `${pos.x},${pos.y},${uid},${face}`;
+  if (seen.has(key)) return -1;
+  seen.add(key);
+  state.records.push({
+    mode: "desk",
+    x: pos.x,
+    y: pos.y,
+    mat: uid,
+    state: face,
+    component,
+    pack: pack || component._pack || state.pack,
+    packKey: (pack || component._pack || state.pack)?.key,
+  });
+  return state.records.length - 1;
+}
+
+function placeStampBatch(points, tool = state.tool) {
+  const template = stampTemplate();
+  if (!template || !points.length) return;
+  pushHistory();
+  const seen = new Set();
+  const indices = [];
+  const historyLen = state.history.length;
+  depthSortedStampPoints(points, tool).forEach((point) => {
+    if (template.type === "sprite") {
+      const index = appendSpriteStamp(
+        template.component,
+        template.pack,
+        facingAbsolute(template.component),
+        point.x,
+        point.y,
+        seen
+      );
+      if (index >= 0) indices.push(index);
+      return;
+    }
+    if (template.type === "record") {
+      const record = template.record;
+      const component = recordComponent(record);
+      const index = appendSpriteStamp(
+        component,
+        record.pack || recordPack(record),
+        record.state ?? record.flip ?? 0,
+        point.x,
+        point.y,
+        seen
+      );
+      if (index >= 0) indices.push(index);
+      return;
+    }
+    if (template.type === "custom") {
+      const start = state.records.length;
+      placeCustomBrush(point.x, point.y, { history: false, select: false, render: false });
+      for (let i = start; i < state.records.length; i++) indices.push(i);
+    }
+  });
+  if (!indices.length) {
+    if (state.history.length === historyLen) return;
+    state.history.pop();
+    return;
+  }
+  if (state.tool === "paint") clearSelection({ layers: false });
+  else setSelection(indices);
   renderBuilding();
 }
 
@@ -2268,7 +3865,7 @@ function addKitComponent(kit, x, y) {
   try {
     parsed = parseV1(kit.paper);
   } catch (error) {
-    alert("套件图纸解析失败：" + (error.message || error));
+    appAlert("套件图纸解析失败：" + (error.message || error));
     return;
   }
   const records = parsed.records
@@ -2281,7 +3878,7 @@ function addKitComponent(kit, x, y) {
     }))
     .filter((record) => record.component);
   if (!records.length) {
-    alert("套件没有可用的原版组件。");
+    appAlert("套件没有可用的原版组件。");
     return;
   }
   const boxes = records.map(recordBox);
@@ -2292,8 +3889,9 @@ function addKitComponent(kit, x, y) {
   let dx = x - (left + right) / 2;
   let dy = y - (top + bottom) / 2;
   if (state.snap.enabled) {
-    dx = snapGridValue(dx);
-    dy = snapGridValue(dy);
+    const snapped = snapGridPoint(dx, dy);
+    dx = snapped.x;
+    dy = snapped.y;
   }
   const group = `${Date.now()}-${state.records.length}`;
   pushHistory();
@@ -2310,18 +3908,19 @@ function addKitComponent(kit, x, y) {
   renderBuilding();
 }
 
-function placeCustomBrush(x, y) {
+function placeCustomBrush(x, y, options = {}) {
   const custom = state.customBrush;
   if (!custom?.records?.length) return;
   const bounds = customBrushBounds(custom);
   let originX = x - (bounds.left + bounds.right) / 2;
   let originY = y - (bounds.top + bounds.bottom) / 2;
   if (state.snap.enabled) {
-    originX = snapGridValue(originX);
-    originY = snapGridValue(originY);
+    const snapped = snapGridPoint(originX, originY);
+    originX = snapped.x;
+    originY = snapped.y;
   }
   const group = `${Date.now()}-custom-${state.records.length}`;
-  pushHistory();
+  if (options.history !== false) pushHistory();
   const newIndices = [];
   custom.records.forEach((row) => {
     const pack = packByKey(row.packKey) || state.pack;
@@ -2343,15 +3942,22 @@ function placeCustomBrush(x, y) {
     newIndices.push(state.records.length - 1);
   });
   if (!newIndices.length) {
-    alert("自定义组件没有可用素材。");
+    if (options.select !== false) appAlert("自定义组件没有可用素材。");
     return;
   }
-  setSelection(newIndices);
-  renderBuilding();
+  if (options.select !== false) setSelection(newIndices);
+  if (options.render !== false) renderBuilding();
 }
 
 function selectedUnlockedIndices() {
   return state.selected.filter((index) => state.records[index] && !state.records[index].locked);
+}
+
+function pruneCollapsedLayerGroups() {
+  const live = new Set(state.records.map((record) => record.group).filter(Boolean));
+  state.layerCollapsed.forEach((groupId) => {
+    if (!live.has(groupId)) state.layerCollapsed.delete(groupId);
+  });
 }
 
 function deleteSelected() {
@@ -2359,7 +3965,9 @@ function deleteSelected() {
   if (!indices.length) return;
   pushHistory();
   indices.forEach((index) => state.records.splice(index, 1));
+  pruneCollapsedLayerGroups();
   clearSelection();
+  fillLayers();
   renderBuilding();
 }
 
@@ -2481,7 +4089,7 @@ function copySelected() {
   state.clipboard = serializeClipboardRecords(indices);
 }
 
-function pasteClipboard() {
+function pasteClipboard(atScene) {
   if (!state.clipboard?.length) return;
   pushHistory();
   const bounds = clipboardBounds(state.clipboard);
@@ -2489,7 +4097,10 @@ function pasteClipboard() {
   const height = Math.max(1, bounds.bottom - bounds.top);
   let originX;
   let originY;
-  if (state.ghost) {
+  if (atScene && Number.isFinite(atScene.x) && Number.isFinite(atScene.y)) {
+    originX = atScene.x - width / 2 - bounds.left;
+    originY = atScene.y - height / 2 - bounds.top;
+  } else if (state.ghost) {
     originX = state.ghost.x - width / 2 - bounds.left;
     originY = state.ghost.y - height / 2 - bounds.top;
   } else {
@@ -2498,8 +4109,9 @@ function pasteClipboard() {
     originY = offset;
   }
   if (state.snap.enabled) {
-    originX = snapGridValue(originX);
-    originY = snapGridValue(originY);
+    const snapped = snapGridPoint(originX, originY);
+    originX = snapped.x;
+    originY = snapped.y;
   }
   const groupMap = new Map();
   const newIndices = [];
@@ -2535,29 +4147,37 @@ function pasteClipboard() {
   renderBuilding();
 }
 
-function groupSelected() {
+async function groupSelected() {
   const indices = selectedUnlockedIndices();
   if (indices.length < 2) {
-    alert("请先框选或 Ctrl 点选至少两个素材，再点「分组」。");
+    await appAlert("请先框选至少两个素材。分组只是方便图层里一次点选，圈选后已经可以一起移动。");
     return;
   }
-  const name = prompt("分组名称（可留空，方便图层里识别）", "") || "";
+  const name = await appPrompt("方便在图层里识别，也可以留空。", {
+    title: "分组名称",
+    fieldLabel: "名称",
+    placeholder: "例如 屋顶一组",
+    okLabel: "分组",
+  });
+  if (name == null) return;
   const group = `${Date.now()}-grp`;
   pushHistory();
   indices.forEach((index) => {
     state.records[index].group = group;
-    if (name) state.records[index].groupName = name;
+    if (name.trim()) state.records[index].groupName = name.trim();
     else delete state.records[index].groupName;
   });
+  state.layerCollapsed.add(group);
   setSelection(indices, { expandGroup: true });
   updateSelectionCaption();
+  fillLayers();
   renderBuilding();
 }
 
-function ungroupSelected() {
+async function ungroupSelected() {
   const indices = state.selected.filter((index) => state.records[index]?.group);
   if (!indices.length) {
-    alert("当前选择里没有已分组的素材。");
+    await appAlert("当前选择里没有已分组的素材。");
     return;
   }
   const groups = new Set(indices.map((index) => state.records[index].group));
@@ -2568,15 +4188,17 @@ function ungroupSelected() {
       delete record.groupName;
     }
   });
+  groups.forEach((groupId) => state.layerCollapsed.delete(groupId));
   setSelection(indices);
   updateSelectionCaption();
+  fillLayers();
   renderBuilding();
 }
 
-function lockSelected() {
+async function lockSelected() {
   const indices = state.selected.filter((index) => state.records[index] && !state.records[index].locked);
   if (!indices.length) {
-    alert("请先选中要锁定的素材（已锁定的不用再锁）。");
+    await appAlert("请先选中要锁定的素材（已锁定的不用再锁）。");
     return;
   }
   pushHistory();
@@ -2588,10 +4210,10 @@ function lockSelected() {
   renderBuilding();
 }
 
-function unlockSelected() {
+async function unlockSelected() {
   const indices = state.selected.filter((index) => state.records[index]?.locked);
   if (!indices.length) {
-    alert("当前选择没有已锁定的素材。可在「图层」里点锁图标，或先全选再解锁。");
+    await appAlert("当前选择没有已锁定的素材。可在「图层」里点锁图标，或先全选再解锁。");
     return;
   }
   pushHistory();
@@ -2603,10 +4225,10 @@ function unlockSelected() {
   renderBuilding();
 }
 
-function toggleLockSelected() {
+async function toggleLockSelected() {
   const indices = state.selected.filter((index) => state.records[index]);
   if (!indices.length) {
-    alert("请先选中要锁定/解锁的素材。");
+    await appAlert("请先选中要锁定/解锁的素材。");
     return;
   }
   if (indices.every((index) => state.records[index].locked)) unlockSelected();
@@ -2615,7 +4237,7 @@ function toggleLockSelected() {
 
 function nudgeSelected(dx, dy) {
   const indices = expandGroupSelection(selectedUnlockedIndices()).filter(
-    (index) => !state.records[index]?.locked
+    (index) => state.records[index] && !state.records[index].locked
   );
   if (!indices.length) return;
   pushHistory();
@@ -2626,6 +4248,7 @@ function nudgeSelected(dx, dy) {
     record.y = pos.y;
   });
   setSelection(indices);
+  markBuildingDirty();
   renderBuilding();
 }
 
@@ -2695,81 +4318,484 @@ function alignSelection(mode) {
 
 function finishMarquee() {
   if (!state.marquee) return;
-  const { x0, y0, x1, y1, additive } = state.marquee;
-  const left = Math.min(x0, x1);
-  const top = Math.min(y0, y1);
-  const right = Math.max(x0, x1);
-  const bottom = Math.max(y0, y1);
+  const marquee = state.marquee;
   state.marquee = null;
-  if (Math.abs(right - left) < 2 && Math.abs(bottom - top) < 2) {
-    if (!additive) clearSelection();
+  syncMarqueeOverlay();
+  if (marquee.pendingPlace && !marqueeMoved(marquee)) {
+    addComponent(marquee.startScene.x, marquee.startScene.y);
+    return;
+  }
+  if (!marqueeMoved(marquee)) {
+    if (marquee.operation === "replace") clearSelection();
     renderBuilding();
     return;
   }
-  const hits = [];
-  state.records.forEach((record, index) => {
-    if (record.hidden || record.locked) return;
-    const box = recordBox(record);
-    const cx = box.x + box.width / 2;
-    const cy = box.y + box.height / 2;
-    if (cx >= left && cx <= right && cy >= top && cy <= bottom) hits.push(index);
-  });
-  if (additive) {
-    const set = new Set(state.selected);
-    hits.forEach((index) => set.add(index));
-    setSelection([...set]);
-  } else {
-    setSelection(hits);
+  const hits = collectMarqueeHits(marquee);
+  setSelection(BI.applySelection(marquee.baseSelection || [], hits, marquee.operation));
+  renderBuilding();
+}
+
+function commitRecordDrag() {
+  if (!state.dragging) return;
+  if (state.dragging.moved) commitDragPositions();
+  if (state.dragging.moved && state.dragging.before) {
+    const after = recordsHistoryPayload();
+    if (after !== state.dragging.before) {
+      state.history.push(state.dragging.before);
+      const cap = historyCap();
+      while (state.history.length > cap) state.history.shift();
+      state.redo = [];
+      markBuildingDirty();
+    }
   }
+  state.dragging = null;
+  state.guides = [];
+}
+
+function cancelCanvasInteraction() {
+  const interaction = state.interaction;
+  if (!interaction) return false;
+  if (interaction.baseSelection) setSelection(interaction.baseSelection, { layers: false });
+  state.marquee = null;
+  state.dragging = null;
+  state.shapeStroke = null;
+  state.guides = [];
+  state.interaction = null;
+  syncMarqueeOverlay();
+  syncShapeOverlay();
+  fillLayers();
+  renderBuilding();
+  return true;
+}
+
+function pickRecordAsBrush(record) {
+  if (!record || !Number(record.mat)) return;
+  const component = record.component || componentByUid(record.mat, record.pack || state.pack);
+  if (!component || component.kind === "kit") return;
+  rememberAsset(component);
+  state.component = component;
+  state.customBrush = null;
+  state.brushState = record.state ?? record.flip ?? 0;
+  clearSelection({ layers: false });
+  if (!isPlaceTool()) setActiveTool("paint");
+  updateSelectionCaption();
+  updateCurrentMaterials(component);
+  fillComponents();
+  fillCustoms();
+  fillLayers();
+  updateAlignBar();
+  updateFacingControl();
+  renderBuilding();
+}
+
+function focusDesignCanvas() {
+  const shell = document.getElementById("canvasShell");
+  if (!shell || document.activeElement === shell) return;
+  try {
+    shell.focus({ preventScroll: true });
+  } catch {
+    shell.focus();
+  }
+}
+
+function isTypingTarget(target) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === "TEXTAREA") return true;
+  if (tag !== "INPUT") return false;
+  const type = String(target.type || "text").toLowerCase();
+  return !["checkbox", "radio", "button", "submit", "reset", "range", "file", "hidden", "color"].includes(type);
+}
+
+function beginCanvasPointer(event, shell) {
+  if (event.button === 2) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  if (state.phase !== "design") return;
+  if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
+  if (state.interaction) return;
+  if (event.target.closest?.(".zoom-control, .base-meta, .stage-commandbar, .canvas-tool-dock, .canvas-toolrail, .ctx-menu, button, a, input, select, label")) return;
+  focusDesignCanvas();
+  if (event.button !== 2) event.preventDefault();
+  const offset = layoutContentOffset();
+  const transform = viewportTransform(offset);
+  const startScene = transform.clientToScene(event.clientX, event.clientY);
+  const baseSelection = state.selected.slice();
+  const interaction = {
+    pointerId: event.pointerId,
+    mode: "pending",
+    transform,
+    offset,
+    startClient: { x: event.clientX, y: event.clientY },
+    startScene,
+    baseSelection,
+  };
+  state.interaction = interaction;
+  try {
+    shell.setPointerCapture?.(event.pointerId);
+  } catch {
+    /* synthetic or inactive pointer */
+  }
+
+  if (event.button === 2) {
+    hideContextMenu();
+    interaction.mode = "right";
+    interaction.startScroll = { x: shell.scrollLeft, y: shell.scrollTop };
+    return;
+  }
+
+  if (event.button === 1 || state.spacePan) {
+    interaction.mode = "pan";
+    interaction.startScroll = { x: shell.scrollLeft, y: shell.scrollTop };
+    shell.classList.add("is-panning");
+    return;
+  }
+
+  if (isPlaceTool() && stampTemplate()) {
+    interaction.mode = "shape";
+    const points = [{ x: startScene.x, y: startScene.y }];
+    state.shapeStroke = {
+      tool: state.tool,
+      start: startScene,
+      end: startScene,
+      points,
+      transform,
+      aligned: !!event.shiftKey,
+    };
+    updateToolHint();
+    syncShapeOverlay();
+    renderBuilding();
+    return;
+  }
+
+  if (state.tool === "paint") {
+    interaction.mode = "idle";
+    return;
+  }
+
+  const hit = hitRecord(startScene.x, startScene.y, { solid: true, includeLocked: true });
+  const operation = event.ctrlKey || event.metaKey ? "toggle" : event.shiftKey ? "add" : "replace";
+  if (hit >= 0) {
+    clearBrushHighlight();
+    if (operation !== "replace") {
+      const selected = new Set(baseSelection);
+      if (operation === "toggle") {
+        if (selected.has(hit)) selected.delete(hit);
+        else selected.add(hit);
+      } else selected.add(hit);
+      setSelection([...selected]);
+      interaction.mode = "select";
+    } else {
+      if (!baseSelection.includes(hit)) setSelection([hit], { expandGroup: true });
+      const movable = state.selected.filter((index) => !state.records[index]?.locked);
+      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
+    }
+    updateSelectionCaption();
+    renderBuilding();
+    return;
+  }
+
+  if (operation === "replace" && pointInSelectionUnion(startScene.x, startScene.y)) {
+    clearBrushHighlight();
+    const movable = state.selected.filter((index) => !state.records[index]?.locked);
+    interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
+    renderBuilding();
+    return;
+  }
+
+  const pendingPlace = hasBrush() && operation === "replace";
+  if (operation === "replace" && !pendingPlace) clearSelection({ layers: false });
+  state.marquee = {
+    cx0: event.clientX,
+    cy0: event.clientY,
+    cx1: event.clientX,
+    cy1: event.clientY,
+    startScene,
+    endScene: startScene,
+    transform,
+    index: buildRecordSpatialIndex(),
+    operation,
+    mode: currentMarqueeMode(),
+    baseSelection,
+    pendingPlace,
+  };
+  interaction.mode = "marquee";
+  syncMarqueeOverlay();
+}
+
+function moveCanvasPointer(event, shell) {
+  const interaction = state.interaction;
+  if (!interaction || event.pointerId !== interaction.pointerId) return;
+  if (interaction.mode === "pan") {
+    shell.scrollLeft = interaction.startScroll.x - (event.clientX - interaction.startClient.x);
+    shell.scrollTop = interaction.startScroll.y - (event.clientY - interaction.startClient.y);
+    syncViewportOverlays();
+    return;
+  }
+  if (interaction.mode === "right") {
+    const dx = event.clientX - interaction.startClient.x;
+    const dy = event.clientY - interaction.startClient.y;
+    if (Math.hypot(dx, dy) >= 5) {
+      interaction.mode = "pan";
+      interaction.fromRight = true;
+      shell.classList.add("is-panning");
+      hideContextMenu();
+      shell.scrollLeft = interaction.startScroll.x - dx;
+      shell.scrollTop = interaction.startScroll.y - dy;
+      syncViewportOverlays();
+    }
+    return;
+  }
+  if (interaction.mode === "marquee") {
+    updateMarqueePointer(event.clientX, event.clientY);
+    return;
+  }
+  if (interaction.mode === "shape" && state.shapeStroke) {
+    state.shapeStroke.aligned = !!event.shiftKey;
+    const point = interaction.transform.clientToScene(event.clientX, event.clientY);
+    if (isStampLike(state.shapeStroke.tool)) {
+      const last = state.shapeStroke.points[state.shapeStroke.points.length - 1] || state.shapeStroke.start;
+      const pitch = stampPitch(false);
+      if (Math.hypot(point.x - last.x, point.y - last.y) >= Math.min(pitch.x, pitch.y)) {
+        if (state.shapeStroke.points.length < STAMP_CAP) state.shapeStroke.points.push(point);
+      }
+      state.shapeStroke.end = point;
+    } else {
+      state.shapeStroke.end = currentShapeEnd(event) || state.shapeStroke.end;
+    }
+    updateToolHint();
+    syncShapeOverlay();
+    renderBuilding();
+    return;
+  }
+  if (interaction.mode === "move" && state.dragging) {
+    const point = interaction.transform.clientToScene(event.clientX, event.clientY);
+    applyDragPositions(point.x, point.y, event);
+    renderBuilding();
+  }
+}
+
+function finishCanvasPointer(event, shell, cancelled = false) {
+  const interaction = state.interaction;
+  if (!interaction || event.pointerId !== interaction.pointerId) return;
+  try {
+    if (shell.hasPointerCapture?.(event.pointerId)) shell.releasePointerCapture(event.pointerId);
+  } catch {
+    /* synthetic or inactive pointer */
+  }
+  shell.classList.remove("is-panning");
+  if (cancelled) {
+    cancelCanvasInteraction();
+    return;
+  }
+  if (interaction.mode === "right") {
+    const client = interaction.startClient;
+    const scene = interaction.startScene;
+    state.interaction = null;
+    openCanvasContextMenu(client, scene);
+    return;
+  }
+  if (interaction.mode === "marquee") {
+    if (marqueeMoved(state.marquee)) clearBrushHighlight();
+    finishMarquee();
+  } else if (interaction.mode === "shape") {
+    const stroke = state.shapeStroke;
+    state.shapeStroke = null;
+    syncShapeOverlay();
+    if (stroke) placeStampBatch(shapeStampPoints(stroke), stroke.tool);
+  } else if (interaction.mode === "move") {
+    commitRecordDrag();
+  }
+  state.interaction = null;
+  fillLayers();
   renderBuilding();
 }
 
 function loadCustoms() {
   try {
     const raw = localStorage.getItem(CUSTOMS_KEY);
-    state.customs = raw ? JSON.parse(raw) : [];
+    const data = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(data)) {
+      state.customs = data;
+      state.customFolders = [];
+    } else {
+      state.customs = Array.isArray(data?.items) ? data.items : [];
+      state.customFolders = Array.isArray(data?.folders)
+        ? data.folders.map((folder) => String(folder || "").trim()).filter(Boolean)
+        : [];
+    }
     if (!Array.isArray(state.customs)) state.customs = [];
   } catch {
     state.customs = [];
+    state.customFolders = [];
   }
 }
 
 function saveCustoms() {
-  localStorage.setItem(CUSTOMS_KEY, JSON.stringify(state.customs));
+  localStorage.setItem(
+    CUSTOMS_KEY,
+    JSON.stringify({
+      items: state.customs,
+      folders: customFolders(),
+    })
+  );
 }
 
 function customFolders() {
-  const folders = new Set();
+  const folders = new Set(state.customFolders || []);
   state.customs.forEach((item) => {
     if (item.folder) folders.add(item.folder);
   });
   return [...folders].sort((a, b) => a.localeCompare(b, "zh"));
 }
 
+function ensureCustomFolder(name) {
+  const folder = String(name || "").trim();
+  if (!folder) return "";
+  if (!(state.customFolders || []).includes(folder)) {
+    state.customFolders = [...(state.customFolders || []), folder];
+    saveCustoms();
+  }
+  return folder;
+}
+
 function refreshFolderSuggestions() {
   const list = document.getElementById("folderSuggestions");
-  if (!list) return;
-  list.innerHTML = "";
-  customFolders().forEach((folder) => {
-    const option = document.createElement("option");
-    option.value = folder;
-    list.appendChild(option);
-  });
+  if (list) {
+    list.innerHTML = "";
+    customFolders().forEach((folder) => {
+      const option = document.createElement("option");
+      option.value = folder;
+      list.appendChild(option);
+    });
+  }
   const filter = document.getElementById("customFolderFilter");
   if (!filter) return;
   const current = filter.value;
-  filter.innerHTML = "";
-  const all = document.createElement("option");
-  all.value = "";
-  all.textContent = "全部分组";
-  filter.appendChild(all);
-  customFolders().forEach((folder) => {
-    const option = document.createElement("option");
-    option.value = folder;
-    option.textContent = folder;
-    filter.appendChild(option);
+  const next = [
+    ["", "全部分组"],
+    [UNGROUPED_FOLDER, "未分组"],
+    ...customFolders().map((folder) => [folder, folder]),
+  ];
+  const same =
+    filter.options.length === next.length &&
+    [...filter.options].every((option, index) => option.value === next[index][0] && option.textContent === next[index][1]);
+  if (!same) {
+    filter.innerHTML = "";
+    next.forEach(([value, text]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      filter.appendChild(option);
+    });
+    if ([...filter.options].some((option) => option.value === current)) filter.value = current;
+  }
+  syncFolderPickerUi();
+}
+
+let folderPickerAnchor = "";
+
+function folderPickerMenu() {
+  let menu = document.getElementById("customFolderMenu");
+  if (menu) return menu;
+  menu = document.createElement("div");
+  menu.id = "customFolderMenu";
+  menu.className = "folder-picker-menu";
+  menu.hidden = true;
+  menu.setAttribute("role", "listbox");
+  menu.setAttribute("aria-label", "组件分组");
+  document.body.appendChild(menu);
+  return menu;
+}
+
+function folderFilterLabel(value) {
+  if (value === UNGROUPED_FOLDER) return "未分组";
+  return value || "全部分组";
+}
+
+function syncFolderPickerUi() {
+  const filter = document.getElementById("customFolderFilter");
+  const label = document.getElementById("customFolderFilterLabel");
+  const btn = document.getElementById("customFolderFilterBtn");
+  if (!filter) return;
+  const text = folderFilterLabel(filter.value);
+  if (label) label.textContent = text;
+  if (btn) {
+    btn.title = text;
+    const menu = document.getElementById("customFolderMenu");
+    btn.setAttribute("aria-expanded", menu && !menu.hidden ? "true" : "false");
+  }
+}
+
+function folderPickerTriggerRect() {
+  const btn = document.getElementById("customFolderFilterBtn");
+  if (!btn) return "";
+  const rect = btn.getBoundingClientRect();
+  return `${Math.round(rect.left)},${Math.round(rect.top)},${Math.round(rect.width)},${Math.round(rect.height)}`;
+}
+
+function closeFolderPicker() {
+  const menu = document.getElementById("customFolderMenu");
+  if (menu) menu.hidden = true;
+  const btn = document.getElementById("customFolderFilterBtn");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function closeFolderPickerIfMoved() {
+  const menu = document.getElementById("customFolderMenu");
+  if (!menu || menu.hidden) return;
+  if (folderPickerTriggerRect() === folderPickerAnchor) return;
+  closeFolderPicker();
+}
+
+function fillFolderMenu() {
+  const filter = document.getElementById("customFolderFilter");
+  const menu = folderPickerMenu();
+  if (!filter) return;
+  const current = filter.value;
+  menu.innerHTML = "";
+  [...filter.options].forEach((option) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", option.value === current ? "true" : "false");
+    item.dataset.value = option.value;
+    item.textContent = option.textContent;
+    item.onclick = () => {
+      filter.value = option.value;
+      closeFolderPicker();
+      fillCustoms();
+    };
+    menu.appendChild(item);
   });
-  if ([...filter.options].some((option) => option.value === current)) filter.value = current;
+}
+
+function openFolderPicker() {
+  const btn = document.getElementById("customFolderFilterBtn");
+  const menu = folderPickerMenu();
+  if (!btn) return;
+  fillFolderMenu();
+  menu.hidden = false;
+  btn.setAttribute("aria-expanded", "true");
+  const rect = btn.getBoundingClientRect();
+  const width = Math.max(rect.width, 148);
+  let left = rect.left;
+  let top = rect.bottom + 4;
+  const maxLeft = window.innerWidth - width - 8;
+  if (left > maxLeft) left = Math.max(8, maxLeft);
+  if (top + 240 > window.innerHeight - 8) top = Math.max(8, rect.top - 4 - Math.min(240, menu.scrollHeight || 240));
+  menu.style.width = `${Math.round(width)}px`;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+  folderPickerAnchor = folderPickerTriggerRect();
+}
+
+function toggleFolderPicker() {
+  const menu = document.getElementById("customFolderMenu");
+  if (menu && !menu.hidden) closeFolderPicker();
+  else openFolderPicker();
 }
 
 function fillCustoms() {
@@ -2778,14 +4804,34 @@ function fillCustoms() {
   if (!list) return;
   list.innerHTML = "";
   const folder = document.getElementById("customFolderFilter")?.value || "";
-  state.customs
-    .filter((item) => !folder || item.folder === folder)
-    .forEach((item) => {
+  const query = (document.getElementById("customSearch")?.value || "").trim().toLowerCase();
+  const items = state.customs.filter((item) => {
+    const inFolder =
+      folder === UNGROUPED_FOLDER
+        ? !item.folder
+        : !folder || item.folder === folder;
+    return inFolder && (!query || `${item.name} ${item.folder || ""}`.toLowerCase().includes(query));
+  });
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "custom-hint";
+    empty.textContent =
+      folder === UNGROUPED_FOLDER
+        ? "没有未分组的组件。"
+        : folder
+          ? `「${folder}」里还没有组件。选中画布素材后点 ★ 存为组件。`
+          : "还没有自定义组件。选中画布素材后点 ★ 存为组件。";
+    list.appendChild(empty);
+    return;
+  }
+  items.forEach((item) => {
       const card = document.createElement("button");
       card.type = "button";
       card.className = "custom-card" + (state.customBrush?.id === item.id ? " on" : "");
       card.title = "按住拖到画布放置，或点击选用";
+      const thumb = buildCustomThumb(item);
       const body = document.createElement("div");
+      body.className = "custom-card-body";
       const title = document.createElement("div");
       title.className = "title";
       title.textContent = item.name;
@@ -2798,22 +4844,29 @@ function fillCustoms() {
       del.className = "del";
       del.title = "删除";
       del.textContent = "✕";
-      del.onclick = (event) => {
+      del.onclick = async (event) => {
         event.stopPropagation();
-        if (!confirm(`删除自定义组件「${item.name}」？`)) return;
+        const ok = await appConfirm(`删除自定义组件「${item.name}」？`, {
+          title: "删除组件",
+          okLabel: "删除",
+          danger: true,
+        });
+        if (!ok) return;
         state.customs = state.customs.filter((row) => row.id !== item.id);
         if (state.customBrush?.id === item.id) state.customBrush = null;
         saveCustoms();
+        fillCategories();
         fillCustoms();
         updateSelectionCaption();
         renderBuilding();
       };
-      card.append(body, del);
+      card.append(thumb, body, del);
       const selectCustom = () => {
         state.customBrush = item;
         state.component = null;
         state.brushState = 0;
         state.selected = [];
+        armPaintBrush();
         fillComponents();
         fillCustoms();
         updateSelectionCaption();
@@ -2840,10 +4893,10 @@ function fillCustoms() {
     });
 }
 
-function openPresetDialog() {
+async function openPresetDialog() {
   const indices = state.selected.filter((index) => state.records[index]);
   if (!indices.length) {
-    alert("请先选择要保存的组件。");
+    await appAlert("请先选择要保存的组件。");
     return;
   }
   refreshFolderSuggestions();
@@ -2866,6 +4919,7 @@ function confirmPresetDialog() {
   }
   const name = document.getElementById("presetName").value.trim() || "未命名组件";
   const folder = document.getElementById("presetFolder").value.trim();
+  if (folder) ensureCustomFolder(folder);
   const boxes = selectionBoxes(indices);
   const union = unionBox(boxes);
   const records = indices.map((index) => {
@@ -2887,7 +4941,9 @@ function confirmPresetDialog() {
   });
   saveCustoms();
   closePresetDialog();
-  setRailTab("customs");
+  state.category = CUSTOM_CATEGORY;
+  setRailTab("assets");
+  fillCategories();
   fillCustoms();
 }
 
@@ -2964,12 +5020,15 @@ function selectLayerIndex(index, event) {
   renderBuilding();
 }
 
-function renameLayer(index) {
+async function renameLayer(index) {
   const record = state.records[index];
   if (!record) return;
   const component = record.component || componentByUid(record.mat, record.pack || state.pack);
   const current = layerLabel(record, component);
-  const next = prompt("图层名称", current);
+  const next = await appPrompt("给这个图层起个好认的名字。", {
+    title: "图层名称",
+    value: current,
+  });
   if (next == null) return;
   const trimmed = next.trim();
   if (!trimmed || trimmed === current) return;
@@ -3003,6 +5062,76 @@ function createLayerLockButton(locked, onClick) {
     onClick();
   };
   return btn;
+}
+
+function paintCompositeItems(sheet, items, size) {
+  if (!items.length) return;
+  const left = Math.min(...items.map((item) => item.box.x));
+  const top = Math.min(...items.map((item) => item.box.y));
+  const right = Math.max(...items.map((item) => item.box.x + item.width));
+  const bottom = Math.max(...items.map((item) => item.box.y + item.height));
+  const worldW = Math.max(1, right - left);
+  const worldH = Math.max(1, bottom - top);
+  const pad = size >= 48 ? 4 : 0;
+  const inner = size - pad * 2;
+  const scale = Math.min(inner / worldW, inner / worldH);
+  const offsetX = pad + (inner - worldW * scale) / 2;
+  const offsetY = pad + (inner - worldH * scale) / 2;
+  const ctx = sheet.getContext("2d");
+  const paint = () => {
+    ctx.clearRect(0, 0, size, size);
+    items.forEach(({ box, image, width, height, hidden }) => {
+      const dx = offsetX + (box.x - left) * scale;
+      const dy = offsetY + (box.y - top) * scale;
+      const dw = Math.max(1, width * scale);
+      const dh = Math.max(1, height * scale);
+      ctx.globalAlpha = hidden ? 0.35 : 1;
+      if (image?.complete && image.naturalWidth) {
+        ctx.drawImage(image, dx, dy, dw, dh);
+      } else {
+        ctx.fillStyle = "rgba(47, 107, 79, 0.35)";
+        ctx.fillRect(dx, dy, dw, dh);
+      }
+      ctx.globalAlpha = 1;
+    });
+  };
+  paint();
+  items.forEach(({ image }) => {
+    if (image && !image.complete) {
+      image.addEventListener("load", paint, { once: true });
+    }
+  });
+}
+
+function buildCustomThumb(item) {
+  const size = 64;
+  const sheet = document.createElement("canvas");
+  sheet.className = "custom-card-thumb";
+  sheet.width = size;
+  sheet.height = size;
+  sheet.setAttribute("aria-hidden", "true");
+  const items = [];
+  (item?.records || []).slice(0, 24).forEach((row) => {
+    const pack = packByKey(row.packKey) || row.pack || state.pack;
+    const component = row.component || componentByUid(row.mat, pack);
+    if (!component) return;
+    const face = row.state ?? row.flip ?? 0;
+    const geometry = frameGeometry(component, face);
+    const url = spriteUrl(component, pack, face, true);
+    const image = url ? loadImage(url) : null;
+    items.push({
+      box: {
+        x: Number(row.dx ?? row.x) || 0,
+        y: Number(row.dy ?? row.y) || 0,
+      },
+      width: Math.max(8, geometry.width || 24),
+      height: Math.max(8, geometry.height || 24),
+      image,
+      hidden: false,
+    });
+  });
+  paintCompositeItems(sheet, items, size);
+  return sheet;
 }
 
 function buildGroupThumb(memberIndices) {
@@ -3040,42 +5169,7 @@ function buildGroupThumb(memberIndices) {
       hidden: !!record.hidden,
     });
   });
-  if (!items.length) return wrap;
-
-  const left = Math.min(...items.map((item) => item.box.x));
-  const top = Math.min(...items.map((item) => item.box.y));
-  const right = Math.max(...items.map((item) => item.box.x + item.width));
-  const bottom = Math.max(...items.map((item) => item.box.y + item.height));
-  const worldW = Math.max(1, right - left);
-  const worldH = Math.max(1, bottom - top);
-  const scale = Math.min(size / worldW, size / worldH);
-  const offsetX = (size - worldW * scale) / 2;
-  const offsetY = (size - worldH * scale) / 2;
-  const ctx = sheet.getContext("2d");
-
-  const paint = () => {
-    ctx.clearRect(0, 0, size, size);
-    items.forEach(({ box, image, width, height, hidden }) => {
-      const dx = offsetX + (box.x - left) * scale;
-      const dy = offsetY + (box.y - top) * scale;
-      const dw = Math.max(1, width * scale);
-      const dh = Math.max(1, height * scale);
-      ctx.globalAlpha = hidden ? 0.35 : 1;
-      if (image?.complete && image.naturalWidth) {
-        ctx.drawImage(image, dx, dy, dw, dh);
-      } else {
-        ctx.fillStyle = "rgba(47, 107, 79, 0.35)";
-        ctx.fillRect(dx, dy, dw, dh);
-      }
-      ctx.globalAlpha = 1;
-    });
-  };
-  paint();
-  items.forEach(({ image }) => {
-    if (image && !image.complete) {
-      image.addEventListener("load", paint, { once: true });
-    }
-  });
+  paintCompositeItems(sheet, items, size);
   return wrap;
 }
 
@@ -3139,9 +5233,13 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
     fillCustoms();
     renderBuilding();
   };
-  row.ondblclick = (event) => {
+  bindLayerContextMenu(row, memberIndices);
+  row.ondblclick = async (event) => {
     event.stopPropagation();
-    const next = prompt("组名称", groupName);
+    const next = await appPrompt("给这个组起个名字。", {
+      title: "组名称",
+      value: groupName,
+    });
     if (next == null) return;
     const trimmed = next.trim();
     if (!trimmed) return;
@@ -3219,6 +5317,7 @@ function appendLayerRow(list, index, selectedSet, filterText, asChild) {
     if (event.target.closest("button")) return;
     selectLayerIndex(index, event);
   };
+  bindLayerContextMenu(row, [index]);
   row.ondblclick = (event) => {
     if (event.target.closest("button")) return;
     event.stopPropagation();
@@ -3228,17 +5327,37 @@ function appendLayerRow(list, index, selectedSet, filterText, asChild) {
   return true;
 }
 
+function bindLayerContextMenu(row, indices) {
+  row.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!indices.length) return;
+    if (!indices.every((index) => state.selected.includes(index))) {
+      setSelection(indices);
+    }
+    const record = state.records[indices[0]];
+    const box = record ? recordBox(record) : { x: 0, y: 0, width: 0, height: 0 };
+    openCanvasContextMenu(
+      { x: event.clientX, y: event.clientY },
+      { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    );
+  });
+}
+
 function collectLayerItems(selectedSet, filterText) {
   const items = [];
   const shownGroups = new Set();
   const forceGroupChildren = new Map();
   for (let index = state.records.length - 1; index >= 0; index--) {
+    if (state.layerSelectedOnly && !selectedSet.has(index)) continue;
     const record = state.records[index];
     const groupId = record.group || null;
     if (groupId) {
       if (!shownGroups.has(groupId)) {
         shownGroups.add(groupId);
-        const members = groupMemberIndices(groupId);
+        const members = groupMemberIndices(groupId).filter(
+          (memberIndex) => !state.layerSelectedOnly || selectedSet.has(memberIndex)
+        );
         const header = measureGroupHeader(groupId, members, filterText);
         if (header.shown) items.push({ kind: "group", groupId, members, filterText });
         forceGroupChildren.set(groupId, header.forceChildren);
@@ -3289,48 +5408,56 @@ function paintLayerWindow() {
   const selectedSet = new Set(state.selected);
   const items = layerItemsCache;
   const filterText = (state.layerFilter || "").trim().toLowerCase();
-  list.replaceChildren();
   if (!state.records.length) {
     const empty = document.createElement("div");
     empty.className = "layer-empty";
     empty.textContent = "暂无图层，从「素材」里放置组件";
-    list.appendChild(empty);
+    list.replaceChildren(empty);
     return;
   }
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "layer-empty";
     empty.textContent = filterText ? "没有匹配的图层" : "暂无图层";
-    list.appendChild(empty);
+    list.replaceChildren(empty);
     return;
   }
 
+  const viewH = Math.max(1, list.clientHeight || 400);
+  const maxScroll = Math.max(0, items.length * LAYER_ROW_H - viewH);
+  const scrollTop = Math.min(list.scrollTop, maxScroll);
+  if (list.scrollTop !== scrollTop) list.scrollTop = scrollTop;
   const virtual = items.length > 60;
   let start = 0;
   let end = items.length;
   if (virtual) {
-    const viewH = list.clientHeight || 400;
-    start = Math.max(0, Math.floor(list.scrollTop / LAYER_ROW_H) - LAYER_WINDOW_PAD);
+    start = Math.max(0, Math.floor(scrollTop / LAYER_ROW_H) - LAYER_WINDOW_PAD);
     end = Math.min(items.length, start + Math.ceil(viewH / LAYER_ROW_H) + LAYER_WINDOW_PAD * 2);
+  }
+
+  const fragment = document.createDocumentFragment();
+  if (virtual) {
     const topPad = document.createElement("div");
     topPad.className = "layer-pad";
     topPad.style.height = `${start * LAYER_ROW_H}px`;
-    list.appendChild(topPad);
+    fragment.appendChild(topPad);
   }
   for (let i = start; i < end; i++) {
     const item = items[i];
     if (item.kind === "group") {
-      appendGroupHeader(list, item.groupId, item.members, selectedSet, item.filterText);
+      appendGroupHeader(fragment, item.groupId, item.members, selectedSet, item.filterText);
     } else {
-      appendLayerRow(list, item.index, selectedSet, item.filterText, item.asChild);
+      appendLayerRow(fragment, item.index, selectedSet, item.filterText, item.asChild);
     }
   }
   if (virtual) {
     const botPad = document.createElement("div");
     botPad.className = "layer-pad";
     botPad.style.height = `${(items.length - end) * LAYER_ROW_H}px`;
-    list.appendChild(botPad);
+    fragment.appendChild(botPad);
   }
+  list.replaceChildren(fragment);
+  if (virtual) list.scrollTop = scrollTop;
 }
 
 function bindLayerListScroll() {
@@ -3355,14 +5482,20 @@ function bindLayerListScroll() {
 function fillLayers() {
   const list = document.getElementById("layerList");
   if (!list) return;
-  if (state.railTab !== "layers") return;
-  bindLayerListScroll();
   const selectedSet = new Set(state.selected);
   const filterText = (state.layerFilter || "").trim().toLowerCase();
   layerItemsCache = state.records.length ? collectLayerItems(selectedSet, filterText) : [];
+  if (state.railTab !== "layers") return;
+  bindLayerListScroll();
   if (state.selected.length && !state.dragging && !state.marquee) {
     const focus = state.selected[state.selected.length - 1];
-    const itemIndex = layerItemsCache.findIndex((item) => item.kind === "row" && item.index === focus);
+    const focusGroup = state.records[focus]?.group;
+    let itemIndex = layerItemsCache.findIndex((item) => item.kind === "row" && item.index === focus);
+    if (itemIndex < 0 && focusGroup) {
+      itemIndex = layerItemsCache.findIndex(
+        (item) => item.kind === "group" && item.groupId === focusGroup
+      );
+    }
     if (itemIndex >= 0) {
       const top = itemIndex * LAYER_ROW_H;
       if (top < list.scrollTop || top + LAYER_ROW_H > list.scrollTop + list.clientHeight) {
@@ -3373,58 +5506,809 @@ function fillLayers() {
   paintLayerWindow();
 }
 
-function runLayerCommand(command) {
-  if (command === "undo") return undo();
-  if (command === "redo") return redo();
-  if (command === "delete") return deleteSelected();
-  if (command === "flip") return flipSelectedOrBrush();
-  if (command === "lock") return toggleLockSelected();
-  if (command === "duplicate") return duplicateSelected();
-  if (command === "group") return groupSelected();
-  if (command === "ungroup") return ungroupSelected();
-  if (command === "savePreset") return openPresetDialog();
-  if (command === "break") return ungroupSelected();
-  if (command === "bottom" || command === "top" || command === "down" || command === "up") {
-    return reorderSelected(command);
-  }
+function selectAllRecords() {
+  setSelection(
+    state.records.map((_, index) => index).filter((index) => isSelectableRecord(state.records[index]))
+  );
+  renderBuilding();
 }
 
-function paperBaseFromRecords(records) {
-  const header = (records || []).find((record) => Number(record.mat) === 0);
-  const paperNo = header ? Number(header.state) : 0;
-  if (!(paperNo > 0)) return null;
-  return (state.catalog?.building?.bases || []).find((row) => row.no === paperNo) || null;
+function focusSelection() {
+  const bounds = unionBox(selectionHitBoxes(state.selected));
+  const shell = document.getElementById("canvasShell");
+  if (!bounds || !shell) return;
+  const { w: sw, h: sh } = shellViewSize();
+  const fit = houseFitScale(sw, sh);
+  const next = Math.min(
+    ZOOM_MAX,
+    Math.max(ZOOM_MIN, Math.min(sw / (bounds.width * fit), sh / (bounds.height * fit)) * 0.72)
+  );
+  setZoom(next);
+  requestAnimationFrame(() => {
+    const transform = viewportTransform();
+    const center = transform.sceneToClient((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+    const shellRect = shell.getBoundingClientRect();
+    shell.scrollLeft += center.x - shellRect.left - shell.clientWidth / 2;
+    shell.scrollTop += center.y - shellRect.top - shell.clientHeight / 2;
+    syncViewportOverlays();
+  });
 }
 
-function applyImportedPaperBase(records) {
-  const paperBase = paperBaseFromRecords(records);
-  state.paperBaseHint = "";
-  if (!paperBase) return;
-  const keepCurrent =
-    state.basePicked && state.base && Number(state.base.no) !== Number(paperBase.no);
-  if (keepCurrent) {
-    const size = paperBase.footprint?.join("×") || "";
-    state.paperBaseHint = `${paperBase.name}${size ? ` ${size}` : ""}`;
+function zoomActualSize() {
+  const { w: sw, h: sh } = shellViewSize();
+  const fit = houseFitScale(sw, sh);
+  setZoom(fit > 0.001 ? 1 / fit : 1);
+}
+
+function setActiveTool(tool) {
+  const next = PLACE_TOOLS.has(tool) || tool === "select" ? tool : "select";
+  state.tool = next;
+  if (!isPlaceTool()) state.shapeStroke = null;
+  document.querySelectorAll("[data-tool]").forEach((button) => {
+    const active = button.dataset.tool === state.tool;
+    button.classList.toggle("on", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const shell = document.getElementById("canvasShell");
+  if (shell) shell.dataset.tool = state.tool;
+  updateToolHint();
+  syncShapeOverlay();
+}
+
+const COMMANDS = [
+  { id: "selectTool", label: "选择工具", shortcut: "V", run: () => setActiveTool("select") },
+  { id: "paintTool", label: "纯笔刷", shortcut: "N", run: () => setActiveTool("paint") },
+  { id: "stampTool", label: "点刷铺放", shortcut: "B", run: () => setActiveTool("stamp") },
+  { id: "tileTool", label: "平铺铺放", shortcut: "T", run: () => setActiveTool("tile") },
+  { id: "rectTool", label: "矩形铺放", shortcut: "U", run: () => setActiveTool("rect") },
+  { id: "lineTool", label: "直线 / 斜线铺放", shortcut: "L", run: () => setActiveTool("line") },
+  { id: "circleTool", label: "圆形铺放", shortcut: "O", run: () => setActiveTool("circle") },
+  { id: "triangleTool", label: "三角形铺放", shortcut: "I", run: () => setActiveTool("triangle") },
+  { id: "diamondTool", label: "菱形铺放", shortcut: "C", run: () => setActiveTool("diamond") },
+  { id: "ringTool", label: "一圈描边", shortcut: "G", run: () => setActiveTool("ring") },
+  { id: "undo", label: "撤销", shortcut: "Ctrl+Z", run: undo },
+  { id: "redo", label: "重做", shortcut: "Ctrl+Y / Ctrl+Shift+Z", run: redo },
+  { id: "selectAll", label: "全选素材", shortcut: "Ctrl+A", run: selectAllRecords },
+  { id: "clearSelection", label: "清除选择", shortcut: "Ctrl+Shift+A", run: () => { clearSelection(); renderBuilding(); } },
+  { id: "duplicate", label: "复制选中", shortcut: "Ctrl+D", run: duplicateSelected },
+  { id: "delete", label: "删除选中", shortcut: "Delete / Backspace", run: deleteSelected },
+  { id: "flip", label: "转向", shortcut: "R", run: flipSelectedOrBrush },
+  { id: "lock", label: "锁定/解锁", shortcut: "Ctrl+L", run: toggleLockSelected },
+  { id: "group", label: "成组", shortcut: "Ctrl+G", run: groupSelected },
+  { id: "ungroup", label: "拆组", shortcut: "Ctrl+Shift+G", run: ungroupSelected },
+  { id: "savePreset", label: "存为组件", shortcut: "P", run: openPresetDialog },
+  { id: "bottom", label: "到底层", shortcut: "A", run: () => reorderSelected("bottom") },
+  { id: "down", label: "下移一层", shortcut: "S", run: () => reorderSelected("down") },
+  { id: "up", label: "上移一层", shortcut: "W", run: () => reorderSelected("up") },
+  { id: "top", label: "到顶层", shortcut: "D", run: () => reorderSelected("top") },
+  { id: "layerBack", label: "图层向后循环", shortcut: "Z", run: () => stepLayerOrder(-1) },
+  { id: "layerFront", label: "图层向前循环", shortcut: "X", run: () => stepLayerOrder(1) },
+  { id: "facingPrev", label: "上一朝向", shortcut: "Q", run: () => stepFacing(-1) },
+  { id: "facingNext", label: "下一朝向", shortcut: "E", run: () => stepFacing(1) },
+  { id: "alignLeft", label: "左对齐", shortcut: "Alt+←", run: () => alignSelection("left") },
+  { id: "alignCenterX", label: "水平居中", shortcut: "Alt+H", run: () => alignSelection("centerX") },
+  { id: "alignRight", label: "右对齐", shortcut: "Alt+→", run: () => alignSelection("right") },
+  { id: "alignTop", label: "顶对齐", shortcut: "Alt+↑", run: () => alignSelection("top") },
+  { id: "alignCenterY", label: "垂直居中", shortcut: "Alt+V", run: () => alignSelection("centerY") },
+  { id: "alignBottom", label: "底对齐", shortcut: "Alt+↓", run: () => alignSelection("bottom") },
+  { id: "distributeX", label: "水平分布", shortcut: "Alt+Shift+H", run: () => alignSelection("distributeX") },
+  { id: "distributeY", label: "垂直分布", shortcut: "Alt+Shift+V", run: () => alignSelection("distributeY") },
+  { id: "focus", label: "聚焦选中", shortcut: "F", run: focusSelection },
+  { id: "fit", label: "适应画布", shortcut: "0", run: () => setZoom(1) },
+  { id: "actual", label: "画布 100%", shortcut: "1", run: zoomActualSize },
+  { id: "marqueeTouch", label: "圈选：碰到就选", shortcut: "M", run: () => setMarqueeMode("touch") },
+  { id: "marqueeContain", label: "圈选：完整包含", shortcut: "Shift+M", run: () => setMarqueeMode("contain") },
+  { id: "zoomIn", label: "放大", shortcut: "+", run: () => zoomBy(ZOOM_STEP) },
+  { id: "zoomOut", label: "缩小", shortcut: "-", run: () => zoomBy(-ZOOM_STEP) },
+  { id: "copy", label: "复制到剪贴工作集", shortcut: "Ctrl+C", run: copySelected },
+  { id: "paste", label: "粘贴工作集", shortcut: "Ctrl+V", run: pasteClipboard },
+];
+const SHORTCUT_NOTES = [
+  { label: "选中素材微移", shortcut: "方向键" },
+  { label: "大步微移", shortcut: "Shift+方向键" },
+  { label: "右键拖：平移画布；单击：菜单", shortcut: "右键" },
+  { label: "按住平移画布", shortcut: "Space / 中键" },
+  { label: "圈选碰到 / 完整包含", shortcut: "M / Shift+M" },
+  { label: "点刷 / 平铺 / 矩形 / 直线", shortcut: "B / T / U / L" },
+  { label: "圆 / 三角 / 菱形 / 描边", shortcut: "O / I / C / G" },
+  { label: "到底 / 下移 / 上移 / 到顶", shortcut: "A / S / W / D" },
+  { label: "图层循环（四层）", shortcut: "Z / X" },
+  { label: "朝向上一 / 下一", shortcut: "Q / E" },
+  { label: "转向", shortcut: "R" },
+  { label: "画笔 Shift 约束（齐缝 / 正形 / 45°）", shortcut: "按住 Shift" },
+  { label: "命令面板", shortcut: "Ctrl+K" },
+  { label: "快捷键帮助", shortcut: "?" },
+];
+const COMMAND_INDEX = new Map(COMMANDS.map((command) => [command.id, command]));
+
+function executeCommand(id) {
+  const command = COMMAND_INDEX.get(id === "break" ? "ungroup" : id);
+  if (command) command.run();
+}
+
+function tipText(label, shortcut) {
+  return shortcut ? `${label}  ${shortcut}` : label;
+}
+
+function applyHoverTip(element, label, shortcut) {
+  if (!element) return;
+  element.dataset.tip = label;
+  if (shortcut) element.dataset.tipKeys = shortcut;
+  else delete element.dataset.tipKeys;
+  element.setAttribute("aria-label", tipText(label, shortcut));
+  element.removeAttribute("title");
+}
+
+function clearHoverTip(element) {
+  if (!element) return;
+  delete element.dataset.tip;
+  delete element.dataset.tipKeys;
+  element.removeAttribute("title");
+}
+
+function applyCommandTooltips() {
+  document.querySelectorAll("[data-command]").forEach((button) => {
+    const command = COMMAND_INDEX.get(button.dataset.command);
+    if (command) applyHoverTip(button, command.label, command.shortcut);
+  });
+  document.querySelectorAll("[data-align]").forEach((button) => {
+    const command = COMMAND_INDEX.get(
+      button.dataset.align === "distributeX" ? "distributeX"
+      : button.dataset.align === "distributeY" ? "distributeY"
+      : `align${button.dataset.align[0].toUpperCase()}${button.dataset.align.slice(1)}`
+    );
+    if (command) applyHoverTip(button, command.label, command.shortcut);
+  });
+  applyHoverTip(document.getElementById("btnFacingPrev"), "上一朝向", "Q");
+  applyHoverTip(document.getElementById("btnFacingNext"), "下一朝向", "E");
+  applyHoverTip(document.getElementById("btnLayerBack"), "图层向后循环", "Z");
+  applyHoverTip(document.getElementById("btnLayerFront"), "图层向前循环", "X");
+  document.querySelectorAll(".facing-cap").forEach((cap) => {
+    const layer = cap.closest("#layerOrderControl");
+    applyHoverTip(cap, layer ? "图层循环" : "朝向", layer ? "Z / X" : "Q / E");
+  });
+  applyHoverTip(document.getElementById("commandHudGrip"), "拖动命令栏", "双击复位");
+  applyHoverTip(document.getElementById("toolHudGrip"), "拖动画布工具", "双击复位");
+  applyHoverTip(document.getElementById("btnZoomIn"), "放大", "+");
+  applyHoverTip(document.getElementById("btnZoomOut"), "缩小", "-");
+  applyHoverTip(document.getElementById("btnZoomReset"), "适应画布", "0");
+  applyHoverTip(document.getElementById("facingLabel"), "朝向", "Q / E");
+  applyHoverTip(document.getElementById("layerOrderLabel"), "图层循环", "Z / X");
+  applyHoverTip(document.getElementById("snapAxis"), "吸附轴向", "水平 / 斜角 / 双轴");
+  applyHoverTip(document.getElementById("btnCommandPalette"), "命令面板", "Ctrl+K");
+  applyHoverTip(document.getElementById("btnShortcuts"), "快捷键帮助", "?");
+  document.querySelectorAll("#canvasToolrail .tool-item").forEach(clearHoverTip);
+}
+
+function wireHoverTips() {
+  if (document.getElementById("shortcutTip")) return;
+  const pop = document.createElement("div");
+  pop.id = "shortcutTip";
+  pop.className = "shortcut-tip";
+  pop.hidden = true;
+  const caret = document.createElement("i");
+  caret.className = "shortcut-tip-caret";
+  const body = document.createElement("span");
+  body.className = "shortcut-tip-body";
+  pop.append(caret, body);
+  document.body.appendChild(pop);
+  let hideTimer = 0;
+  let current = null;
+  const hide = () => {
+    current = null;
+    pop.hidden = true;
+  };
+  const place = (el) => {
+    const margin = 8;
+    const gap = 7;
+    const rect = el.getBoundingClientRect();
+    const tipW = pop.offsetWidth;
+    const tipH = pop.offsetHeight;
+    if (!tipW || !tipH) return;
+    const anchorX = rect.left + rect.width / 2;
+    let left = anchorX - tipW / 2;
+    let top = rect.bottom + gap;
+    let above = false;
+    if (top + tipH > window.innerHeight - margin && rect.top - gap - tipH >= margin) {
+      top = rect.top - gap - tipH;
+      above = true;
+    }
+    left = Math.min(window.innerWidth - tipW - margin, Math.max(margin, left));
+    top = Math.min(window.innerHeight - tipH - margin, Math.max(margin, top));
+    pop.classList.toggle("is-above", above);
+    pop.style.left = `${Math.round(left)}px`;
+    pop.style.top = `${Math.round(top)}px`;
+    caret.style.left = `${Math.round(Math.min(tipW - 12, Math.max(12, anchorX - left)))}px`;
+  };
+  const fill = (el) => {
+    const label = el.dataset.tip;
+    if (!label) return false;
+    body.replaceChildren();
+    const lab = document.createElement("span");
+    lab.className = "shortcut-tip-label";
+    lab.textContent = label;
+    body.append(lab);
+    if (el.dataset.tipKeys) {
+      const kbd = document.createElement("kbd");
+      kbd.textContent = el.dataset.tipKeys;
+      body.append(kbd);
+    }
+    return true;
+  };
+  const showFor = (el) => {
+    if (!el) return;
+    clearTimeout(hideTimer);
+    const same = current === el && !pop.hidden;
+    current = el;
+    if (!same && !fill(el)) {
+      hide();
+      return;
+    }
+    pop.hidden = false;
+    place(el);
+    requestAnimationFrame(() => {
+      if (current === el && !pop.hidden) place(el);
+    });
+  };
+  document.addEventListener("pointerover", (event) => {
+    const el = event.target?.closest?.("[data-tip]");
+    if (!el) return;
+    if (el.closest("#canvasToolrail") && !el.classList.contains("hud-drag-grip")) return;
+    showFor(el);
+  });
+  document.addEventListener("pointerout", (event) => {
+    const el = event.target?.closest?.("[data-tip]");
+    if (!el) return;
+    const next = event.relatedTarget instanceof Element ? event.relatedTarget : null;
+    if (next?.closest?.("[data-tip]")) return;
+    hideTimer = window.setTimeout(hide, 60);
+  });
+  document.addEventListener("scroll", hide, true);
+  window.addEventListener("blur", hide);
+}
+
+let ctxMenuScene = null;
+
+function hideContextMenu() {
+  const menu = document.getElementById("ctxMenu");
+  if (!menu || menu.hidden) return false;
+  menu.hidden = true;
+  menu.replaceChildren();
+  ctxMenuScene = null;
+  return true;
+}
+
+function ensureCtxMenu() {
+  let menu = document.getElementById("ctxMenu");
+  if (menu) return menu;
+  menu = document.createElement("div");
+  menu.id = "ctxMenu";
+  menu.className = "ctx-menu";
+  menu.hidden = true;
+  menu.setAttribute("role", "menu");
+  document.body.appendChild(menu);
+  return menu;
+}
+
+function addCtxItem(menu, spec) {
+  if (spec === "sep" || spec.type === "sep") {
+    const sep = document.createElement("div");
+    sep.className = "ctx-sep";
+    menu.append(sep);
     return;
   }
-  state.base = paperBase;
-  state.baseKind = paperBase.kind ?? 0;
-  fillBaseKindTabs();
-  fillBaseIcons();
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ctx-item" + (spec.danger ? " danger" : "");
+  button.setAttribute("role", "menuitem");
+  button.disabled = !!spec.disabled;
+  const label = document.createElement("span");
+  label.textContent = spec.label;
+  button.append(label);
+  if (spec.shortcut) {
+    const kbd = document.createElement("kbd");
+    kbd.textContent = spec.shortcut;
+    button.append(kbd);
+  }
+  button.onclick = () => {
+    const run = spec.run;
+    hideContextMenu();
+    run?.();
+  };
+  menu.append(button);
 }
 
-async function importDesign(file) {
+function openCanvasContextMenu(client, scene) {
+  ctxMenuScene = scene;
+  const hit = hitRecord(scene.x, scene.y, { solid: true, includeLocked: true });
+  if (hit >= 0 && !state.selected.includes(hit)) {
+    setSelection([hit], { expandGroup: true });
+  }
+  const selected = state.selected.filter((index) => state.records[index]);
+  const unlocked = selectedUnlockedIndices();
+  const grouped = selected.some((index) => state.records[index]?.group);
+  const locked = selected.length && selected.every((index) => state.records[index].locked);
+  const source = hit >= 0 ? state.records[hit] : selected.length === 1 ? state.records[selected[0]] : null;
+  const items = [];
+  if (hasBrush()) {
+    items.push({ label: "取消选用", shortcut: "Esc", run: () => cancelPick() });
+  }
+  items.push({
+    label: "粘贴到此处",
+    shortcut: "Ctrl+V",
+    disabled: !state.clipboard?.length,
+    run: () => pasteClipboard(scene),
+  });
+  if (source && Number(source.mat)) {
+    items.push({ label: "以此为笔刷", run: () => pickRecordAsBrush(source) });
+  }
+  if (selected.length) {
+    items.push("sep");
+    items.push({ label: "转向", shortcut: "R", disabled: !unlocked.length, run: () => executeCommand("flip") });
+    items.push({ label: "上一朝向", shortcut: "Q", run: () => executeCommand("facingPrev") });
+    items.push({ label: "下一朝向", shortcut: "E", run: () => executeCommand("facingNext") });
+    items.push({ label: locked ? "解锁" : "锁定", shortcut: "Ctrl+L", run: () => executeCommand("lock") });
+    items.push("sep");
+    items.push({ label: "复制", shortcut: "Ctrl+C", run: () => executeCommand("copy") });
+    items.push({ label: "再放一份", shortcut: "Ctrl+D", disabled: !unlocked.length, run: () => executeCommand("duplicate") });
+    items.push({ label: "成组", shortcut: "Ctrl+G", disabled: unlocked.length < 2, run: () => executeCommand("group") });
+    items.push({ label: "拆组", shortcut: "Ctrl+Shift+G", disabled: !grouped, run: () => executeCommand("ungroup") });
+    items.push({ label: "存为组件", shortcut: "P", disabled: !unlocked.length, run: () => executeCommand("savePreset") });
+    items.push("sep");
+    items.push({ label: "下移一层", shortcut: "S", disabled: !unlocked.length, run: () => executeCommand("down") });
+    items.push({ label: "上移一层", shortcut: "W", disabled: !unlocked.length, run: () => executeCommand("up") });
+    items.push({ label: "到底层", shortcut: "A", disabled: !unlocked.length, run: () => executeCommand("bottom") });
+    items.push({ label: "到顶层", shortcut: "D", disabled: !unlocked.length, run: () => executeCommand("top") });
+    items.push({ label: "图层向后循环", shortcut: "Z", disabled: !unlocked.length, run: () => executeCommand("layerBack") });
+    items.push({ label: "图层向前循环", shortcut: "X", disabled: !unlocked.length, run: () => executeCommand("layerFront") });
+    items.push("sep");
+    items.push({ label: "聚焦", shortcut: "F", run: () => executeCommand("focus") });
+    items.push({ label: "删除", shortcut: "Delete", danger: true, disabled: !unlocked.length, run: () => executeCommand("delete") });
+  } else {
+    items.push("sep");
+    items.push({ label: "选择工具", shortcut: "V", run: () => executeCommand("selectTool") });
+    items.push({ label: "纯笔刷", shortcut: "N", run: () => executeCommand("paintTool") });
+    items.push({ label: "适应画布", shortcut: "0", run: () => executeCommand("fit") });
+  }
+
+  const menu = ensureCtxMenu();
+  menu.replaceChildren();
+  items.forEach((spec) => addCtxItem(menu, spec));
+  menu.hidden = false;
+  const tip = document.getElementById("shortcutTip");
+  if (tip) tip.hidden = true;
+  const pad = 8;
+  let left = client.x;
+  let top = client.y;
+  const rect = menu.getBoundingClientRect();
+  if (left + rect.width > window.innerWidth - pad) left = window.innerWidth - rect.width - pad;
+  if (top + rect.height > window.innerHeight - pad) top = window.innerHeight - rect.height - pad;
+  menu.style.left = `${Math.round(Math.max(pad, left))}px`;
+  menu.style.top = `${Math.round(Math.max(pad, top))}px`;
+}
+
+function wireContextMenu() {
+  if (wireContextMenu.done) return;
+  wireContextMenu.done = true;
+  const inCanvas = (event) => !!event.target?.closest?.("#canvasShell, #ctxMenu");
+  const blockBrowserMenu = (event) => {
+    if (event.type === "auxclick" && event.button !== 2) return;
+    if (event.type === "mouseup" && event.button !== 2) return;
+    if (!inCanvas(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  document.addEventListener("contextmenu", blockBrowserMenu, true);
+  document.addEventListener("auxclick", blockBrowserMenu, true);
+  document.addEventListener("mouseup", blockBrowserMenu, true);
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (event.button === 2 && inCanvas(event)) {
+        event.preventDefault();
+      }
+      if (!event.target?.closest?.("#ctxMenu")) hideContextMenu();
+    },
+    true
+  );
+  window.addEventListener("blur", () => hideContextMenu());
+}
+
+function runLayerCommand(command) {
+  executeCommand(command);
+}
+
+function setModalVisible(id, visible) {
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.hidden = !visible;
+  if (visible) {
+    const input = modal.querySelector("input");
+    requestAnimationFrame(() => input?.focus());
+  }
+}
+
+function fillCommandList() {
+  const list = document.getElementById("commandList");
+  const input = document.getElementById("commandSearch");
+  if (!list) return;
+  const query = (input?.value || "").trim().toLowerCase();
+  list.replaceChildren();
+  COMMANDS.filter((command) => !query || `${command.label} ${command.shortcut}`.toLowerCase().includes(query))
+    .forEach((command, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "command-row" + (index === 0 ? " on" : "");
+      button.dataset.command = command.id;
+      const label = document.createElement("span");
+      label.textContent = command.label;
+      const shortcut = document.createElement("kbd");
+      shortcut.textContent = command.shortcut || "—";
+      button.append(label, shortcut);
+      button.onclick = () => {
+        setModalVisible("dlgCommands", false);
+        executeCommand(command.id);
+      };
+      list.appendChild(button);
+    });
+}
+
+function fillShortcutHelp() {
+  const grid = document.getElementById("shortcutGrid");
+  if (!grid || grid.childElementCount) return;
+  [...COMMANDS.filter((command) => command.shortcut), ...SHORTCUT_NOTES].forEach((command) => {
+    const row = document.createElement("div");
+    row.className = "shortcut-row";
+    const label = document.createElement("span");
+    label.textContent = command.label;
+    const key = document.createElement("kbd");
+    key.textContent = command.shortcut;
+    row.append(label, key);
+    grid.appendChild(row);
+  });
+}
+
+function applyRailState() {
+  const app = document.getElementById("buildingApp");
+  if (!app) return;
+  state.railWidth = Math.max(300, Math.min(520, Number(state.railWidth) || 340));
+  app.style.setProperty("--rail-w", `${state.railWidth}px`);
+  app.classList.toggle("rail-collapsed", !!state.railCollapsed);
+  const button = document.getElementById("btnToggleRail");
+  if (button) button.textContent = state.railCollapsed ? "展开" : "侧栏";
+  requestAnimationFrame(() => fitStageToShell());
+}
+
+function applyImportedPaperBase() {
+  state.paperBaseHint = "";
+  state.baseOverridden = false;
+  if (state.base) {
+    state.basePicked = true;
+    return "keep";
+  }
+  return "paper";
+}
+
+async function parseBuildingFile(file) {
   const buffer = await file.arrayBuffer();
   const response = await fetch("/api/parse-building", {
     method: "POST",
     body: buffer,
   });
   if (!response.ok) throw new Error("建筑图纸解析失败 (" + response.status + ")");
-  const documentData = await response.json();
+  return { buffer, documentData: await response.json() };
+}
+
+function showPaperPreviewPane(mode) {
+  const current = document.getElementById("paperCurrentPreview");
+  const batch = document.getElementById("paperBatchPreview");
+  if (current) current.hidden = mode !== "current";
+  if (batch) batch.hidden = mode !== "batch";
+}
+
+function openCurrentPaperPreview() {
+  const target = document.getElementById("paperPreviewCanvas");
+  if (!target) return;
+  target.width = canvas.width;
+  target.height = canvas.height;
+  const previewCtx = target.getContext("2d");
+  previewCtx.clearRect(0, 0, target.width, target.height);
+  previewCtx.drawImage(canvas, 0, 0);
+  const visible = state.records.filter(isCanvasRecord).length;
+  const unresolved = state.records.filter(
+    (record) => isCanvasRecord(record) && !recordComponent(record)
+  ).length;
+  const groups = new Set(state.records.map((record) => record.group).filter(Boolean)).size;
+  const footprint = state.base?.put || state.base?.footprint;
+  const footprintText = Array.isArray(footprint)
+    ? footprint.join("×")
+    : footprint || document.getElementById("buildingPut")?.textContent || "未知";
+  const summary = document.getElementById("paperPreviewSummary");
+  if (summary) {
+    const report = buildingMaterialReport();
+    const reasonText = [...report.unresolvedReasons]
+      .slice(0, 4)
+      .map(([reason, count]) => `· ${reason}：${count} 件`)
+      .join("\n");
+    summary.textContent =
+      `户型：${state.base?.name || "当前户型"}\n` +
+      `占地：${footprintText}\n` +
+      `素材：${visible} 件\n` +
+      `未解析：${unresolved} 件\n` +
+      (reasonText ? `${reasonText}\n` : "") +
+      `分组：${groups} 组\n` +
+      `地基：${state.keepFoundation ? "保留" : "不保留"}\n\n` +
+      "确认画面和遮挡关系后再下载。";
+  }
+  fillMaterialList(document.getElementById("paperPreviewMaterials"));
+  showPaperPreviewPane("current");
+  setModalVisible("dlgPaperPreview", true);
+}
+
+function saveCurrentPaperPreview() {
+  const target = document.getElementById("paperPreviewCanvas");
+  if (!target) return;
+  target.toBlob((blob) => {
+    if (!blob) return;
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = "building-preview.png";
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(anchor.href), 0);
+  }, "image/png");
+}
+
+function previewPackForMat(mat) {
+  if (mat >= 1000) return packForPaperUid(Math.floor(mat / 1000));
+  return state.pack;
+}
+
+function loadPreviewImage(url) {
+  return new Promise((resolve) => {
+    if (!url) {
+      resolve(null);
+      return;
+    }
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = url;
+  });
+}
+
+async function paintPaperThumbnail(target, documentData) {
+  const width = 240;
+  const height = 180;
+  target.width = width;
+  target.height = height;
+  const c = target.getContext("2d");
+  c.fillStyle = "#315f39";
+  c.fillRect(0, 0, width, height);
+  c.fillStyle = "rgba(214, 233, 201, 0.22)";
+  c.beginPath();
+  c.moveTo(width / 2, 12);
+  c.lineTo(width - 10, height / 2);
+  c.lineTo(width / 2, height - 10);
+  c.lineTo(10, height / 2);
+  c.closePath();
+  c.fill();
+
+  const rows = (documentData.records || [])
+    .filter((record) => Number(record.mat) && Number(record.x) < 32000 && Number(record.y) < 32000)
+    .map((record) => {
+      const mat = Number(record.mat) || 0;
+      const pack = previewPackForMat(mat);
+      const component = componentByUid(mat, pack);
+      const geometry = frameGeometry(component, record.state ?? record.flip ?? 0);
+      return {
+        record,
+        component,
+        pack,
+        width: geometry.width || 16,
+        height: geometry.height || 16,
+      };
+    });
+  if (!rows.length) {
+    c.fillStyle = "#eef5ea";
+    c.font = "12px sans-serif";
+    c.textAlign = "center";
+    c.fillText("没有可预览素材", width / 2, height / 2);
+    return;
+  }
+  const left = Math.min(...rows.map((row) => Number(row.record.x) || 0));
+  const top = Math.min(...rows.map((row) => Number(row.record.y) || 0));
+  const right = Math.max(...rows.map((row) => (Number(row.record.x) || 0) + row.width));
+  const bottom = Math.max(...rows.map((row) => (Number(row.record.y) || 0) + row.height));
+  const scale = Math.min((width - 18) / Math.max(1, right - left), (height - 18) / Math.max(1, bottom - top), 1);
+  const ox = (width - (right - left) * scale) / 2 - left * scale;
+  const oy = (height - (bottom - top) * scale) / 2 - top * scale;
+  const images = await Promise.all(
+    rows.map((row) =>
+      loadPreviewImage(spriteUrl(row.component, row.pack, row.record.state ?? row.record.flip ?? 0))
+    )
+  );
+  rows.forEach((row, index) => {
+    const x = ox + (Number(row.record.x) || 0) * scale;
+    const y = oy + (Number(row.record.y) || 0) * scale;
+    const image = images[index];
+    if (image) c.drawImage(image, x, y, row.width * scale, row.height * scale);
+    else {
+      c.fillStyle = "#e7644d";
+      c.fillRect(x, y, Math.max(3, 8 * scale), Math.max(3, 8 * scale));
+    }
+  });
+}
+
+async function openBatchPaperPreview(files) {
+  const candidates = [...files].filter((file) => /\.txt$/i.test(file.name));
+  const grid = document.getElementById("paperPreviewGrid");
+  const status = document.getElementById("paperBatchStatus");
+  const search = document.getElementById("paperBatchSearch");
+  if (!grid || !status) return;
+  grid.replaceChildren();
+  if (search) {
+    search.value = "";
+    search.oninput = () => {
+      const query = search.value.trim().toLowerCase();
+      grid.querySelectorAll(".paper-preview-item").forEach((item) => {
+        item.hidden = !!query && !String(item.dataset.search || "").includes(query);
+      });
+    };
+  }
+  status.textContent = `正在读取 ${candidates.length} 张图纸…`;
+  showPaperPreviewPane("batch");
+  setModalVisible("dlgPaperPreview", true);
+  let loaded = 0;
+  let failed = 0;
+  let unresolvedTotal = 0;
+  for (const file of candidates) {
+    try {
+      const { documentData } = await parseBuildingFile(file);
+      const records = documentData.records || [];
+      const paperRows = records.filter(
+        (record) => Number(record.mat) && Number(record.x) < 32000 && Number(record.y) < 32000
+      );
+      const materialTotals = new Map();
+      let unresolved = 0;
+      paperRows.forEach((record) => {
+        const mat = Number(record.mat) || 0;
+        const pack = previewPackForMat(mat);
+        const component = componentByUid(mat, pack);
+        if (!component) {
+          unresolved += 1;
+          return;
+        }
+        (component.materials || []).forEach((material) => {
+          materialTotals.set(
+            material.name,
+            (materialTotals.get(material.name) || 0) + material.count
+          );
+        });
+      });
+      unresolvedTotal += unresolved;
+      const item = document.createElement("article");
+      item.className = "paper-preview-item" + (unresolved ? " has-unresolved" : "");
+      item.dataset.search = (file.webkitRelativePath || file.name).toLowerCase();
+      const visual = document.createElement("div");
+      visual.className = "paper-preview-visual";
+      const thumb = document.createElement("canvas");
+      const badge = document.createElement("span");
+      badge.className = "paper-preview-badge" + (unresolved ? " is-warning" : "");
+      badge.textContent = unresolved ? `${unresolved} 件未解析` : "素材已解析";
+      visual.append(thumb, badge);
+      const copy = document.createElement("div");
+      copy.className = "paper-preview-copy";
+      const name = document.createElement("strong");
+      name.textContent = file.webkitRelativePath || file.name;
+      name.title = name.textContent;
+      const meta = document.createElement("small");
+      meta.textContent =
+        documentData.kind === "desk"
+          ? `${paperRows.length} 件素材 · ${materialTotals.size} 种材料`
+          : `${records.length} 个庄园建筑点`;
+      copy.append(name, meta);
+      const materials = document.createElement("div");
+      materials.className = "paper-preview-item-materials";
+      fillMaterialList(materials, materialTotals, unresolved);
+      if (!materialTotals.size) {
+        const empty = document.createElement("small");
+        empty.textContent = documentData.kind === "desk" ? "没有可统计的材料" : "庄园摆放图不含装修材料";
+        materials.appendChild(empty);
+      }
+      const actions = document.createElement("div");
+      actions.className = "paper-preview-item-actions";
+      const openPaper = async (mode) => {
+        if (mode === "replace" && state.records.length) {
+          const ok = await appConfirm("覆盖打开会清空当前设计，是否继续？", {
+            title: "覆盖打开",
+            okLabel: "覆盖",
+            cancelLabel: "取消",
+          });
+          if (!ok) return;
+        }
+        setModalVisible("dlgPaperPreview", false);
+        await importDesign(file, { mode });
+      };
+      if (documentData.kind === "desk") {
+        const replace = document.createElement("button");
+        replace.type = "button";
+        replace.className = "btn";
+        replace.textContent = "覆盖打开";
+        replace.onclick = () => openPaper("replace");
+        const merge = document.createElement("button");
+        merge.type = "button";
+        merge.className = "btn btn-primary";
+        merge.textContent = "合并到当前";
+        merge.onclick = () => openPaper("merge");
+        actions.append(replace, merge);
+      } else {
+        const terrain = document.createElement("button");
+        terrain.type = "button";
+        terrain.className = "btn btn-primary";
+        terrain.textContent = "去地形桌查看";
+        terrain.onclick = () => openPaper("replace");
+        actions.appendChild(terrain);
+      }
+      item.append(visual, copy, materials, actions);
+      grid.appendChild(item);
+      await paintPaperThumbnail(thumb, documentData);
+      loaded += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn(`图纸预览失败：${file.name}`, error);
+    }
+    status.textContent =
+      `已载入 ${loaded} 张图纸` +
+      (unresolvedTotal ? ` · ${unresolvedTotal} 件素材未解析` : "") +
+      (failed ? ` · ${failed} 张文件无法读取` : "");
+  }
+  if (!candidates.length) status.textContent = "所选文件夹里没有 .txt 图纸。";
+}
+
+function importedPaperRows(records) {
+  let lastTheme = state.pack;
+  const inferredThemeKeys = new Set(
+    records
+      .map((record) => {
+        const mat = Number(record.mat) || 0;
+        const pack = mat >= 1000 ? packForPaperUid(Math.floor(mat / 1000)) : null;
+        return pack?.kind === "theme" ? pack.key : "";
+      })
+      .filter(Boolean)
+  );
+  const inferredLocalPack =
+    inferredThemeKeys.size === 1 ? packByKey([...inferredThemeKeys][0]) : null;
+  const rows = records.map((record) => {
+    const mat = Number(record.mat) || 0;
+    const offscreen = (record.x || 0) >= 32000 || (record.y || 0) >= 32000;
+    let packKey = mat < 1000 ? inferredLocalPack?.key || "" : state.pack?.key || "";
+    if (mat >= 1000) {
+      const pack = packForPaperUid(Math.floor(mat / 1000));
+      if (pack) {
+        packKey = pack.key;
+        if (pack.kind === "theme") lastTheme = pack;
+      }
+    }
+    return {
+      mode: "desk",
+      x: Number(record.x) || 0,
+      y: Number(record.y) || 0,
+      mat,
+      state: record.state ?? record.flip ?? 0,
+      packKey,
+      localPackUnknown: mat > 0 && mat < 1000 && !inferredLocalPack,
+      hidden: mat === 0 || offscreen,
+    };
+  });
+  return { rows, lastTheme };
+}
+
+async function importDesign(file, options = {}) {
+  const { buffer, documentData } = await parseBuildingFile(file);
   if (documentData.kind !== "desk") {
-    const goTerrain = confirm(
-      `「${file.name}」是庄园摆放图（共 ${documentData.records?.length || 0} 个点），不是户型装修图。\n\n` +
-        "是否打开地形设计桌导入？"
+    const goTerrain = await appConfirm(
+      `「${file.name}」是庄园摆放图（共 ${documentData.records?.length || 0} 个点），不是户型装修图。\n\n是否打开地形设计桌导入？`,
+      { title: "图纸类型不对", okLabel: "去地形桌", cancelLabel: "取消" }
     );
     if (!goTerrain) return;
     const bytes = new Uint8Array(buffer);
@@ -3446,6 +6330,48 @@ async function importDesign(file) {
     return;
   }
   const records = documentData.records || [];
+  const mode = options.mode === "merge" && placedDesignCount() ? "merge" : "replace";
+  const imported = importedPaperRows(records);
+  if (mode === "merge") {
+    const importedHeader = imported.rows.find((record) => Number(record.mat) === 0);
+    const currentHeader = exportHeaderRecord();
+    const differentOrigin =
+      importedHeader &&
+      (Number(importedHeader.x) !== Number(currentHeader.x) ||
+        Number(importedHeader.y) !== Number(currentHeader.y));
+    if (differentOrigin) {
+      const ok = await appConfirm(
+        "这张图纸的户型原点与当前设计不同。合并时会自动对齐两个户型原点，但建筑边界可能不同，合并后请检查遮挡。",
+        { title: "户型不同", okLabel: "对齐并合并", cancelLabel: "取消" }
+      );
+      if (!ok) return;
+    }
+    const dx = importedHeader ? Number(currentHeader.x) - Number(importedHeader.x) : 0;
+    const dy = importedHeader ? Number(currentHeader.y) - Number(importedHeader.y) : 0;
+    const body = imported.rows.filter((record) => Number(record.mat) !== 0 && !record.hidden);
+    if (!body.length) throw new Error("这张图纸没有可合并的建筑素材。");
+    const group = `${Date.now()}-import`;
+    const groupName = file.name.replace(/\.[^.]+$/, "") || "合并图纸";
+    pushHistory();
+    const first = state.records.length;
+    body.forEach((record) => {
+      state.records.push({
+        ...record,
+        x: record.x + dx,
+        y: record.y + dy,
+        hidden: false,
+        group,
+        groupName,
+      });
+    });
+    state.layerCollapsed.add(group);
+    setSelection(body.map((_, index) => first + index), { expandGroup: true });
+    updateSelectionCaption();
+    fillLayers();
+    syncDesignResetButtons();
+    renderBuilding();
+    return;
+  }
   applyImportedPaperBase(records);
   invalidateBaseLayout();
   pushHistory();
@@ -3453,29 +6379,14 @@ async function importDesign(file) {
     encoding: documentData._source?.encoding || "gbk",
   };
   state.paperLayout = true;
-  let lastTheme = state.pack;
-  state.records = records.map((record) => {
-    const mat = Number(record.mat) || 0;
-    const offscreen = (record.x || 0) >= 32000 || (record.y || 0) >= 32000;
-    let packKey = state.pack?.key || "";
-    if (mat >= 1000) {
-      const pack = packForPaperUid(Math.floor(mat / 1000));
-      if (pack) {
-        packKey = pack.key;
-        if (pack.kind === "theme") lastTheme = pack;
-      }
-    }
-    return {
-      mode: "desk",
-      x: Number(record.x) || 0,
-      y: Number(record.y) || 0,
-      mat,
-      state: record.state ?? record.flip ?? 0,
-      packKey,
-      hidden: mat === 0 || offscreen,
-    };
-  });
-  if (lastTheme) state.pack = lastTheme;
+  state.records = imported.rows;
+  state.baseAnchor = null;
+  const header = state.records.find((record) => Number(record.mat) === 0);
+  state.paperOrigin = header
+    ? { x: Number(header.x) || 0, y: Number(header.y) || 0 }
+    : null;
+  invalidateBaseLayout();
+  if (imported.lastTheme) state.pack = imported.lastTheme;
   ensureActiveCategory();
   fillThemes();
   fillCategories();
@@ -3489,23 +6400,57 @@ async function importDesign(file) {
   renderBuilding();
 }
 
+function serializeExportRecord(record) {
+  const {
+    component,
+    pack,
+    group,
+    locked,
+    hidden,
+    groupName,
+    label,
+    packKey,
+    localPackUnknown,
+    ...rest
+  } = record;
+  return {
+    ...rest,
+    mode: "desk",
+    x: Math.max(0, Math.min(0x7fff, Math.round(Number(rest.x) || 0))),
+    y: Math.max(0, Math.min(0x7fff, Math.round(Number(rest.y) || 0))),
+    mat: Math.max(0, Math.round(Number(rest.mat) || 0)),
+    state: Math.max(0, Math.min(63, Math.round(Number(rest.state ?? rest.flip) || 0))),
+  };
+}
+
+function exportHeaderRecord() {
+  const existing = state.records.find((record) => Number(record.mat) === 0);
+  if (existing) return serializeExportRecord(existing);
+  const native = state.base?.anchor;
+  if (!Array.isArray(native) || !Number.isFinite(Number(native[0])) || !Number.isFinite(Number(native[1]))) {
+    throw new Error("当前户型缺少原生 mask 坐标，无法生成安全的图纸头。");
+  }
+  return serializeExportRecord({
+    mode: "desk",
+    x: Number(native[0]),
+    y: Number(native[1]),
+    mat: 0,
+    // base.kind is the native frame/state class (0..4), not the base number.
+    state: Number(state.base?.kind) || 0,
+  });
+}
+
+function buildExportRecords() {
+  const body = state.records
+    .filter((record) => Number(record.mat) !== 0)
+    .map(serializeExportRecord);
+  return [exportHeaderRecord(), ...body];
+}
+
 async function exportDesign() {
   const payload = {
     kind: "desk",
-    records: state.records.map((record) => {
-      const {
-        component,
-        pack,
-        group,
-        locked,
-        hidden,
-        groupName,
-        label,
-        packKey,
-        ...rest
-      } = record;
-      return rest;
-    }),
+    records: buildExportRecords(),
     _source: state.source,
   };
   const response = await fetch("/api/format-building", {
@@ -3538,9 +6483,6 @@ function bindBuilding() {
   document.getElementById("btnBackBase").onclick = () => {
     window.location.href = "/";
   };
-  document.getElementById("btnCloseBuilding").onclick = () => {
-    window.location.href = "/";
-  };
   document.getElementById("keepFoundation").onchange = (event) => {
     state.keepFoundation = event.target.checked;
     markBuildingDirty();
@@ -3550,10 +6492,43 @@ function bindBuilding() {
     state.snap.enabled = event.target.checked;
     markBuildingDirty();
   };
+  const snapGrid = document.getElementById("snapGrid");
+  const snapEdges = document.getElementById("snapEdges");
+  const snapCenters = document.getElementById("snapCenters");
+  if (snapGrid) {
+    snapGrid.checked = state.snap.grid !== false;
+    snapGrid.onchange = (event) => {
+      state.snap.grid = event.target.checked;
+      markBuildingDirty();
+    };
+  }
+  if (snapEdges) {
+    snapEdges.checked = state.snap.edges !== false;
+    snapEdges.onchange = (event) => {
+      state.snap.edges = event.target.checked;
+      markBuildingDirty();
+    };
+  }
+  if (snapCenters) {
+    snapCenters.checked = state.snap.centers !== false;
+    snapCenters.onchange = (event) => {
+      state.snap.centers = event.target.checked;
+      markBuildingDirty();
+    };
+  }
   document.getElementById("snapStep").onchange = (event) => {
     state.snap.step = Math.max(1, Number(event.target.value) || 4);
     markBuildingDirty();
   };
+  const snapAxisEl = document.getElementById("snapAxis");
+  if (snapAxisEl) {
+    snapAxisEl.value = snapAxis();
+    snapAxisEl.onchange = (event) => {
+      const next = event.target.value;
+      state.snap.axis = next === "ortho" || next === "both" ? next : "iso";
+      markBuildingDirty();
+    };
+  }
   const veilEnabled = document.getElementById("veilEnabled");
   const veilOpacity = document.getElementById("veilOpacity");
   if (veilEnabled) {
@@ -3585,48 +6560,86 @@ function bindBuilding() {
     canvasShell.addEventListener(
       "wheel",
       (event) => {
-        if (!(event.ctrlKey || event.metaKey)) return;
+        if (event.target.closest(".stage-bar, .base-meta, .zoom-control, .stage-commandbar")) return;
+        if (state.interaction) {
+          event.preventDefault();
+          return;
+        }
         event.preventDefault();
         const delta = event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
         zoomBy(delta, event.clientX, event.clientY);
       },
       { passive: false }
     );
+    if (typeof ResizeObserver === "function") {
+      const shellFit = new ResizeObserver(() => fitStageToShell());
+      shellFit.observe(canvasShell);
+    }
   }
-  window.addEventListener("resize", () => {
-    applyZoom();
-  });
+  window.addEventListener("resize", () => fitStageToShell());
   const btnFacingPrev = document.getElementById("btnFacingPrev");
   const btnFacingNext = document.getElementById("btnFacingNext");
   if (btnFacingPrev) btnFacingPrev.onclick = () => stepFacing(-1);
   if (btnFacingNext) btnFacingNext.onclick = () => stepFacing(1);
   updateFacingControl();
+  const btnLayerBack = document.getElementById("btnLayerBack");
+  const btnLayerFront = document.getElementById("btnLayerFront");
+  if (btnLayerBack) btnLayerBack.onclick = () => stepLayerOrder(-1);
+  if (btnLayerFront) btnLayerFront.onclick = () => stepLayerOrder(1);
+  updateLayerOrderControl();
+  let pendingImportMode = "replace";
   document.getElementById("btnImportDesign").onclick = () => {
+    pendingImportMode = "replace";
     document.getElementById("buildingFile").click();
   };
+  document.getElementById("btnMergeDesign").onclick = () => {
+    pendingImportMode = "merge";
+    document.getElementById("buildingFile").click();
+  };
+  document.getElementById("btnBatchPreview").onclick = () => {
+    document.getElementById("buildingFolder").click();
+  };
+  document.getElementById("buildingFolder").onchange = async (event) => {
+    await openBatchPaperPreview(event.target.files || []);
+    event.target.value = "";
+  };
+  document.getElementById("btnDownloadPaper").onclick = () => {
+    exportDesign().catch((error) => appAlert(error.message || String(error), { title: "导出失败" }));
+  };
+  document.getElementById("btnSavePaperPreview").onclick = saveCurrentPaperPreview;
   document.getElementById("btnAllMaterials").onclick = () => {
-    const text = [...document.querySelectorAll(".mat-chip")]
-      .map((node) => node.textContent)
-      .join("\n");
-    if (text) alert(text);
+    const line = document.querySelector(".material-line");
+    if (!line) return;
+    line.classList.toggle("is-open");
+    document.getElementById("btnAllMaterials").setAttribute(
+      "aria-expanded",
+      line.classList.contains("is-open") ? "true" : "false"
+    );
   };
   document.getElementById("buildingFile").onchange = async (event) => {
     if (!event.target.files[0]) return;
     try {
-      await importDesign(event.target.files[0]);
+      await importDesign(event.target.files[0], { mode: pendingImportMode });
     } catch (error) {
-      alert(error.message || String(error));
+      await appAlert(error.message || String(error), { title: "导入失败" });
     }
+    pendingImportMode = "replace";
     event.target.value = "";
   };
-  document.getElementById("btnSaveDesign").onclick = () => {
-    exportDesign().catch((error) => alert(error.message || String(error)));
-  };
   document.getElementById("btnMakeBuilding").onclick = () => {
-    exportDesign().catch((error) => alert(error.message || String(error)));
+    openCurrentPaperPreview();
   };
-  document.querySelectorAll(".canvas-toolbar button[data-command]").forEach((button) => {
-    button.onclick = () => runLayerCommand(button.dataset.command);
+  document.querySelectorAll("button[data-command]").forEach((button) => {
+    button.onclick = () => executeCommand(button.dataset.command);
+  });
+  document.querySelectorAll("button[data-tool]").forEach((button) => {
+    button.onclick = () => setActiveTool(button.dataset.tool);
+  });
+  document.querySelectorAll("[data-marquee-mode]").forEach((button) => {
+    button.onclick = () => {
+      setMarqueeMode(button.dataset.marqueeMode);
+      setActiveTool("select");
+    };
   });
   document.querySelectorAll("#alignBar button").forEach((button) => {
     button.onclick = () => alignSelection(button.dataset.align);
@@ -3634,10 +6647,7 @@ function bindBuilding() {
   document.querySelectorAll(".rail-tab").forEach((button) => {
     button.onclick = () => setRailTab(button.dataset.tab);
   });
-  document.getElementById("btnSelectAll").onclick = () => {
-    setSelection(state.records.map((_, index) => index).filter((index) => !state.records[index].hidden));
-    renderBuilding();
-  };
+  document.getElementById("btnSelectAll").onclick = selectAllRecords;
   document.getElementById("btnClearSel").onclick = () => {
     clearSelection();
     renderBuilding();
@@ -3658,6 +6668,18 @@ function bindBuilding() {
   if (btnLayerGroup) btnLayerGroup.onclick = () => groupSelected();
   if (btnLayerUngroup) btnLayerUngroup.onclick = () => ungroupSelected();
   if (btnLayerDelete) btnLayerDelete.onclick = () => deleteSelected();
+  const setSelectedVisibility = (hidden) => {
+    const indices = state.selected.filter((index) => state.records[index]);
+    if (!indices.length) return;
+    pushHistory();
+    indices.forEach((index) => { state.records[index].hidden = hidden; });
+    fillLayers();
+    renderBuilding();
+  };
+  document.getElementById("btnShowSel").onclick = () => setSelectedVisibility(false);
+  document.getElementById("btnHideSel").onclick = () => setSelectedVisibility(true);
+  document.getElementById("btnLockLayers").onclick = lockSelected;
+  document.getElementById("btnUnlockLayers").onclick = unlockSelected;
   const layerFilter = document.getElementById("layerFilter");
   if (layerFilter) {
     layerFilter.oninput = () => {
@@ -3665,31 +6687,78 @@ function bindBuilding() {
       fillLayers();
     };
   }
+  const layerSelectedOnly = document.getElementById("layerSelectedOnly");
+  if (layerSelectedOnly) {
+    layerSelectedOnly.onchange = () => {
+      state.layerSelectedOnly = layerSelectedOnly.checked;
+      fillLayers();
+    };
+  }
+  const themeList = document.getElementById("themeList");
+  if (themeList) {
+    themeList.onchange = () => {
+      const value = themeList.value;
+      if (value === THEME_ALL) applyThemePack(null);
+      else applyThemePack(packByKey(value) || state.pack);
+    };
+  }
   const themeSearch = document.getElementById("themeSearch");
   if (themeSearch) {
-    themeSearch.oninput = () => fillThemes();
+    themeSearch.oninput = () => {
+      fillThemes();
+      fillComponents();
+    };
   }
+  document.querySelectorAll("[data-asset-mode]").forEach((button) => {
+    button.onclick = () => {
+      state.assetMode = button.dataset.assetMode;
+      document.querySelectorAll("[data-asset-mode]").forEach((node) =>
+        node.classList.toggle("on", node === button)
+      );
+      fillComponents();
+    };
+  });
   document.getElementById("customFolderFilter").onchange = () => fillCustoms();
-  document.getElementById("btnNewFolder").onclick = () => {
-    const name = prompt("新建分组名称", "");
-    if (!name || !name.trim()) return;
+  document.getElementById("customFolderFilterBtn").onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleFolderPicker();
+  };
+  document.addEventListener("pointerdown", (event) => {
+    const menu = document.getElementById("customFolderMenu");
+    if (!menu || menu.hidden) return;
+    if (event.target.closest("#customFolderMenu, #customFolderFilterBtn")) return;
+    closeFolderPicker();
+  });
+  window.addEventListener("resize", closeFolderPickerIfMoved);
+  document.addEventListener(
+    "scroll",
+    (event) => {
+      if (event.target.closest?.("#customFolderMenu")) return;
+      closeFolderPickerIfMoved();
+    },
+    true
+  );
+  document.getElementById("customSearch").oninput = () => fillCustoms();
+  document.getElementById("btnNewFolder").onclick = async () => {
+    const name = await appPrompt("给新分组起个名字。", {
+      title: "新建分组",
+      fieldLabel: "分组名称",
+      placeholder: "例如 常用 / 屋顶",
+      okLabel: "创建",
+    });
+    if (name == null) return;
     const folder = name.trim();
+    if (!folder) {
+      await appAlert("请输入分组名称。", { title: "新建分组" });
+      return;
+    }
+    ensureCustomFolder(folder);
     const filter = document.getElementById("customFolderFilter");
     refreshFolderSuggestions();
-    if (![...filter.options].some((option) => option.value === folder)) {
-      const option = document.createElement("option");
-      option.value = folder;
-      option.textContent = folder;
-      filter.appendChild(option);
-    }
-    filter.value = folder;
-    document.getElementById("presetFolder").value = folder;
-    const list = document.getElementById("folderSuggestions");
-    if (list && ![...list.options].some((option) => option.value === folder)) {
-      const option = document.createElement("option");
-      option.value = folder;
-      list.appendChild(option);
-    }
+    if (filter) filter.value = folder;
+    const preset = document.getElementById("presetFolder");
+    if (preset) preset.value = folder;
     fillCustoms();
   };
   document.getElementById("btnPresetClose").onclick = closePresetDialog;
@@ -3697,134 +6766,102 @@ function bindBuilding() {
   document.getElementById("dlgPreset").addEventListener("click", (event) => {
     if (event.target.id === "dlgPreset") closePresetDialog();
   });
-
-  canvas.onmousedown = (event) => {
-    if (state.phase !== "design") return;
-    if (event.button === 2) {
+  const btnToggleRail = document.getElementById("btnToggleRail");
+  if (btnToggleRail) {
+    btnToggleRail.onclick = () => {
+      state.railCollapsed = !state.railCollapsed;
+      applyRailState();
+      markBuildingDirty();
+    };
+  }
+  const railResizer = document.getElementById("railResizer");
+  if (railResizer) {
+    railResizer.onpointerdown = (event) => {
       event.preventDefault();
-      cancelPick();
-      return;
-    }
-    if (event.button !== 0) return;
-    const { x, y } = canvasPoint(event);
-    const hit = hitRecord(x, y);
-    const additive = event.shiftKey || event.ctrlKey || event.metaKey;
-    const wantMarquee = event.altKey || !hasBrush();
-
-    if (hit >= 0) {
-      state.component = null;
-      state.customBrush = null;
-      fillComponents();
-      fillCustoms();
-      if (additive) {
-        const set = new Set(state.selected);
-        if (set.has(hit)) set.delete(hit);
-        else set.add(hit);
-        // Ctrl 多选时不自动扩组，方便从组里加减单件
-        setSelection([...set]);
-      } else if (event.altKey) {
-        // Alt 点选：只选组内单件
-        setSelection([hit]);
-      } else {
-        // 普通点击：若属于某组则整组选中，拖动能一起移动
-        setSelection([hit], { expandGroup: true });
+      const startX = event.clientX;
+      const startWidth = state.railWidth;
+      try {
+        railResizer.setPointerCapture?.(event.pointerId);
+      } catch {
+        /* synthetic or inactive pointer */
       }
-      const dragIndices = expandGroupSelection(state.selected.length ? state.selected : [hit]).filter(
-        (index) => !state.records[index]?.locked
-      );
-      if (!event.altKey && !additive) setSelection(expandGroupSelection([hit]));
-      if (!dragIndices.length) {
-        updateSelectionCaption();
-        renderBuilding();
-        return;
-      }
-      state.dragging = {
-        x,
-        y,
-        origins: dragIndices.map((index) => ({
-          i: index,
-          x: state.records[index].x,
-          y: state.records[index].y,
-        })),
-        moved: false,
-        before: recordsHistoryPayload(),
+      railResizer.classList.add("is-resizing");
+      const move = (moveEvent) => {
+        state.railWidth = Math.max(300, Math.min(520, startWidth + startX - moveEvent.clientX));
+        applyRailState();
       };
-      state.guides = [];
-      updateSelectionCaption();
-      renderBuilding();
-      return;
-    }
-
-    if (state.selected.length && !additive) {
-      clearSelection();
-      renderBuilding();
-      return;
-    }
-
-    if (hasBrush() && !event.altKey) {
-      addComponent(x, y);
-      return;
-    }
-
-    if (wantMarquee) {
-      if (!additive) clearSelection();
-      state.marquee = { x0: x, y0: y, x1: x, y1: y, additive };
-      renderBuilding();
-    }
+      const finish = () => {
+        railResizer.classList.remove("is-resizing");
+        railResizer.removeEventListener("pointermove", move);
+        railResizer.removeEventListener("pointerup", finish);
+        railResizer.removeEventListener("pointercancel", finish);
+        markBuildingDirty();
+      };
+      railResizer.addEventListener("pointermove", move);
+      railResizer.addEventListener("pointerup", finish);
+      railResizer.addEventListener("pointercancel", finish);
+    };
+  }
+  document.getElementById("btnCommandPalette").onclick = () => {
+    document.getElementById("commandSearch").value = "";
+    fillCommandList();
+    setModalVisible("dlgCommands", true);
   };
-
-  canvas.oncontextmenu = (event) => {
-    if (state.phase !== "design") return;
-    event.preventDefault();
-    cancelPick();
+  document.getElementById("btnShortcuts").onclick = () => {
+    fillShortcutHelp();
+    setModalVisible("dlgShortcuts", true);
   };
+  document.getElementById("commandSearch").oninput = fillCommandList;
+  document.querySelectorAll("[data-close-modal]").forEach((button) => {
+    button.onclick = () => setModalVisible(button.dataset.closeModal, false);
+  });
+  ["dlgCommands", "dlgShortcuts"].forEach((id) => {
+    document.getElementById(id).addEventListener("click", (event) => {
+      if (event.target.id === id) setModalVisible(id, false);
+    });
+  });
+  applyRailState();
+  setActiveTool(state.tool);
+  applyCommandTooltips();
+  wireHoverTips();
+  wireContextMenu();
 
-  canvas.onmousemove = (event) => {
-    if (state.phase !== "design") return;
-    const { x, y } = canvasPoint(event);
-    state.ghost = hasBrush() ? { x, y } : null;
-    if (state.marquee) {
-      state.marquee.x1 = x;
-      state.marquee.y1 = y;
-    } else if (state.dragging) {
-      applyDragPositions(x, y);
-    }
-    renderBuilding();
-  };
+  if (canvasShell) {
+    canvasShell.addEventListener("pointerdown", (event) => beginCanvasPointer(event, canvasShell));
+    canvasShell.addEventListener("pointermove", (event) => moveCanvasPointer(event, canvasShell));
+    canvasShell.addEventListener("pointerup", (event) => finishCanvasPointer(event, canvasShell));
+    canvasShell.addEventListener("pointercancel", (event) =>
+      finishCanvasPointer(event, canvasShell, true)
+    );
+    canvasShell.addEventListener("scroll", () => {
+      hideContextMenu();
+      syncViewportOverlays();
+    }, { passive: true });
+    canvasShell.addEventListener("auxclick", (event) => {
+      if (event.button === 1 || event.button === 2) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
+    canvasShell.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+  }
 
-  canvas.onmouseleave = () => {
-    state.ghost = null;
-    if (!state.dragging && !state.marquee) renderBuilding();
-  };
-
-  window.addEventListener("mouseup", (event) => {
+  window.addEventListener("pointerup", (event) => {
     if (state.paletteDrag) {
       finishPaletteDrag(event);
-      return;
-    }
-    if (state.marquee) {
-      finishMarquee();
-      return;
-    }
-    if (state.dragging) {
-      if (state.dragging.moved && state.dragging.before) {
-        const after = recordsHistoryPayload();
-        if (after !== state.dragging.before) {
-          state.history.push(state.dragging.before);
-          const cap = historyCap();
-          while (state.history.length > cap) state.history.shift();
-          state.redo = [];
-          markBuildingDirty();
-        }
-      }
-      state.dragging = null;
-      state.guides = [];
-      renderBuilding();
     }
   });
 
   window.addEventListener("pointermove", (event) => {
     if (state.paletteDrag) updatePaletteDrag(event);
+    if (state.phase === "design" && hasBrush() && event.target.closest?.("#canvasShell")) {
+      const { x, y } = canvasPoint(event);
+      state.ghost = { x, y };
+      renderBuilding();
+    }
   });
 
   window.addEventListener("blur", () => {
@@ -3832,79 +6869,206 @@ function bindBuilding() {
       state.paletteDrag = null;
       clearPaletteGhost();
     }
+    if (state.interaction) cancelCanvasInteraction();
+    state.spacePan = false;
   });
 
   window.addEventListener("keydown", (event) => {
-    if (state.phase !== "design") return;
-    const tag = (event.target && event.target.tagName) || "";
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (typeof isAppDialogOpen === "function" && isAppDialogOpen()) return;
+    const commandDialog = document.getElementById("dlgCommands");
+    const shortcutDialog = document.getElementById("dlgShortcuts");
+    if (!commandDialog.hidden || !shortcutDialog.hidden) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setModalVisible(commandDialog.hidden ? "dlgShortcuts" : "dlgCommands", false);
+      } else if (!commandDialog.hidden && event.key === "Enter") {
+        const first = document.querySelector("#commandList .command-row");
+        if (first) {
+          event.preventDefault();
+          first.click();
+        }
+      }
+      return;
+    }
     const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && key === "k") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      document.getElementById("btnCommandPalette").click();
+      return;
+    }
+    if (event.key === "?" || (event.key === "/" && event.shiftKey)) {
+      event.preventDefault();
+      document.getElementById("btnShortcuts").click();
+      return;
+    }
+    if (isTypingTarget(event.target)) return;
+    if (state.phase !== "design") return;
 
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
-      deleteSelected();
-    } else if (event.key === "[" && event.ctrlKey && event.shiftKey) {
+      executeCommand("delete");
+    } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === "a") {
       event.preventDefault();
-      reorderSelected("bottom");
-    } else if (event.key === "]" && event.ctrlKey && !event.shiftKey) {
+      executeCommand("clearSelection");
+    } else if ((event.ctrlKey || event.metaKey) && key === "a") {
       event.preventDefault();
-      reorderSelected("top");
-    } else if (event.key === "[" && !event.ctrlKey && !event.altKey) {
+      executeCommand("selectAll");
+    } else if ((event.ctrlKey || event.metaKey) && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
-      reorderSelected("down");
-    } else if (event.key === "]" && !event.ctrlKey && !event.altKey) {
+      event.stopImmediatePropagation();
+      if (event.key === "ArrowDown") executeCommand(event.shiftKey ? "bottom" : "down");
+      else executeCommand(event.shiftKey ? "top" : "up");
+    } else if ((key === "q" || event.key === ",") && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      reorderSelected("up");
-    } else if (event.key === "," || event.key === "，") {
+      executeCommand("facingPrev");
+    } else if ((key === "e" || event.key === ".") && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      stepFacing(-1);
-    } else if (event.key === "." || event.key === "。") {
+      executeCommand("facingNext");
+    } else if (key === "z" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      stepFacing(1);
-    } else if (event.key === " " || key === "f") {
+      executeCommand("layerBack");
+    } else if (key === "x" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      flipSelectedOrBrush();
-    } else if (event.ctrlKey && key === "z") {
+      executeCommand("layerFront");
+    } else if (key === "a" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      undo();
-    } else if (event.ctrlKey && key === "y") {
+      executeCommand("bottom");
+    } else if (key === "s" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      redo();
-    } else if (event.ctrlKey && key === "d") {
+      executeCommand("down");
+    } else if (key === "w" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      duplicateSelected();
-    } else if (event.ctrlKey && key === "l") {
+      executeCommand("up");
+    } else if (key === "d" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      toggleLockSelected();
-    } else if (event.ctrlKey && key === "c") {
+      executeCommand("top");
+    } else if (key === "p" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      copySelected();
-    } else if (event.ctrlKey && key === "v") {
+      executeCommand("savePreset");
+    } else if (key === "r" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      pasteClipboard();
-    } else if (event.ctrlKey && event.shiftKey && key === "g") {
+      executeCommand("flip");
+    } else if (event.key === " ") {
       event.preventDefault();
-      ungroupSelected();
-    } else if (event.ctrlKey && key === "g") {
+      state.spacePan = true;
+      document.getElementById("canvasShell")?.classList.add("is-pan-ready");
+    } else if (key === "v" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      groupSelected();
-    } else if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "ArrowUp" || event.key === "ArrowDown") {
+      executeCommand("selectTool");
+    } else if (key === "n" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      const step = (state.snap.step || 4) * (event.shiftKey ? 4 : 1);
+      executeCommand("paintTool");
+    } else if (key === "b" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("stampTool");
+    } else if (key === "t" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("tileTool");
+    } else if (key === "u" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("rectTool");
+    } else if (key === "l" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("lineTool");
+    } else if (key === "o" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("circleTool");
+    } else if (key === "i" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("triangleTool");
+    } else if (key === "c" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("diamondTool");
+    } else if (key === "g" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("ringTool");
+    } else if (key === "m" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand(event.shiftKey ? "marqueeContain" : "marqueeTouch");
+    } else if (key === "f" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("focus");
+    } else if ((event.ctrlKey || event.metaKey) && key === "z") {
+      event.preventDefault();
+      executeCommand(event.shiftKey ? "redo" : "undo");
+    } else if ((event.ctrlKey || event.metaKey) && key === "y") {
+      event.preventDefault();
+      executeCommand("redo");
+    } else if ((event.ctrlKey || event.metaKey) && key === "d") {
+      event.preventDefault();
+      executeCommand("duplicate");
+    } else if ((event.ctrlKey || event.metaKey) && key === "l") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      executeCommand("lock");
+    } else if ((event.ctrlKey || event.metaKey) && key === "c") {
+      event.preventDefault();
+      executeCommand("copy");
+    } else if ((event.ctrlKey || event.metaKey) && key === "v") {
+      event.preventDefault();
+      executeCommand("paste");
+    } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === "g") {
+      event.preventDefault();
+      executeCommand("ungroup");
+    } else if ((event.ctrlKey || event.metaKey) && key === "g") {
+      event.preventDefault();
+      executeCommand("group");
+    } else if (event.altKey && !event.ctrlKey && !event.metaKey && key === "h") {
+      event.preventDefault();
+      executeCommand(event.shiftKey ? "distributeX" : "alignCenterX");
+    } else if (event.altKey && !event.ctrlKey && !event.metaKey && key === "v") {
+      event.preventDefault();
+      executeCommand(event.shiftKey ? "distributeY" : "alignCenterY");
+    } else if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      executeCommand(
+        event.key === "ArrowLeft" ? "alignLeft"
+        : event.key === "ArrowRight" ? "alignRight"
+        : event.key === "ArrowUp" ? "alignTop"
+        : "alignBottom"
+      );
+    } else if (
+      (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "ArrowUp" || event.key === "ArrowDown")
+      && !event.ctrlKey && !event.metaKey && !event.altKey
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const step = event.shiftKey ? 10 : 1;
       const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
       const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
       nudgeSelected(dx, dy);
-    } else if ((event.ctrlKey || event.metaKey) && (event.key === "=" || event.key === "+")) {
+    } else if (event.key === "=" || event.key === "+") {
       event.preventDefault();
-      zoomBy(ZOOM_STEP);
-    } else if ((event.ctrlKey || event.metaKey) && event.key === "-") {
+      executeCommand("zoomIn");
+    } else if (event.key === "-") {
       event.preventDefault();
-      zoomBy(-ZOOM_STEP);
-    } else if ((event.ctrlKey || event.metaKey) && event.key === "0") {
+      executeCommand("zoomOut");
+    } else if (event.key === "0") {
       event.preventDefault();
-      setZoom(1);
+      executeCommand("fit");
+    } else if (event.key === "1") {
+      event.preventDefault();
+      executeCommand("actual");
     } else if (event.key === "Escape") {
-      cancelPick();
+      event.preventDefault();
+      const folderMenu = document.getElementById("customFolderMenu");
+      if (folderMenu && !folderMenu.hidden) {
+        closeFolderPicker();
+        return;
+      }
+      if (hideContextMenu()) return;
+      if (!cancelCanvasInteraction()) {
+        if (isPlaceTool()) setActiveTool("select");
+        else cancelPick();
+      }
+    }
+  }, true);
+  window.addEventListener("keyup", (event) => {
+    if (event.key === " ") {
+      state.spacePan = false;
+      document.getElementById("canvasShell")?.classList.remove("is-pan-ready");
     }
   });
 
@@ -3921,5 +7085,5 @@ function bindBuilding() {
 
 bootBuilding().catch((error) => {
   console.error(error);
-  alert("建筑设计桌启动失败：" + (error.message || error));
+  appAlert("建筑设计桌启动失败：" + (error.message || error), { title: "启动失败" });
 });

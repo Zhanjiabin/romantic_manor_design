@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parent
-from game_paths import GAME, TILE, BDESIGN_RES, BDESIGN_IMGS, MAPDESIGN
+from game_paths import GAME, TILE, BDESIGN_RES, BDESIGN_IMGS, RCITEM, MAPDESIGN
 WEB = ROOT / "web"
 DATA = ROOT / "data"
 PROBE_REFERENCE = ROOT / "data" / "probe_reference.jpg"
@@ -148,6 +148,16 @@ class Handler(SimpleHTTPRequestHandler):
             return self._ale_png(path[len("/ale-atlas/") :], crop=False)
         if path.startswith("/ale/"):
             return self._ale_png(path[len("/ale/") :])
+        if path.startswith("/item-ale/"):
+            try:
+                frame = max(0, int(query.get("f", ["0"])[0]))
+            except ValueError:
+                return self._send(400, b"invalid frame", "text/plain")
+            return self._item_ale_png(
+                path[len("/item-ale/") :],
+                frame,
+                thumb=query.get("thumb", ["0"])[0] in {"1", "true", "yes"},
+            )
         if path.startswith("/bdesign/ale/"):
             try:
                 frame = max(0, int(query.get("f", ["0"])[0]))
@@ -179,6 +189,15 @@ class Handler(SimpleHTTPRequestHandler):
 
                 build_catalog()
             return self._send(200, catalog.read_bytes(), "application/json; charset=utf-8")
+        if path == "/api/item-icons":
+            icons = DATA / "item_icons.json"
+            if not icons.is_file():
+                from tools.build_item_icons import main as build_item_icons
+
+                build_item_icons()
+            if not icons.is_file():
+                return self._send(404, b"missing item icons", "text/plain")
+            return self._send(200, icons.read_bytes(), "application/json; charset=utf-8")
         if path == "/api/sample-terrain":
             paper = GAME / "图代码" / "地形.txt"
             if not paper.is_file():
@@ -282,6 +301,33 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(400, str(e).encode("utf-8", errors="replace"), "text/plain; charset=utf-8")
         return self._send_png(png)
 
+    def _item_ale_png(self, name: str, frame: int = 0, thumb: bool = False):
+        clean = name.replace("\\", "/").lstrip("/")
+        if clean.lower().endswith(".png"):
+            clean = clean[:-4]
+        src = (RCITEM / clean).resolve()
+        root = RCITEM.resolve()
+        if not _is_under(src, root) or not src.is_file():
+            return self._send(404, b"missing", "text/plain")
+        suffix = src.suffix.lower()
+        if suffix in {".gif", ".png", ".jpg", ".jpeg"}:
+            return self._send(200, src.read_bytes(), _ctype(src), cache="public, max-age=604800, immutable")
+        if suffix != ".ale":
+            return self._send(404, b"missing", "text/plain")
+        cache_key = f"item:{rel_cache_key(src, root)}:frame={frame}:thumb={int(thumb)}"
+        try:
+            png = _png_cached(
+                cache_key,
+                lambda: dumps_png(src.read_bytes(), frame=frame, crop=False, trim=True),
+            )
+        except (AleError, OSError) as exc:
+            return self._send(
+                415,
+                str(exc).encode("utf-8", errors="replace"),
+                "text/plain; charset=utf-8",
+            )
+        return self._send_png(png)
+
     def _bdesign_ale_png(self, name: str, frame: int = 0, thumb: bool = False):
         clean = name.replace("\\", "/").lstrip("/")
         if clean.lower().endswith(".png"):
@@ -330,7 +376,14 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _file(self, path: Path, guess=False):
         path = path.resolve()
-        allowed = (TILE.resolve(), BDESIGN_RES.resolve(), BDESIGN_IMGS.resolve(), WEB.resolve(), DATA.resolve())
+        allowed = (
+            TILE.resolve(),
+            BDESIGN_RES.resolve(),
+            BDESIGN_IMGS.resolve(),
+            RCITEM.resolve(),
+            WEB.resolve(),
+            DATA.resolve(),
+        )
         if not any(_is_under(path, root) for root in allowed) or not path.is_file():
             return self._send(404, b"missing", "text/plain")
         data = path.read_bytes()
@@ -375,6 +428,10 @@ def main():
         from tools.build_kinds import main as build
 
         build()
+    if not (DATA / "item_icons.json").is_file():
+        from tools.build_item_icons import main as build_item_icons
+
+        build_item_icons()
     if not (DATA / "terrain_frames" / "f003.png").is_file() or not (DATA / "manor_exit_sign.png").is_file():
         from tools.export_assets import main as export_assets
 

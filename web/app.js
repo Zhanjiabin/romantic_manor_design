@@ -100,6 +100,7 @@ const state = {
   buildings: [],
   bldKind: "manor",
   buildingSource: null,
+  planOverlay: null,
   cam: { x: 0, y: 0, k: 1 },
   uiScale: 1,
   images: new Map(),
@@ -114,6 +115,8 @@ const state = {
   lastPaint: null,
   panning: false,
   panFrom: null,
+  buildingDrag: null,
+  planOverlayDrag: null,
   miniDrag: false,
   selectedBld: -1,
   history: [],
@@ -135,6 +138,8 @@ const state = {
 
 let view = document.getElementById("view");
 let ctx = view.getContext("2d");
+let imageTerrainDraft = null;
+let planOverlayDraft = null;
 
 async function boot() {
   document.documentElement.classList.add("boot-pending");
@@ -215,7 +220,7 @@ async function consumePendingBuildingImport() {
     const file = new File([bytes], payload.name || "建筑.txt", { type: "text/plain" });
     await importFile(file, "build");
   } catch (err) {
-    alert(err.message || String(err));
+    await appAlert(err.message || String(err), { title: "导入失败" });
   }
 }
 
@@ -1134,6 +1139,7 @@ function paintFrame() {
     ctx.drawImage(gridScreenCache, 0, 0);
     ctx.restore();
   }
+  drawPlanOverlay();
   if (document.getElementById("showBuild")?.checked && !state.strokeNeedsRebuild) {
     const order = state.buildings
       .map((b, i) => ({ b, i }))
@@ -3023,6 +3029,88 @@ function drawEdgeStrokes(cx, cy, tw, th, g, flags) {
   ctx.stroke();
 }
 
+function planOverlayDisplayRect(overlay = state.planOverlay) {
+  if (!overlay?.image) return null;
+  const k = state.cam.k;
+  const center = worldToScreen(overlay.x, overlay.y);
+  const halfWidth = Math.max(1, overlay.footprint[0]) * TILE_W * k / 2;
+  const halfHeight = Math.max(1, overlay.footprint[1]) * TILE_H * k / 2;
+  const naturalWidth = Math.max(1, overlay.image.naturalWidth || overlay.image.width || 1);
+  const naturalHeight = Math.max(1, overlay.image.naturalHeight || overlay.image.height || 1);
+  const width = overlay.nativePixels ? naturalWidth * k : halfWidth * 2;
+  const height = overlay.nativePixels
+    ? naturalHeight * k
+    : width * (naturalHeight / naturalWidth);
+  return {
+    center,
+    halfWidth,
+    halfHeight,
+    image: {
+      x: center.x - width / 2,
+      y: center.y + halfHeight - height,
+      width,
+      height,
+    },
+  };
+}
+
+function planOverlayHitScreen(x, y) {
+  const layout = planOverlayDisplayRect();
+  if (!layout || !document.getElementById("showPlanOverlay")?.checked) return false;
+  const r = layout.image;
+  return x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
+}
+
+function drawPlanOverlay() {
+  const overlay = state.planOverlay;
+  if (!overlay?.image || !document.getElementById("showPlanOverlay")?.checked) return;
+  const k = state.cam.k;
+  const layout = planOverlayDisplayRect(overlay);
+  const { center, halfWidth, halfHeight } = layout;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(center.x, center.y - halfHeight);
+  ctx.lineTo(center.x + halfWidth, center.y);
+  ctx.lineTo(center.x, center.y + halfHeight);
+  ctx.lineTo(center.x - halfWidth, center.y);
+  ctx.closePath();
+  const showFoundation = document.getElementById("showPlanFoundation")?.checked;
+  if (showFoundation) {
+    ctx.fillStyle = "rgba(242, 226, 151, 0.24)";
+    ctx.fill();
+  }
+  ctx.drawImage(
+    overlay.image,
+    layout.image.x,
+    layout.image.y,
+    layout.image.width,
+    layout.image.height
+  );
+  if (showFoundation) {
+    ctx.strokeStyle = "rgba(255, 226, 85, 0.9)";
+    ctx.lineWidth = Math.max(1, k);
+    ctx.setLineDash([6, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+function resolveManorBase(item) {
+  const raw = Math.max(0, Math.round(Number(item) || 0));
+  const bases = state.kinds?.bases || [];
+  const direct = bases.find((base) => Number(base.no) === raw);
+  if (direct) {
+    return { base: direct, baseNo: Number(direct.no), instanceId: 0 };
+  }
+  const baseNo = raw >= 1_000_000 ? Math.floor(raw / 1_000_000) : raw;
+  return {
+    base: bases.find((base) => Number(base.no) === baseNo) || null,
+    baseNo,
+    instanceId: raw >= 1_000_000 ? raw % 1_000_000 : 0,
+  };
+}
+
 function drawBuilding(b, sel) {
   const [fw, fh] = footprintOf(b);
   const origin = worldToScreen(b.x, b.y);
@@ -3033,20 +3121,21 @@ function drawBuilding(b, sel) {
     ctx.fillRect(origin.x, origin.y, Math.max(2, cs * fw), Math.max(2, cs * fh));
     return;
   }
-  const base = (state.kinds.bases || []).find((x) => x.no === b.item);
+  const resolved = resolveManorBase(b.item);
+  const base = resolved.base;
   const src = baseImageSrc(base);
   if (src) preload(src);
   const im = src ? state.images.get(src) : null;
   const k = state.cam.k;
   if (im?.complete && im.naturalWidth) {
-    const cx = base?.cx || im.naturalWidth / 2;
-    const cy = base?.cy || im.naturalHeight;
+    const spriteWidth = im.naturalWidth * k;
+    const spriteHeight = im.naturalHeight * k;
     ctx.drawImage(
       im,
-      Math.round(p.x - cx * k),
-      Math.round(p.y - cy * k),
-      Math.round(im.naturalWidth * k),
-      Math.round(im.naturalHeight * k)
+      Math.round(p.x - spriteWidth / 2),
+      Math.round(p.y - spriteHeight / 2),
+      Math.round(spriteWidth),
+      Math.round(spriteHeight)
     );
   } else {
     const hw = (fw * TILE_W * k) / 2;
@@ -3078,7 +3167,8 @@ function drawBuilding(b, sel) {
   }
   ctx.fillStyle = "#f3ead8";
   ctx.font = "11px Microsoft YaHei";
-  ctx.fillText((base ? base.name : "物品") + " " + (b.item || b.mat || ""), p.x - 24, p.y);
+  const label = base ? base.name : `未知户型 ${resolved.baseNo || "?"}`;
+  ctx.fillText(`${label} ${b.item || b.mat || ""}`, p.x - 24, p.y);
 }
 
 function drawMapBound() {
@@ -3232,7 +3322,7 @@ function paintGrid(gctx) {
 
 function footprintOf(b) {
   if (b.footprint) return b.footprint;
-  const base = (state.kinds.bases || []).find((x) => x.no === b.item);
+  const base = resolveManorBase(b.item).base;
   return base ? base.footprint : [3, 3];
 }
 
@@ -4318,8 +4408,40 @@ function bind() {
   wireClick("btnSaveTerr", exportTerrain);
   wireClick("btnSavePng", exportTerrainPng);
   wireClick("btnSaveBld", exportBuild);
+  wireClick("btnImageTerrain", () => document.getElementById("fileImageTerrain").click());
+  document.getElementById("fileImageTerrain").onchange = async (event) => {
+    if (event.target.files[0]) {
+      try {
+        await openImageTerrain(event.target.files[0]);
+      } catch (error) {
+        await appAlert(error.message || String(error), { title: "图片导入失败" });
+      }
+    }
+    event.target.value = "";
+  };
+  document.getElementById("imageTerrainWidth").onchange = renderImageTerrainMapping;
+  document.getElementById("imageTerrainHeight").onchange = renderImageTerrainMapping;
+  document.getElementById("imageTerrainColors").onchange = renderImageTerrainMapping;
+  document.getElementById("imageTerrainFit").onchange = renderImageTerrainMapping;
+  document.getElementById("imageTerrainAlpha").onchange = renderImageTerrainMapping;
+  wireClick("btnApplyImageTerrain", applyImageTerrain);
+  wireClick("btnPlanOverlay", () => document.getElementById("filePlanOverlay").click());
+  document.getElementById("filePlanOverlay").onchange = async (event) => {
+    if (event.target.files[0]) {
+      try {
+        await openPlanOverlay(event.target.files[0]);
+      } catch (error) {
+        await appAlert(error.message || String(error), { title: "规划图导入失败" });
+      }
+    }
+    event.target.value = "";
+  };
+  wireClick("btnApplyPlanOverlay", applyPlanOverlay);
+  wireClick("btnRemovePlanOverlay", removePlanOverlay);
   document.getElementById("showGrid").onchange = draw;
   document.getElementById("showBuild").onchange = draw;
+  document.getElementById("showPlanOverlay").onchange = draw;
+  document.getElementById("showPlanFoundation").onchange = draw;
   document.querySelectorAll("#modeRow .tool").forEach((btn) => {
     btn.onclick = () => setPaintMode(btn.dataset.mode || "brush");
   });
@@ -4546,10 +4668,34 @@ function onDown(e) {
   }
   if (e.button === 0) {
     if (state.portal.held) return;
+    if (state.layer === "build" && planOverlayHitScreen(x, y)) {
+      state.planOverlayDrag = {
+        grabX: w.x - state.planOverlay.x,
+        grabY: w.y - state.planOverlay.y,
+      };
+      return;
+    }
     if (state.paintMode === "pan") {
       state.panning = true;
       state.panFrom = { x: e.clientX, y: e.clientY, cx: state.cam.x, cy: state.cam.y };
       return;
+    }
+    if (state.layer === "build" && !wantsErase(e)) {
+      const hit = hitBuilding(w.x, w.y);
+      if (hit >= 0) {
+        const building = state.buildings[hit];
+        state.selectedBld = hit;
+        state.buildingDrag = {
+          index: hit,
+          grabX: w.x - building.x,
+          grabY: w.y - building.y,
+          saved: false,
+        };
+        document.getElementById("itemId").value = building.item || 0;
+        document.getElementById("itemDir").value = building.dir || 0;
+        draw();
+        return;
+      }
     }
     if (portalHitScreen(x, y)) {
       state.portal.held = true;
@@ -4590,6 +4736,27 @@ function onMove(e) {
   const w = screenToWorld(x, y);
   const coord = document.getElementById("coord");
   if (coord) coord.textContent = Math.round(w.x) + ", " + Math.round(w.y);
+  if (state.planOverlayDrag && state.planOverlay) {
+    state.planOverlay.x = Math.max(0, Math.min(worldExtent(), snap(w.x - state.planOverlayDrag.grabX)));
+    state.planOverlay.y = Math.max(0, Math.min(worldExtent(), snap(w.y - state.planOverlayDrag.grabY)));
+    draw();
+    return;
+  }
+  if (state.buildingDrag) {
+    const building = state.buildings[state.buildingDrag.index];
+    if (!building) {
+      state.buildingDrag = null;
+      return;
+    }
+    if (!state.buildingDrag.saved) {
+      pushHist();
+      state.buildingDrag.saved = true;
+    }
+    building.x = Math.max(0, Math.min(worldExtent(), snap(w.x - state.buildingDrag.grabX)));
+    building.y = Math.max(0, Math.min(worldExtent(), snap(w.y - state.buildingDrag.grabY)));
+    draw();
+    return;
+  }
   if (state.portal.held) {
     const p = clampPortal(w.x - state.portal.grabX, w.y - state.portal.grabY);
     state.portal.x = p.x;
@@ -4623,6 +4790,9 @@ function onMove(e) {
 }
 
 function onUp(e) {
+  if (state.buildingDrag?.saved) markDirty();
+  state.buildingDrag = null;
+  state.planOverlayDrag = null;
   if (state.dragging && state.layer === "terrain" && isShapeTool(state.tool) && state.shapeDrag) {
     const d = state.shapeDrag;
     const cells = collectShapeCells(state.tool, d.u0, d.v0, d.u1, d.v1, {
@@ -4661,6 +4831,7 @@ function onWheel(e) {
 }
 
 function onKey(e) {
+  if (typeof isAppDialogOpen === "function" && isAppDialogOpen()) return;
   if (e.target && ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
   if ((e.key === "z" || e.key === "Z") && (e.ctrlKey || e.metaKey) && e.shiftKey) {
     e.preventDefault();
@@ -4727,7 +4898,7 @@ function onKey(e) {
   }
 }
 
-function applyTerrain(doc, quiet) {
+async function applyTerrain(doc, quiet) {
   pushHist();
   state.stamps = doc.stamps || [];
   state.grassKeep = new Set();
@@ -4750,14 +4921,150 @@ function applyTerrain(doc, quiet) {
   draw();
   if (quiet) return;
   const unk = state.unknown.size ? "；未对照种类 " + [...state.unknown].join(" ") : "";
-  alert(
+  await appAlert(
     "已导入 " +
       state.stamps.length +
       " 笔地形，面积 " +
       doc.size +
       unk +
-      "。已按原版四角地形网格重放笔刷并合成过渡。"
+      "。已按原版四角地形网格重放笔刷并合成过渡。",
+    { title: "导入完成" }
   );
+}
+
+let buildingPreviewCatalogPromise = null;
+
+function ensureBuildingPreviewCatalog() {
+  if (!buildingPreviewCatalogPromise) {
+    buildingPreviewCatalogPromise = Promise.all([
+      fetch("/api/editor-catalog").then((response) => response.json()),
+      fetch("/data/building_pack_uids.json").then((response) => response.json()),
+    ]).then(([catalog, packUids]) => ({
+      catalog,
+      packUids: packUids.mapping || {},
+      packs: new Map((catalog.building?.packs || []).map((pack) => [pack.key, pack])),
+    }));
+  }
+  return buildingPreviewCatalogPromise;
+}
+
+function deskPreviewComponent(mat, previewCatalog, localPackKey = "") {
+  const value = Number(mat) || 0;
+  const local = value < 1000 ? value : value % 1000;
+  const packKey =
+    value < 1000
+      ? localPackKey
+      : previewCatalog.packUids[String(Math.floor(value / 1000))];
+  const pack = previewCatalog.packs.get(packKey);
+  if (!pack) return null;
+  const component = (pack.components || []).find(
+    (row) => row.kind === "sprite" && Number(row.id) === local
+  );
+  return component ? { component, pack } : null;
+}
+
+function deskPreviewSpriteUrl(component, pack, frame) {
+  if (!component?.file || !pack) return "";
+  const path = component.file.split("/").map(encodeURIComponent).join("/");
+  const frameCount = Math.max(1, Number(component.asset?.frames) || 1);
+  const face = Math.max(0, Number(frame) || 0) % frameCount;
+  return `/bdesign/ale/${pack.kind === "item" ? "item" : "res"}/${encodeURIComponent(pack.key)}/${path}.png?f=${face}`;
+}
+
+function loadStandaloneImage(src) {
+  return new Promise((resolve) => {
+    if (!src) {
+      resolve(null);
+      return;
+    }
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+}
+
+async function openDeskBuildingCode(doc, fileName) {
+  const previewCatalog = await ensureBuildingPreviewCatalog();
+  const unresolved = [];
+  const rows = (doc.records || [])
+    .filter((record) => Number(record.mat) && Number(record.x) < 32000 && Number(record.y) < 32000)
+    .map((record) => {
+      const solved = deskPreviewComponent(record.mat, previewCatalog);
+      if (!solved) unresolved.push(Number(record.mat) || 0);
+      return { record, solved };
+    });
+  const rendered = await Promise.all(
+    rows.map(async (row) => ({
+      ...row,
+      image: row.solved
+        ? await loadStandaloneImage(
+            deskPreviewSpriteUrl(
+              row.solved.component,
+              row.solved.pack,
+              row.record.state ?? row.record.flip ?? 0
+            )
+          )
+        : null,
+    }))
+  );
+  const visible = rendered.filter((row) => row.image?.naturalWidth);
+  const pad = 4;
+  const sheet = document.createElement("canvas");
+  const sheetContext = sheet.getContext("2d");
+  if (visible.length) {
+    const left = Math.min(...visible.map((row) => Number(row.record.x) || 0));
+    const top = Math.min(...visible.map((row) => Number(row.record.y) || 0));
+    const right = Math.max(
+      ...visible.map((row) => (Number(row.record.x) || 0) + row.image.naturalWidth)
+    );
+    const bottom = Math.max(
+      ...visible.map((row) => (Number(row.record.y) || 0) + row.image.naturalHeight)
+    );
+    sheet.width = Math.max(1, Math.ceil(right - left) + pad * 2);
+    sheet.height = Math.max(1, Math.ceil(bottom - top) + pad * 2);
+    visible.forEach((row) => {
+      sheetContext.drawImage(
+        row.image,
+        Math.round((Number(row.record.x) || 0) - left + pad),
+        Math.round((Number(row.record.y) || 0) - top + pad)
+      );
+    });
+  } else {
+    sheet.width = 320;
+    sheet.height = 180;
+    sheetContext.fillStyle = "#25482f";
+    sheetContext.fillRect(0, 0, sheet.width, sheet.height);
+    sheetContext.fillStyle = "#eef5ea";
+    sheetContext.font = "14px Microsoft YaHei";
+    sheetContext.textAlign = "center";
+    sheetContext.fillText("没有可解析的带 UID 素材", sheet.width / 2, sheet.height / 2);
+  }
+  planOverlayDraft = {
+    image: sheet,
+    name: fileName,
+    sourceKind: "code",
+    codeDocument: doc,
+    nativePixels: true,
+    resolved: visible.length,
+    unresolved: unresolved.length,
+  };
+  const preview = document.getElementById("planOverlayPreview");
+  if (preview) preview.src = sheet.toDataURL("image/png");
+  const title = document.querySelector("#dlgPlanOverlay .modal-cap span");
+  if (title) title.textContent = "导入建筑代码";
+  const info = document.getElementById("planOverlayInfo");
+  if (info) {
+    info.textContent =
+      `已真实渲染 ${visible.length} 件素材` +
+      (unresolved.length
+        ? `，${unresolved.length} 件因 UID 或本地素材缺失未渲染。`
+        : "，全部素材均已解析");
+  }
+  document.getElementById("planOverlayWidth").value = "11";
+  document.getElementById("planOverlayHeight").value = "11";
+  document.getElementById("btnApplyPlanOverlay").disabled = visible.length === 0;
+  showDlg("dlgPlanOverlay", true);
 }
 
 async function importFile(file, expect) {
@@ -4766,13 +5073,17 @@ async function importFile(file, expect) {
     if (expect === "terrain") {
       const res = await fetch("/api/parse-terrain", { method: "POST", body: buf });
       if (!res.ok) throw new Error("地形图纸解析失败 (" + res.status + ")");
-      applyTerrain(await res.json(), false);
+      await applyTerrain(await res.json(), false);
       return;
     }
     if (expect === "build") {
-      const res = await fetch("/api/parse-manor", { method: "POST", body: buf });
-      if (!res.ok) throw new Error("庄园摆放图纸解析失败 (" + res.status + ")");
+      const res = await fetch("/api/parse-building", { method: "POST", body: buf });
+      if (!res.ok) throw new Error("建筑图纸解析失败 (" + res.status + ")");
       const doc = await res.json();
+      if (doc.kind === "desk") {
+        await openDeskBuildingCode(doc, file.name);
+        return;
+      }
       pushHist();
       state.bldKind = doc.kind;
       state.buildingSource = doc._source || null;
@@ -4780,13 +5091,388 @@ async function importFile(file, expect) {
       state.buildings.forEach((b) => rememberItem(b.item || b.mat));
       markDirty();
       draw();
-      alert("已导入建筑 " + state.buildings.length + " 个（" + doc.kind + "）");
+      await appAlert("已导入建筑 " + state.buildings.length + " 个（" + doc.kind + "）", { title: "导入完成" });
       return;
     }
-    alert("无法识别图纸格式。");
+    await appAlert("无法识别图纸格式。", { title: "导入失败" });
   } catch (err) {
-    alert(err.message || String(err));
+    await appAlert(err.message || String(err), { title: "导入失败" });
   }
+}
+
+function pixelTerrainBrushes() {
+  return sortBrushesFlat(state.kinds.brushes || []).filter(
+    (brush) => Number(brush.stampSize || 1) === 1 && paperKindOfBrush(brush)
+  );
+}
+
+function sampleImageTerrain() {
+  if (!imageTerrainDraft?.image) return null;
+  const width = Math.max(1, Math.min(96, Number(document.getElementById("imageTerrainWidth")?.value) || 1));
+  const height = Math.max(1, Math.min(96, Number(document.getElementById("imageTerrainHeight")?.value) || 1));
+  const scratch = document.createElement("canvas");
+  scratch.width = width;
+  scratch.height = height;
+  const g = scratch.getContext("2d", { willReadFrequently: true });
+  g.clearRect(0, 0, width, height);
+  g.imageSmoothingEnabled = true;
+  if (g.imageSmoothingQuality) g.imageSmoothingQuality = "high";
+  const image = imageTerrainDraft.image;
+  const fit = document.getElementById("imageTerrainFit")?.value || "contain";
+  if (fit === "stretch") {
+    g.drawImage(image, 0, 0, width, height);
+  } else {
+    const scale =
+      fit === "cover"
+        ? Math.max(width / image.naturalWidth, height / image.naturalHeight)
+        : Math.min(width / image.naturalWidth, height / image.naturalHeight);
+    const drawWidth = image.naturalWidth * scale;
+    const drawHeight = image.naturalHeight * scale;
+    g.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  }
+  const pixels = g.getImageData(0, 0, width, height).data;
+  return { width, height, pixels, scratch };
+}
+
+function rgbToLab(r, g, b) {
+  const linear = (value) => {
+    const n = value / 255;
+    return n <= 0.04045 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+  };
+  const lr = linear(r);
+  const lg = linear(g);
+  const lb = linear(b);
+  const x = (lr * 0.4124 + lg * 0.3576 + lb * 0.1805) / 0.95047;
+  const y = lr * 0.2126 + lg * 0.7152 + lb * 0.0722;
+  const z = (lr * 0.0193 + lg * 0.1192 + lb * 0.9505) / 1.08883;
+  const curve = (value) =>
+    value > 0.008856 ? Math.cbrt(value) : 7.787 * value + 16 / 116;
+  const fx = curve(x);
+  const fy = curve(y);
+  const fz = curve(z);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+
+function labDistance(a, b) {
+  const dl = a[0] - b[0];
+  const da = a[1] - b[1];
+  const db = a[2] - b[2];
+  return dl * dl + da * da + db * db;
+}
+
+function clusteredImagePalette(pixels, requested, alphaThreshold) {
+  const buckets = new Map();
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i + 3] < alphaThreshold) continue;
+    const rgb = [pixels[i], pixels[i + 1], pixels[i + 2]];
+    const key = rgb.join(",");
+    let entry = buckets.get(key);
+    if (!entry) {
+      entry = { rgb, lab: rgbToLab(...rgb), count: 0 };
+      buckets.set(key, entry);
+    }
+    entry.count += 1;
+  }
+  const samples = [...buckets.values()];
+  if (!samples.length) return [];
+  const count = Math.max(1, Math.min(requested, samples.length));
+  const centers = [samples.reduce((best, row) => (row.count > best.count ? row : best), samples[0])];
+  while (centers.length < count) {
+    let pick = null;
+    let score = -1;
+    samples.forEach((sample) => {
+      const distance = Math.min(...centers.map((center) => labDistance(sample.lab, center.lab)));
+      const next = distance * Math.sqrt(sample.count);
+      if (next > score) {
+        score = next;
+        pick = sample;
+      }
+    });
+    centers.push(pick);
+  }
+  let palette = centers.map((center) => ({ rgb: center.rgb.slice(), lab: center.lab.slice(), count: 0 }));
+  for (let iteration = 0; iteration < 10; iteration++) {
+    const sums = palette.map(() => ({ rgb: [0, 0, 0], count: 0 }));
+    samples.forEach((sample) => {
+      let best = 0;
+      let distance = Infinity;
+      palette.forEach((center, index) => {
+        const next = labDistance(sample.lab, center.lab);
+        if (next < distance) {
+          distance = next;
+          best = index;
+        }
+      });
+      const sum = sums[best];
+      sum.count += sample.count;
+      for (let channel = 0; channel < 3; channel++) {
+        sum.rgb[channel] += sample.rgb[channel] * sample.count;
+      }
+    });
+    palette = palette.map((center, index) => {
+      const sum = sums[index];
+      if (!sum.count) return center;
+      const rgb = sum.rgb.map((value) => Math.round(value / sum.count));
+      return { rgb, lab: rgbToLab(...rgb), count: sum.count };
+    });
+  }
+  return palette.sort((a, b) => b.count - a.count);
+}
+
+function imageTerrainLogicalPoint(px, py, width, height, center, projection) {
+  const imageX = px - Math.floor(width / 2);
+  const imageY = py - Math.floor(height / 2);
+  if (projection === "iso") {
+    return { u: center.u + imageX, v: center.v + imageY };
+  }
+  const anchor = logicalToNative(center.u, center.v);
+  return uvFromColRow(anchor.col + imageX, anchor.row + imageY);
+}
+
+function suggestedPixelBrushIndex(rgb, brushes) {
+  const [r, g, b] = rgb;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let type = "土地";
+  if (max - min < 34) type = max > 205 ? "雪地" : "砖地";
+  else if (b > r * 1.15 && b > g * 1.08) type = "水面";
+  else if (g > r * 1.08 && g > b * 1.06) type = "草地";
+  else if (r > 170 && b > 110 && g < r * 0.88) type = "花丛";
+  else if (r > 190 && g > 160 && b < 130) type = "土地";
+  const index = brushes.findIndex((brush) => brushPaletteType(brush) === type);
+  return Math.max(0, index);
+}
+
+function renderImageTerrainMapping() {
+  const sampled = sampleImageTerrain();
+  const preview = document.getElementById("imageTerrainPreview");
+  const mapping = document.getElementById("imageColorMap");
+  if (!sampled || !preview || !mapping) return;
+  const alphaThreshold = Math.max(
+    0,
+    Math.min(255, Number(document.getElementById("imageTerrainAlpha")?.value) || 0)
+  );
+  const colorCount = Math.max(
+    2,
+    Math.min(16, Number(document.getElementById("imageTerrainColors")?.value) || 8)
+  );
+  const palette = clusteredImagePalette(sampled.pixels, colorCount, alphaThreshold);
+  const previewPixels = new Uint8ClampedArray(sampled.pixels);
+  for (let i = 0; i < previewPixels.length; i += 4) {
+    if (previewPixels[i + 3] < alphaThreshold || !palette.length) continue;
+    const index = nearestImagePaletteIndex(
+      previewPixels[i],
+      previewPixels[i + 1],
+      previewPixels[i + 2],
+      palette
+    );
+    previewPixels[i] = palette[index].rgb[0];
+    previewPixels[i + 1] = palette[index].rgb[1];
+    previewPixels[i + 2] = palette[index].rgb[2];
+  }
+  preview.width = sampled.width;
+  preview.height = sampled.height;
+  preview.getContext("2d").putImageData(
+    new ImageData(previewPixels, sampled.width, sampled.height),
+    0,
+    0
+  );
+  const brushes = pixelTerrainBrushes();
+  imageTerrainDraft.sampled = sampled;
+  imageTerrainDraft.palette = palette;
+  mapping.replaceChildren();
+  palette.forEach((entry, paletteIndex) => {
+    const row = document.createElement("label");
+    row.className = "image-color-row";
+    const swatch = document.createElement("span");
+    swatch.className = "image-color-swatch";
+    swatch.style.background = `rgb(${entry.rgb.join(",")})`;
+    const select = document.createElement("select");
+    select.className = "input";
+    select.dataset.paletteIndex = String(paletteIndex);
+    const skip = document.createElement("option");
+    skip.value = "-1";
+    skip.textContent = "跳过（保留原地形）";
+    select.appendChild(skip);
+    brushes.forEach((brush, brushIndex) => {
+      const option = document.createElement("option");
+      option.value = String(brushIndex);
+      option.textContent = `${brushPaletteType(brush)} · ${brushDisplayName(brush)}`;
+      select.appendChild(option);
+    });
+    select.value = String(suggestedPixelBrushIndex(entry.rgb, brushes));
+    const count = document.createElement("small");
+    count.textContent = `${entry.count} 像素`;
+    row.append(swatch, select, count);
+    mapping.appendChild(row);
+  });
+}
+
+function nearestImagePaletteIndex(r, g, b, palette) {
+  const lab = rgbToLab(r, g, b);
+  let best = 0;
+  let distance = Infinity;
+  palette.forEach((entry, index) => {
+    const next = labDistance(lab, entry.lab || rgbToLab(...entry.rgb));
+    if (next < distance) {
+      distance = next;
+      best = index;
+    }
+  });
+  return best;
+}
+
+async function openImageTerrain(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const next = new Image();
+      next.onload = () => resolve(next);
+      next.onerror = () => reject(new Error("图片读取失败"));
+      next.src = url;
+    });
+    imageTerrainDraft = { image, name: file.name, sampled: null, palette: [] };
+    const maxCells = Math.max(1, Math.min(96, Math.floor(state.mapSize / SNAP)));
+    const scale = Math.min(1, maxCells / Math.max(image.naturalWidth, image.naturalHeight));
+    document.getElementById("imageTerrainWidth").value = String(
+      Math.max(1, Math.round(image.naturalWidth * scale))
+    );
+    document.getElementById("imageTerrainHeight").value = String(
+      Math.max(1, Math.round(image.naturalHeight * scale))
+    );
+    renderImageTerrainMapping();
+    showDlg("dlgImageTerrain", true);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function applyImageTerrain() {
+  const draft = imageTerrainDraft;
+  if (!draft?.sampled || !draft.palette.length) return;
+  const brushes = pixelTerrainBrushes();
+  const chosen = [...document.querySelectorAll("#imageColorMap select")].map(
+    (select) => brushes[Number(select.value) || 0]
+  );
+  const { width, height, pixels } = draft.sampled;
+  const center = nativePointToLogical(state.mapSize / 2, state.mapSize / 2);
+  const projection = document.getElementById("imageTerrainProjection")?.value || "front";
+  const alphaThreshold = Math.max(
+    0,
+    Math.min(255, Number(document.getElementById("imageTerrainAlpha")?.value) || 0)
+  );
+  const cells = [];
+  for (let py = 0; py < height; py++) {
+    for (let px = 0; px < width; px++) {
+      const offset = (py * width + px) * 4;
+      if (pixels[offset + 3] < alphaThreshold) continue;
+      const paletteIndex = nearestImagePaletteIndex(
+        pixels[offset],
+        pixels[offset + 1],
+        pixels[offset + 2],
+        draft.palette
+      );
+      const brush = chosen[paletteIndex];
+      const logical = imageTerrainLogicalPoint(px, py, width, height, center, projection);
+      if (!brush || !logical || !logicalInMap(logical.u, logical.v)) continue;
+      cells.push({ u: logical.u, v: logical.v, brush });
+    }
+  }
+  if (!cells.length) return;
+  pushHist();
+  if (document.getElementById("imageTerrainReplace")?.checked) {
+    state.stamps = [];
+    state.grassKeep = new Set();
+  }
+  const keys = new Set(cells.map((cell) => cellKey(cell.u, cell.v)));
+  state.stamps = state.stamps.filter((stamp) => {
+    const logical = nativePointToLogical(stamp.x, stamp.y);
+    return !keys.has(cellKey(logical.u, logical.v));
+  });
+  const baseCells = [];
+  const paintedCells = [];
+  cells.forEach((cell) => {
+    if (brushPaintsBase(cell.brush)) {
+      baseCells.push(cell);
+      return;
+    }
+    const pos = logicalToNative(cell.u, cell.v);
+    state.stamps.push({ kind: paperKindOfBrush(cell.brush), x: pos.cx, y: pos.cy });
+    paintedCells.push(cell);
+  });
+  markGrassKeep(baseCells, true);
+  markGrassKeep(paintedCells, false);
+  rebuildStampIndex();
+  markDirty();
+  showDlg("dlgImageTerrain", false);
+  draw();
+}
+
+async function openPlanOverlay(file) {
+  if (planOverlayDraft?.url) URL.revokeObjectURL(planOverlayDraft.url);
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const next = new Image();
+      next.onload = () => resolve(next);
+      next.onerror = () => reject(new Error("建筑预览图读取失败"));
+      next.src = url;
+    });
+    planOverlayDraft = { image, name: file.name, url };
+    const preview = document.getElementById("planOverlayPreview");
+    if (preview) preview.src = url;
+    const title = document.querySelector("#dlgPlanOverlay .modal-cap span");
+    if (title) title.textContent = "导入建筑图片";
+    const info = document.getElementById("planOverlayInfo");
+    if (info) info.textContent = "原图会保持宽高比例；占地与图片本身分开显示。";
+    document.getElementById("btnApplyPlanOverlay").disabled = false;
+    showDlg("dlgPlanOverlay", true);
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
+}
+
+function updatePlanOverlayMeta() {
+  const meta = document.getElementById("planOverlayMeta");
+  const label = document.getElementById("planOverlayFootprint");
+  const overlay = state.planOverlay;
+  if (meta) meta.hidden = !overlay;
+  if (label && overlay) {
+    const type = overlay.sourceKind === "code" ? "建筑代码" : "建筑图片";
+    label.textContent =
+      `${type} · 占地 ${overlay.footprint[0]}×${overlay.footprint[1]} · ` +
+      `${overlay.footprint[0] * overlay.footprint[1]} 格 · 直接拖动建筑可移动`;
+  }
+}
+
+function applyPlanOverlay() {
+  if (!planOverlayDraft?.image) return;
+  const width = Math.max(1, Math.min(64, Number(document.getElementById("planOverlayWidth")?.value) || 1));
+  const height = Math.max(1, Math.min(64, Number(document.getElementById("planOverlayHeight")?.value) || 1));
+  const center = screenToWorld(view.width / 2, view.height / 2);
+  state.planOverlay = {
+    ...planOverlayDraft,
+    x: snap(center.x),
+    y: snap(center.y),
+    footprint: [width, height],
+  };
+  const showOverlay = document.getElementById("showPlanOverlay");
+  if (showOverlay) showOverlay.checked = true;
+  setLayer("build");
+  showDlg("dlgPlanOverlay", false);
+  updatePlanOverlayMeta();
+  draw();
+}
+
+function removePlanOverlay() {
+  if (planOverlayDraft?.url) URL.revokeObjectURL(planOverlayDraft.url);
+  state.planOverlay = null;
+  planOverlayDraft = null;
+  const preview = document.getElementById("planOverlayPreview");
+  if (preview) preview.removeAttribute("src");
+  updatePlanOverlayMeta();
+  draw();
 }
 
 function ensureSize(n) {
@@ -4876,7 +5562,7 @@ async function exportTerrainPng() {
     out.width = w;
     out.height = h;
   } catch (err) {
-    alert("图片太大，无法导出。");
+    await appAlert("图片太大，无法导出。", { title: "导出失败" });
     return;
   }
   setSaveStatus("正在导出图片…");
@@ -4908,7 +5594,7 @@ async function exportTerrainPng() {
     gridScreenKey = "";
     terrainScreenKey = "";
     setSaveStatus("导出失败");
-    alert("导出图片失败。");
+    await appAlert("导出图片失败。", { title: "导出失败" });
     draw();
     return;
   }
@@ -4916,13 +5602,9 @@ async function exportTerrainPng() {
   gridScreenKey = "";
   terrainScreenKey = "";
   const filename = exportFileName("map.png");
-  await new Promise((resolve) => {
-    out.toBlob((blob) => {
-      if (blob) fallbackDownload(blob, filename);
-      else alert("导出图片失败。");
-      resolve();
-    }, "image/png");
-  });
+  const blob = await new Promise((resolve) => out.toBlob(resolve, "image/png"));
+  if (blob) fallbackDownload(blob, filename);
+  else await appAlert("导出图片失败。", { title: "导出失败" });
   setSaveStatus("已导出 " + filename);
   draw();
 }
@@ -4954,7 +5636,9 @@ function downloadGbk(text, filename) {
 async function exportTerrain() {
   const paper = state.stamps.filter((s) => s.kind && s.kind.charAt(0) !== "@");
   if (!paper.length && state.stamps.length) {
-    alert("当前预览里有商店图纸里没有的地块，导出时会跳过它们。请先用右侧列表里的地形刷一遍，再生成图纸。");
+    await appAlert("当前预览里有商店图纸里没有的地块，导出时会跳过它们。请先用右侧列表里的地形刷一遍，再生成图纸。", {
+      title: "无法导出",
+    });
     return;
   }
   const text = formatTerrain(paper, state.mapSize, state.mapflag);
@@ -4976,12 +5660,12 @@ async function exportTerrain() {
   }
   if (!isGbkTemplate(bytes)) bytes = toGbkBytes(text);
   if (!isGbkTemplate(bytes)) {
-    alert("导出失败：文件头不是 GBK 的「模板=」，游戏会拒收。");
+    await appAlert("导出失败：文件头不是 GBK 的「模板=」，游戏会拒收。", { title: "导出失败" });
     return;
   }
   const filename = exportFileName("map.txt");
   downloadBytes(bytes, filename);
-  alert(
+  await appAlert(
     "已导出 " +
       filename +
       "（GBK，" +
@@ -4990,7 +5674,8 @@ async function exportTerrain() {
       state.mapSize +
       "）。游戏设计桌当前面积必须是 " +
       state.mapSize +
-      " 才能导入；种类按游戏图纸用室内地块码（如 F/H）。"
+      " 才能导入；种类按游戏图纸用室内地块码（如 F/H）。",
+    { title: "导出完成" }
   );
 }
 

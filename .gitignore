@@ -5,6 +5,8 @@ __pycache__/
 .cursor/*
 !.cursor/rules/
 !.cursor/rules/**
+!.cursor/skills/
+!.cursor/skills/**
 .vscode/
 .idea/
 Thumbs.db
@@ -28,4 +30,6 @@ data/_mask_polarity.txt
 data/terrain_probe_metrics.json
 data/_*.png
 data/_*.jpg
+data/_cab_tmp/
+web/_debug*
 web/_debug*

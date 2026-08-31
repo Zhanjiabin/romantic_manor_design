@@ -1,0 +1,852 @@
+{
+  "schema": 1,
+  "source": "sourceCode/leo/rcitem/itemdef.tab icon",
+  "native": "GItemShow.SetAsInt(mat.id) in builddesign.cfg RefreshNeed/RefreshCurNeed",
+  "count": 210,
+  "missingCount": 1,
+  "missing": [
+    "窗部件03"
+  ],
+  "icons": {
+    "Q版主题部件01": {
+      "file": "item/主题部件.ale",
+      "frame": 5
+    },
+    "Q版主题部件02": {
+      "file": "item/主题部件.ale",
+      "frame": 6
+    },
+    "Q版主题部件03": {
+      "file": "item/主题部件.ale",
+      "frame": 7
+    },
+    "一流祝福木材": {
+      "file": "item/产品.ale",
+      "frame": 178
+    },
+    "一流祝福竹材": {
+      "file": "item/产品.ale",
+      "frame": 168
+    },
+    "七彩宝石": {
+      "file": "item/代币建材.ale",
+      "frame": 0
+    },
+    "三叶草": {
+      "file": "plant/flower/normal/s1/after/三叶草.ale",
+      "frame": 0
+    },
+    "不良牛皮": {
+      "file": "item/产品.ale",
+      "frame": 50
+    },
+    "不良牛皮革": {
+      "file": "item/产品.ale",
+      "frame": 88
+    },
+    "中国风主题部件01": {
+      "file": "item/主题部件.ale",
+      "frame": 30
+    },
+    "中级祝福亚麻": {
+      "file": "plant/crop/pray/s2/after/祝福亚麻.ale",
+      "frame": 0
+    },
+    "中级祝福塑料": {
+      "file": "item/新增物品.ale",
+      "frame": 21
+    },
+    "中级祝福塑胶": {
+      "file": "item/产品.ale",
+      "frame": 107
+    },
+    "中级祝福帆布": {
+      "file": "item/产品.ale",
+      "frame": 224
+    },
+    "中级祝福木头": {
+      "file": "plant/tree/pray/s2/after/木头.ale",
+      "frame": 0
+    },
+    "中级祝福木材": {
+      "file": "item/产品.ale",
+      "frame": 178
+    },
+    "中级祝福棉布": {
+      "file": "item/产品.ale",
+      "frame": 225
+    },
+    "中级祝福棉花": {
+      "file": "plant/crop/pray/s2/after/祝福棉花.ale",
+      "frame": 0
+    },
+    "中级祝福竹材": {
+      "file": "item/产品.ale",
+      "frame": 168
+    },
+    "中级神奇木头": {
+      "file": "plant/tree/miracle/s2/after/木头.ale",
+      "frame": 0
+    },
+    "云晶石": {
+      "file": "item/云晶石.ale",
+      "frame": 0
+    },
+    "五色晶沙": {
+      "file": "item/代币建材.ale",
+      "frame": 2
+    },
+    "亭子部件01": {
+      "file": "item/部件.ale",
+      "frame": 25
+    },
+    "亭子部件02": {
+      "file": "item/部件.ale",
+      "frame": 26
+    },
+    "亭子部件03": {
+      "file": "item/部件.ale",
+      "frame": 27
+    },
+    "保险箱部件02": {
+      "file": "item/部件.ale",
+      "frame": 106
+    },
+    "元素晶体": {
+      "file": "item/代币建材.ale",
+      "frame": 7
+    },
+    "兔皮革": {
+      "file": "item/新添产品.ale",
+      "frame": 1
+    },
+    "其他部件02": {
+      "file": "item/部件.ale",
+      "frame": 41
+    },
+    "其他部件03": {
+      "file": "item/部件.ale",
+      "frame": 42
+    },
+    "军事主题部件02": {
+      "file": "item/主题部件.ale",
+      "frame": 1
+    },
+    "冷气结晶": {
+      "file": "item/地形.ale",
+      "frame": 79
+    },
+    "初级祝福亚麻": {
+      "file": "plant/crop/pray/s1/after/祝福亚麻.ale",
+      "frame": 0
+    },
+    "初级祝福塑料": {
+      "file": "item/新增物品.ale",
+      "frame": 21
+    },
+    "初级祝福塑胶": {
+      "file": "item/产品.ale",
+      "frame": 107
+    },
+    "初级祝福帆布": {
+      "file": "item/产品.ale",
+      "frame": 224
+    },
+    "初级祝福木头": {
+      "file": "plant/tree/pray/s1/after/木头.ale",
+      "frame": 0
+    },
+    "初级祝福木材": {
+      "file": "item/产品.ale",
+      "frame": 178
+    },
+    "初级祝福棉布": {
+      "file": "item/产品.ale",
+      "frame": 225
+    },
+    "初级祝福棉线": {
+      "file": "item/产品.ale",
+      "frame": 228
+    },
+    "初级祝福棉花": {
+      "file": "plant/crop/pray/s1/after/祝福棉花.ale",
+      "frame": 0
+    },
+    "初级祝福橡胶": {
+      "file": "item/产品.ale",
+      "frame": 106
+    },
+    "初级祝福石榴果汁": {
+      "file": "item/产品.ale",
+      "frame": 166
+    },
+    "初级祝福竹材": {
+      "file": "item/产品.ale",
+      "frame": 168
+    },
+    "初级祝福麻绳": {
+      "file": "item/产品.ale",
+      "frame": 223
+    },
+    "含羞草": {
+      "file": "plant/flower/normal/s4/after/含羞草.ale",
+      "frame": 0
+    },
+    "器皿部件02": {
+      "file": "item/部件.ale",
+      "frame": 66
+    },
+    "固态合金": {
+      "file": "item/代币建材.ale",
+      "frame": 5
+    },
+    "土晶石": {
+      "file": "item/土晶石.ale",
+      "frame": 0
+    },
+    "地毯部件01": {
+      "file": "item/部件.ale",
+      "frame": 185
+    },
+    "地毯部件02": {
+      "file": "item/部件.ale",
+      "frame": 186
+    },
+    "塑料": {
+      "file": "item/新增物品.ale",
+      "frame": 21
+    },
+    "塑胶": {
+      "file": "item/产品.ale",
+      "frame": 222
+    },
+    "墙壁部件01": {
+      "file": "item/部件.ale",
+      "frame": 5
+    },
+    "墙壁部件02": {
+      "file": "item/部件.ale",
+      "frame": 6
+    },
+    "墙壁部件03": {
+      "file": "item/部件.ale",
+      "frame": 7
+    },
+    "壁挂部件02": {
+      "file": "item/部件.ale",
+      "frame": 171
+    },
+    "壁挂部件03": {
+      "file": "item/部件.ale",
+      "frame": 172
+    },
+    "多尔石": {
+      "file": "item/多尔石.ale",
+      "frame": 0
+    },
+    "大理石": {
+      "file": "item/地形.ale",
+      "frame": 70
+    },
+    "大理石块": {
+      "file": "item/地形.ale",
+      "frame": 112
+    },
+    "大理石板": {
+      "file": "item/地形.ale",
+      "frame": 72
+    },
+    "天才猪皮革": {
+      "file": "item/新添产品2.ale",
+      "frame": 4
+    },
+    "奇幻魔力玫瑰": {
+      "file": "plant/flower/normal/s4/after/奇幻魔力玫瑰.ale",
+      "frame": 3
+    },
+    "屏风部件01": {
+      "file": "item/部件.ale",
+      "frame": 60
+    },
+    "岩石": {
+      "file": "item/地形.ale",
+      "frame": 61
+    },
+    "岩石块": {
+      "file": "item/地形.ale",
+      "frame": 110
+    },
+    "帆布": {
+      "file": "item/产品.ale",
+      "frame": 224
+    },
+    "建筑悬挂部件01": {
+      "file": "item/部件.ale",
+      "frame": 165
+    },
+    "建筑悬挂部件02": {
+      "file": "item/部件.ale",
+      "frame": 166
+    },
+    "建筑悬挂部件03": {
+      "file": "item/部件.ale",
+      "frame": 167
+    },
+    "恶搞主题部件01": {
+      "file": "item/主题部件.ale",
+      "frame": 10
+    },
+    "恶搞主题部件02": {
+      "file": "item/主题部件.ale",
+      "frame": 11
+    },
+    "恶搞主题部件03": {
+      "file": "item/主题部件.ale",
+      "frame": 12
+    },
+    "月季": {
+      "file": "plant/flower/normal/s1/after/月季.ale",
+      "frame": 0
+    },
+    "木头": {
+      "file": "item/产品.ale",
+      "frame": 179
+    },
+    "木材": {
+      "file": "item/产品.ale",
+      "frame": 178
+    },
+    "柜子部件02": {
+      "file": "item/部件.ale",
+      "frame": 101
+    },
+    "柜子部件03": {
+      "file": "item/部件.ale",
+      "frame": 102
+    },
+    "柱子部件01": {
+      "file": "item/部件.ale",
+      "frame": 10
+    },
+    "柱子部件02": {
+      "file": "item/部件.ale",
+      "frame": 11
+    },
+    "柱子部件03": {
+      "file": "item/部件.ale",
+      "frame": 12
+    },
+    "柴火": {
+      "file": "item/新增物品.ale",
+      "frame": 1
+    },
+    "栅栏部件01": {
+      "file": "item/部件.ale",
+      "frame": 0
+    },
+    "栅栏部件02": {
+      "file": "item/部件.ale",
+      "frame": 1
+    },
+    "栅栏部件03": {
+      "file": "item/部件.ale",
+      "frame": 2
+    },
+    "桌部件01": {
+      "file": "item/部件.ale",
+      "frame": 115
+    },
+    "桌部件03": {
+      "file": "item/部件.ale",
+      "frame": 117
+    },
+    "梨子": {
+      "file": "plant/tree/normal/s1/after/梨子.ale",
+      "frame": 0
+    },
+    "棉布": {
+      "file": "item/产品.ale",
+      "frame": 225
+    },
+    "椅子部件03": {
+      "file": "item/部件.ale",
+      "frame": 122
+    },
+    "植物主题部件01": {
+      "file": "item/主题部件.ale",
+      "frame": 15
+    },
+    "植物主题部件02": {
+      "file": "item/主题部件.ale",
+      "frame": 16
+    },
+    "植物主题部件03": {
+      "file": "item/主题部件.ale",
+      "frame": 17
+    },
+    "椰子": {
+      "file": "plant/tree/normal/s1/after/椰子.ale",
+      "frame": 0
+    },
+    "橘子": {
+      "file": "plant/tree/normal/s1/after/橘子.ale",
+      "frame": 0
+    },
+    "毛法螺": {
+      "file": "item/螺贝.ale",
+      "frame": 85
+    },
+    "沉香木料": {
+      "file": "item/代币建材.ale",
+      "frame": 3
+    },
+    "沙发部件02": {
+      "file": "item/部件.ale",
+      "frame": 126
+    },
+    "沙砾": {
+      "file": "item/新增物品.ale",
+      "frame": 80
+    },
+    "洗手池部件02": {
+      "file": "item/部件.ale",
+      "frame": 36
+    },
+    "洗手池部件03": {
+      "file": "item/部件.ale",
+      "frame": 37
+    },
+    "浮力结晶": {
+      "file": "item/地形.ale",
+      "frame": 89
+    },
+    "海晶石": {
+      "file": "item/海晶石.ale",
+      "frame": 0
+    },
+    "海洋主题部件01": {
+      "file": "item/主题部件.ale",
+      "frame": 20
+    },
+    "灯部件01": {
+      "file": "item/部件.ale",
+      "frame": 160
+    },
+    "灯部件02": {
+      "file": "item/部件.ale",
+      "frame": 161
+    },
+    "灯部件03": {
+      "file": "item/部件.ale",
+      "frame": 162
+    },
+    "灶台部件02": {
+      "file": "item/部件.ale",
+      "frame": 111
+    },
+    "烟囱壁炉部件02": {
+      "file": "item/部件.ale",
+      "frame": 46
+    },
+    "牛皮革": {
+      "file": "item/产品.ale",
+      "frame": 192
+    },
+    "牦牛骨": {
+      "file": "item/新添产品.ale",
+      "frame": 23
+    },
+    "猪皮革": {
+      "file": "item/新添产品.ale",
+      "frame": 4
+    },
+    "玉石": {
+      "file": "item/地形.ale",
+      "frame": 77
+    },
+    "玉米": {
+      "file": "plant/crop/normal/s1/after/玉米.ale",
+      "frame": 0
+    },
+    "玻璃": {
+      "file": "item/新增物品.ale",
+      "frame": 3
+    },
+    "生物凝胶": {
+      "file": "item/代币建材.ale",
+      "frame": 4
+    },
+    "电能结晶": {
+      "file": "item/地形.ale",
+      "frame": 87
+    },
+    "留言板部件03": {
+      "file": "item/部件.ale",
+      "frame": 192
+    },
+    "番茄": {
+      "file": "plant/crop/normal/s1/after/番茄.ale",
+      "frame": 0
+    },
+    "白纸": {
+      "file": "item/其他.ale",
+      "frame": 31
+    },
+    "白色染料": {
+      "file": "item/产品.ale",
+      "frame": 211
+    },
+    "百锻精钢": {
+      "file": "item/代币建材.ale",
+      "frame": 1
+    },
+    "石材": {
+      "file": "item/产品.ale",
+      "frame": 208
+    },
+    "碎铁矿": {
+      "file": "item/地形.ale",
+      "frame": 113
+    },
+    "碎铜矿": {
+      "file": "item/地形.ale",
+      "frame": 114
+    },
+    "碎银矿": {
+      "file": "item/地形.ale",
+      "frame": 115
+    },
+    "秋千部件01": {
+      "file": "item/部件.ale",
+      "frame": 135
+    },
+    "秘银矿": {
+      "file": "item/地形.ale",
+      "frame": 50
+    },
+    "秘银锭": {
+      "file": "item/地形.ale",
+      "frame": 60
+    },
+    "空调部件02": {
+      "file": "item/部件.ale",
+      "frame": 81
+    },
+    "竹材": {
+      "file": "item/产品.ale",
+      "frame": 168
+    },
+    "糖果主题部件02": {
+      "file": "item/主题部件.ale",
+      "frame": 26
+    },
+    "红色染料": {
+      "file": "item/产品.ale",
+      "frame": 212
+    },
+    "绿色染料": {
+      "file": "item/产品.ale",
+      "frame": 216
+    },
+    "羊毛": {
+      "file": "item/产品.ale",
+      "frame": 184
+    },
+    "羊绒": {
+      "file": "item/产品.ale",
+      "frame": 227
+    },
+    "聚合纤维": {
+      "file": "item/代币建材.ale",
+      "frame": 6
+    },
+    "舞草": {
+      "file": "plant/flower/normal/s4/after/舞草.ale",
+      "frame": 0
+    },
+    "花圃部件01": {
+      "file": "item/部件.ale",
+      "frame": 15
+    },
+    "花圃部件02": {
+      "file": "item/部件.ale",
+      "frame": 16
+    },
+    "花圃部件03": {
+      "file": "item/部件.ale",
+      "frame": 17
+    },
+    "花岗岩": {
+      "file": "item/地形.ale",
+      "frame": 78
+    },
+    "花岗岩石材": {
+      "file": "item/地形.ale",
+      "frame": 71
+    },
+    "花岗石块": {
+      "file": "item/地形.ale",
+      "frame": 111
+    },
+    "苹果": {
+      "file": "plant/tree/normal/s1/after/苹果.ale",
+      "frame": 0
+    },
+    "草料": {
+      "file": "item/产品.ale",
+      "frame": 132
+    },
+    "草莓": {
+      "file": "plant/crop/normal/s1/after/草莓.ale",
+      "frame": 0
+    },
+    "菊花": {
+      "file": "plant/flower/normal/s1/after/菊花.ale",
+      "frame": 0
+    },
+    "萱草": {
+      "file": "plant/flower/normal/s4/after/萱草.ale",
+      "frame": 0
+    },
+    "葡萄": {
+      "file": "plant/tree/normal/s1/after/葡萄.ale",
+      "frame": 0
+    },
+    "蓝宝石矿": {
+      "file": "item/新增物品.ale",
+      "frame": 160
+    },
+    "蓝色染料": {
+      "file": "item/产品.ale",
+      "frame": 210
+    },
+    "褐色染料": {
+      "file": "item/产品.ale",
+      "frame": 214
+    },
+    "超级祝福亚麻": {
+      "file": "plant/crop/pray/s6/after/祝福5级亚麻果实.ale",
+      "frame": 0
+    },
+    "超级祝福塑胶": {
+      "file": "item/产品.ale",
+      "frame": 107
+    },
+    "超级祝福木材": {
+      "file": "item/产品.ale",
+      "frame": 178
+    },
+    "超级祝福棉线": {
+      "file": "item/产品.ale",
+      "frame": 228
+    },
+    "超级祝福竹材": {
+      "file": "item/产品.ale",
+      "frame": 168
+    },
+    "超级祝福麻绳": {
+      "file": "item/产品.ale",
+      "frame": 223
+    },
+    "躺椅部件02": {
+      "file": "item/部件.ale",
+      "frame": 146
+    },
+    "躺椅部件03": {
+      "file": "item/部件.ale",
+      "frame": 147
+    },
+    "邮筒部件01": {
+      "file": "item/部件.ale",
+      "frame": 195
+    },
+    "野花": {
+      "file": "plant/flower/normal/s1/after/野花.ale",
+      "frame": 0
+    },
+    "铁块": {
+      "file": "item/地形.ale",
+      "frame": 54
+    },
+    "铁矿": {
+      "file": "item/地形.ale",
+      "frame": 55
+    },
+    "铜块": {
+      "file": "item/地形.ale",
+      "frame": 56
+    },
+    "银块": {
+      "file": "item/地形.ale",
+      "frame": 62
+    },
+    "锡块": {
+      "file": "item/八千矿.ale",
+      "frame": 10
+    },
+    "锡矿石": {
+      "file": "item/八千矿.ale",
+      "frame": 11
+    },
+    "镜子部件02": {
+      "file": "item/部件.ale",
+      "frame": 56
+    },
+    "镜子部件03": {
+      "file": "item/部件.ale",
+      "frame": 57
+    },
+    "门部件01": {
+      "file": "item/部件.ale",
+      "frame": 30
+    },
+    "门部件02": {
+      "file": "item/部件.ale",
+      "frame": 31
+    },
+    "门部件03": {
+      "file": "item/部件.ale",
+      "frame": 32
+    },
+    "陈酿的红葡萄酒": {
+      "file": "item/产品.ale",
+      "frame": 114
+    },
+    "雕像部件02": {
+      "file": "item/部件.ale",
+      "frame": 51
+    },
+    "雕像部件03": {
+      "file": "item/部件.ale",
+      "frame": 52
+    },
+    "雪域寒冰": {
+      "file": "item/雪域寒冰.ale",
+      "frame": 0
+    },
+    "青玉矿": {
+      "file": "item/地形.ale",
+      "frame": 47
+    },
+    "青色染料": {
+      "file": "item/产品.ale",
+      "frame": 218
+    },
+    "音响部件02": {
+      "file": "item/部件.ale",
+      "frame": 76
+    },
+    "顶级光明木材": {
+      "file": "item/产品.ale",
+      "frame": 178
+    },
+    "顶级光明棉线": {
+      "file": "item/产品.ale",
+      "frame": 228
+    },
+    "顶级光明麻绳": {
+      "file": "item/产品.ale",
+      "frame": 223
+    },
+    "顶级祝福塑胶": {
+      "file": "item/产品.ale",
+      "frame": 107
+    },
+    "顶级祝福木材": {
+      "file": "item/产品.ale",
+      "frame": 178
+    },
+    "顶级祝福竹材": {
+      "file": "item/产品.ale",
+      "frame": 168
+    },
+    "风行兔皮革": {
+      "file": "item/新添产品2.ale",
+      "frame": 1
+    },
+    "风行兔肉": {
+      "file": "item/新添产品2.ale",
+      "frame": 2
+    },
+    "马桶部件02": {
+      "file": "item/部件.ale",
+      "frame": 131
+    },
+    "高级光明木材": {
+      "file": "item/产品.ale",
+      "frame": 178
+    },
+    "高级光明棉线": {
+      "file": "item/产品.ale",
+      "frame": 228
+    },
+    "高级光明麻绳": {
+      "file": "item/产品.ale",
+      "frame": 223
+    },
+    "高级祝福塑胶": {
+      "file": "item/产品.ale",
+      "frame": 107
+    },
+    "高级祝福橡胶": {
+      "file": "item/产品.ale",
+      "frame": 108
+    },
+    "高级祝福竹材": {
+      "file": "item/产品.ale",
+      "frame": 168
+    },
+    "魔石碎片(橙)": {
+      "file": "item/晶石.ale",
+      "frame": 3
+    },
+    "魔石碎片(红)": {
+      "file": "item/晶石.ale",
+      "frame": 2
+    },
+    "魔石碎片(黄)": {
+      "file": "item/晶石.ale",
+      "frame": 4
+    },
+    "鱼01": {
+      "file": "item/地形.ale",
+      "frame": 42
+    },
+    "鱼02": {
+      "file": "item/地形.ale",
+      "frame": 43
+    },
+    "鱼化石": {
+      "file": "item_s/000common/鱼化石.ale",
+      "frame": 0
+    },
+    "鸡绒": {
+      "file": "item/产品.ale",
+      "frame": 219
+    },
+    "鸵鸟毛": {
+      "file": "item/新添产品2.ale",
+      "frame": 11
+    },
+    "鸵鸟蛋": {
+      "file": "item/新添产品2.ale",
+      "frame": 10
+    },
+    "麻绳": {
+      "file": "item/产品.ale",
+      "frame": 223
+    },
+    "黄色染料": {
+      "file": "item/产品.ale",
+      "frame": 213
+    },
+    "黑羊绒": {
+      "file": "item/产品.ale",
+      "frame": 90
+    },
+    "黑色染料": {
+      "file": "item/产品.ale",
+      "frame": 215
+    }
+  }
+}

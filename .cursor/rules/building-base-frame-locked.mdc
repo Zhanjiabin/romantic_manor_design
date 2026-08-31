@@ -1,0 +1,30 @@
+---
+description: Frozen native house-frame (maskimg) layout. Do not reshape the outer box.
+alwaysApply: true
+---
+
+# Building house frame is locked
+
+User-verified 2026-08-30: the outer room volume is `base.tab` `maskimg` filled with grass. **Do not change mask placement, shape, or “hexagon rebuild” unless the user names the frame and asks.**
+
+## Locked frame
+
+- Draw `maskimg` through `ChgBaseMask`-style clipping. Do not reconstruct walls from the floor diamond.
+- Empty preview: centre the mask in the 570×550 design layer.
+- Do not use ALE `valueA` / `valueB` as screen coordinates for the frame.
+- Do not bottom-centre the floor *image rectangle* inside the mask image; that leaves a gap at the front.
+
+## Floor sits on the frame (not the other way around)
+
+- Keep the mask where it is.
+- Place `baseimg` so its **solid** front vertex (ignore the faint ALE fringe) sits on the mask’s front vertex (`floorSnugInMask`).
+- Importing a paper must not move the mask under the props (`baseAnchor`) or grow the plane from sprite AABBs. That zooms the 11×11 out and parks it high in the shell.
+- Paper records stay in paper coords. The mat=0 header’s x/y is the native mask origin (`ChgBaseMask` space), not a 5×5 baseno. Last-character `state` is frame/state (0–63), not `base.tab` 户型号 — 11×11 巨型建筑 is 212 and cannot fit there.
+- Paint offset: put the imported sprites’ **solid front vertex** on the floor’s **solid front vertex** (`paperContentFront` → `frontX/Y`). Image-rectangle bottoms include ALE fringe and leave a grass gap at the front.
+
+## Forbidden "fixes"
+
+- Reintroducing `roomHexagon` / `roomVolumeLayer` / `floorOpaqueDiamond` wall extrusion.
+- Moving the mask to follow leftover paper props in the house-select preview.
+- Expanding / recentering the plane from imported record boxes.
+- Scaling or stretching `maskimg`.

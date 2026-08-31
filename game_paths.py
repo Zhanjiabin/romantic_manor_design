@@ -50,5 +50,6 @@ GAME = game_root()
 TILE = GAME / "sourceCode" / "leo" / "rcex" / "maps" / "tile"
 BDESIGN_RES = GAME / "sourceCode" / "leo" / "rcex" / "svr" / "bdesign"
 BDESIGN_IMGS = GAME / "sourceCode" / "leo" / "rcsys" / "svr" / "bdesign" / "imgs"
+RCITEM = GAME / "sourceCode" / "leo" / "rcitem"
 MAPDESIGN = GAME / "sourceCode" / "leo" / "rcsys" / "svr" / "mapdesign"
 LAUNCHER = GAME / "launcher" / "rc3.exe"

@@ -9,8 +9,8 @@
   <meta name="theme-color" content="#2f6b4f" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>设计桌</title>
-  <link rel="stylesheet" href="/web/app.css?v=70" />
-  <link rel="stylesheet" href="/web/desk-chrome.css?v=3" />
+  <link rel="stylesheet" href="/web/app.css?v=74" />
+  <link rel="stylesheet" href="/web/desk-chrome.css?v=4" />
 </head>
 <body>
   <div class="app" id="desk">
@@ -145,9 +145,11 @@
             <button type="button" class="btn btn-compact" id="btnHistory">历史</button>
             <button type="button" class="btn btn-compact" id="btnOpenTerr">导入地形</button>
             <button type="button" class="btn btn-compact" id="btnSaveTerr">导出地形</button>
-            <button type="button" class="btn btn-compact" id="btnOpenBld">导入建筑</button>
+            <button type="button" class="btn btn-compact" id="btnOpenBld">导入建筑代码</button>
             <button type="button" class="btn btn-compact" id="btnSaveBld">导出建筑</button>
             <button type="button" class="btn btn-compact btn-wide" id="btnSavePng">导出图片</button>
+            <button type="button" class="btn btn-compact btn-wide" id="btnImageTerrain">图片生成地形</button>
+            <button type="button" class="btn btn-compact btn-wide" id="btnPlanOverlay">导入建筑图片</button>
           </div>
         </div>
 
@@ -175,6 +177,18 @@
           <input type="checkbox" id="showGrid" checked />
           <span>显示地块网格</span>
         </label>
+        <label class="check">
+          <input type="checkbox" id="showPlanOverlay" checked />
+          <span>显示建筑图片</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="showPlanFoundation" checked />
+          <span>显示预览地基</span>
+        </label>
+        <div class="plan-overlay-meta" id="planOverlayMeta" hidden>
+          <span id="planOverlayFootprint">占地 0×0</span>
+          <button type="button" class="btn btn-compact" id="btnRemovePlanOverlay">移除</button>
+        </div>
 
         <button type="button" class="btn btn-block" id="btnMatList">材料与地基</button>
       </aside>
@@ -243,6 +257,74 @@
       </div>
     </div>
   </div>
+
+  <div class="modal" id="dlgImageTerrain" hidden>
+    <div class="modal-card image-terrain-card">
+      <div class="modal-cap">
+        <span>按图片颜色生成地形</span>
+        <button type="button" class="icon-x" data-close="dlgImageTerrain" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body image-terrain-body">
+        <canvas id="imageTerrainPreview" width="256" height="256"></canvas>
+        <div class="image-terrain-options">
+          <div class="field-row">
+            <label class="field"><span>宽（格）</span><input class="input" id="imageTerrainWidth" type="number" min="1" max="96" value="16" /></label>
+            <label class="field"><span>高（格）</span><input class="input" id="imageTerrainHeight" type="number" min="1" max="96" value="16" /></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>生成方向</span><select class="input" id="imageTerrainProjection"><option value="front">正面（横平竖直）</option><option value="iso">斜 45°（地形轴）</option></select></label>
+            <label class="field"><span>颜色数量</span><select class="input" id="imageTerrainColors"><option value="4">4 色</option><option value="6">6 色</option><option value="8" selected>8 色</option><option value="12">12 色</option><option value="16">16 色</option></select></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>图片适配</span><select class="input" id="imageTerrainFit"><option value="contain">完整显示</option><option value="cover">铺满裁切</option><option value="stretch">拉伸铺满</option></select></label>
+            <label class="field"><span>透明阈值</span><input class="input" id="imageTerrainAlpha" type="number" min="0" max="255" value="48" /></label>
+          </div>
+          <label class="check"><input type="checkbox" id="imageTerrainReplace" /><span>生成前清空现有地形笔触</span></label>
+          <div class="image-color-map" id="imageColorMap"></div>
+          <button type="button" class="btn btn-primary btn-block" id="btnApplyImageTerrain">生成到地图中央</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgPlanOverlay" hidden>
+    <div class="modal-card modal-narrow">
+      <div class="modal-cap">
+        <span>导入建筑图片</span>
+        <button type="button" class="icon-x" data-close="dlgPlanOverlay" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <img id="planOverlayPreview" class="plan-overlay-preview" alt="规划图预览" />
+        <div class="plan-overlay-info" id="planOverlayInfo"></div>
+        <div class="field-row">
+          <label class="field"><span>占地宽（格）</span><input class="input" id="planOverlayWidth" type="number" min="1" max="64" value="11" /></label>
+          <label class="field"><span>占地高（格）</span><input class="input" id="planOverlayHeight" type="number" min="1" max="64" value="11" /></label>
+        </div>
+        <p class="dlg-desc">建筑会保持原始宽高比例并以底部中心贴住占地。放置后直接拖动建筑本体即可移动；仅用于搭配预览，不写入游戏图纸。</p>
+        <button type="button" class="btn btn-primary btn-block" id="btnApplyPlanOverlay">放到地形上</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgApp" hidden>
+    <div class="modal-card modal-narrow app-dialog" role="dialog" aria-modal="true" aria-labelledby="dlgAppTitle" aria-describedby="dlgAppMessage">
+      <div class="modal-cap">
+        <span id="dlgAppTitle">提示</span>
+        <button type="button" class="icon-x" id="dlgAppClose" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <p class="app-dialog-msg" id="dlgAppMessage"></p>
+        <label class="field" id="dlgAppField" hidden>
+          <span id="dlgAppFieldLabel">名称</span>
+          <input class="input" id="dlgAppInput" maxlength="48" autocomplete="off" />
+        </label>
+        <div class="app-dialog-actions">
+          <button type="button" class="btn" id="dlgAppCancel">取消</button>
+          <button type="button" class="btn btn-primary" id="dlgAppOk">确定</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <select id="mapSize" hidden></select>
   <div id="terrainPanel" hidden></div>
   <div id="buildPanel" hidden></div>
@@ -250,8 +332,11 @@
   <span id="stats" hidden></span>
   <input type="file" id="fileTerr" accept=".txt,text/plain,*/*" hidden />
   <input type="file" id="fileBld" accept=".txt,text/plain,*/*" hidden />
+  <input type="file" id="fileImageTerrain" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+  <input type="file" id="filePlanOverlay" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
 
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/app.js?v=180"></script>
+  <script src="/web/app-dialog.js?v=1"></script>
+  <script src="/web/app.js?v=188"></script>
 </body>
 </html>

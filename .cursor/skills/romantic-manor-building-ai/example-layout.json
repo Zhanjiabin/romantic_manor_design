@@ -1,0 +1,29 @@
+{
+  "name": "集市测试构件",
+  "header": {
+    "x": 280,
+    "y": 180,
+    "state": 12
+  },
+  "sort": "depth",
+  "records": [
+    {
+      "pack": "bazaar",
+      "local": 124,
+      "x": 320,
+      "y": 210,
+      "state": 0,
+      "depth": 1,
+      "group": "rear"
+    },
+    {
+      "pack": "bazaar",
+      "local": 124,
+      "x": 340,
+      "y": 220,
+      "state": 0,
+      "depth": 2,
+      "group": "front"
+    }
+  ]
+}

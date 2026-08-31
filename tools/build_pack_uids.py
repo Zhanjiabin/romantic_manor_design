@@ -13,6 +13,16 @@ sprites, which is much worse than a missing sprite.
 LOCKED 2026-08-30: user confirmed this table against the in-game café
 screenshot. Do not remap existing UIDs, do not invent 框架 borrow, and do not
 replace this list with ``formula.tab`` / ``exhibit.tab`` order.
+
+AMENDED 2026-08-31 (user-named in-game evidence): the fence paper renders
+``8101`` in game as flower2 ``adornment_01`` (wood cross post with flower),
+not flower1 (gold pennant pole).  So uid 8 is flower2, matching the same
+one-slot shift the café screenshot already proved for 6/7 (legacy said
+7=toy/8=flower1; actual is 6=toy/7=flower1).  The café paper contains no
+8xxx/9xxx mats, so this does not contradict the 2026-08-30 verification.
+Uid 9 ("flower2" in the legacy table) has no in-game evidence either way and
+is demoted to a decode-only alias; exports of flower2 use the proven uid 8
+and exports of flower1 use the café-proven uid 7.
 """
 from __future__ import annotations
 
@@ -39,8 +49,7 @@ PROVEN_PACKETS = [
     (4, "park", "园林风格", "legacy packet table"),
     (5, "q", "Q版风格", "mixed paper exact ground match"),
     (7, "flower1", "花卉风格", "café 7112 is flower1 butterfly stool, not toy carnival"),
-    (8, "flower1", "花卉风格", "legacy packet table"),
-    (9, "flower2", "植物风格", "legacy packet table"),
+    (8, "flower2", "植物风格", "fence paper 2026-08-31: in-game 8101 is flower2 adornment_01 wood flower post"),
     (10, "candy", "糖果乐园", "exact mixed-paper wall match"),
     (11, "fruit", "水果系列", "café roof 11105/11111 are fruit orange-half / lime-stack"),
     (12, "sea", "海洋世界", "café BAR 12506/12110 are sea scallop wall / coral lantern, not fruit"),
@@ -61,11 +70,14 @@ PROVEN_PACKETS = [
 # Read-only aliases: extra paper UIDs that decode to an already-canonical pack.
 # Do not put these in ``mapping`` — packUidOf would then export the alias id.
 # 6: Putong folder is absent from the dump; café 6532 is toy wall_30 LEGO.
-# 7 is in mapping as flower1 (café 7112). Toy stays alias-only so export
-# still uses 8 for 花卉 and does not rewrite LEGO 6xxx.
+# 7 is in mapping as flower1 (café 7112); 花卉 exports as 7.
+# 9: legacy table said flower2 but that table was shifted by one across 6..8;
+#    no 9xxx paper evidence exists, so keep it decoding as flower2 without
+#    letting packUidOf pick it — 植物 exports as the in-game-proven 8.
 # 17: desktop papers 17122/17130/17110/17173; local 173 exists only in paradise.
 ALIASES = {
     6: ("toy", "user 6532 is toy LEGO; Putong folder missing from dump"),
+    9: ("flower2", "legacy table only; decode-only, exports use proven uid 8"),
     17: ("paradise", "corpus 17xxx locals 110/122/130/173; only paradise owns 173"),
 }
 

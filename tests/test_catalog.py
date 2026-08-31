@@ -85,7 +85,8 @@ def test_building_pack_uids_match_proven_mixed_paper_packets():
     mapping = pack_uids["mapping"]
     assert mapping["1"] == "europe"
     assert mapping["7"] == "flower1"
-    assert mapping["8"] == "flower1"
+    # 2026-08-31 fence paper: in-game 8101 is flower2 adornment_01, not flower1.
+    assert mapping["8"] == "flower2"
     assert mapping["10"] == "candy"
     assert mapping["11"] == "fruit"
     assert mapping["12"] == "sea"
@@ -93,8 +94,11 @@ def test_building_pack_uids_match_proven_mixed_paper_packets():
     assert mapping["18"] == "paradise"
     aliases = pack_uids.get("aliases") or {}
     assert aliases["6"] == "toy"
+    # uid 9 stays decode-only so flower2 exports use the proven uid 8.
+    assert aliases["9"] == "flower2"
     assert aliases["17"] == "paradise"
     assert "6" not in mapping
+    assert "9" not in mapping
     assert "17" not in mapping
     assert mapping["14"] == "bazaar"
     assert mapping["15"] == "supermarket"

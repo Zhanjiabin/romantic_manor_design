@@ -16,8 +16,7 @@
     "4": "park",
     "5": "q",
     "7": "flower1",
-    "8": "flower1",
-    "9": "flower2",
+    "8": "flower2",
     "10": "candy",
     "11": "fruit",
     "12": "sea",
@@ -36,6 +35,7 @@
   },
   "aliases": {
     "6": "toy",
+    "9": "flower2",
     "17": "paradise"
   },
   "frames": {
@@ -334,17 +334,10 @@
     },
     {
       "uid": 8,
-      "key": "flower1",
-      "folder": "flower1",
-      "name": "花卉风格",
-      "source": "legacy packet table"
-    },
-    {
-      "uid": 9,
       "key": "flower2",
       "folder": "flower2",
       "name": "植物风格",
-      "source": "legacy packet table"
+      "source": "fence paper 2026-08-31: in-game 8101 is flower2 adornment_01 wood flower post"
     },
     {
       "uid": 10,

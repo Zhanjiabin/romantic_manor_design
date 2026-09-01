@@ -8,6 +8,7 @@ services:
       MANOR_NO_BROWSER: "1"
       MANOR_USER: ${MANOR_USER}
       MANOR_PASSWORD: ${MANOR_PASSWORD}
+      MANOR_USERS: ${MANOR_USERS:-}
     volumes:
       - ale_png_cache:/app/data/ale_png_cache
       - manor_saves:/app/data/saves

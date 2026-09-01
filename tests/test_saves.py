@@ -172,3 +172,27 @@ def test_building_papers_list_newest_first():
             os.environ.pop("MANOR_SAVES", None)
         else:
             os.environ["MANOR_SAVES"] = prev
+
+
+def test_building_paper_keeps_id_when_content_changes():
+    tmp = tempfile.mkdtemp(prefix="manor-paper-overwrite-")
+    prev = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = tmp
+    try:
+        assert save_building_papers([{"name": "a.txt", "data": "VjE7YQ=="}]) == 1
+        ident = load_building_papers()["papers"][0]["id"]
+        assert save_building_papers([{
+            "id": ident,
+            "name": "b.txt",
+            "data": "VjE7Yg==",
+        }]) == 1
+        listed = load_building_papers(include_data=True)["papers"]
+        assert len(listed) == 1
+        assert listed[0]["id"] == ident
+        assert listed[0]["name"] == "b.txt"
+        assert listed[0]["data"] == "VjE7Yg=="
+    finally:
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev

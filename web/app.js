@@ -243,7 +243,7 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
-  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=212"]);
+  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=215"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
     if (terrainInteractionBusy()) return;
@@ -7432,34 +7432,18 @@ function imageTerrainSourcePixels(image) {
   scratch.width = width;
   scratch.height = height;
   const g = scratch.getContext("2d", { willReadFrequently: true });
-  g.imageSmoothingEnabled = true;
-  if (g.imageSmoothingQuality) g.imageSmoothingQuality = "high";
+  g.imageSmoothingEnabled = false;
   g.drawImage(image, 0, 0, width, height);
   return { width, height, pixels: g.getImageData(0, 0, width, height).data };
 }
 
-function sampleImageBox(src, x, y, radius, alphaThreshold) {
+function sampleImagePixel(src, x, y, alphaThreshold) {
   if (!src?.pixels) return null;
-  const x0 = Math.max(0, Math.floor(x - radius));
-  const y0 = Math.max(0, Math.floor(y - radius));
-  const x1 = Math.min(src.width - 1, Math.ceil(x + radius));
-  const y1 = Math.min(src.height - 1, Math.ceil(y + radius));
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let count = 0;
-  for (let py = y0; py <= y1; py++) {
-    for (let px = x0; px <= x1; px++) {
-      const offset = (py * src.width + px) * 4;
-      if (src.pixels[offset + 3] < alphaThreshold) continue;
-      r += src.pixels[offset];
-      g += src.pixels[offset + 1];
-      b += src.pixels[offset + 2];
-      count += 1;
-    }
-  }
-  if (!count) return null;
-  return [Math.round(r / count), Math.round(g / count), Math.round(b / count)];
+  const px = Math.max(0, Math.min(src.width - 1, Math.round(x)));
+  const py = Math.max(0, Math.min(src.height - 1, Math.round(y)));
+  const offset = (py * src.width + px) * 4;
+  if (src.pixels[offset + 3] < alphaThreshold) return null;
+  return [src.pixels[offset], src.pixels[offset + 1], src.pixels[offset + 2]];
 }
 
 function cellToImageXY(cell, projection, fit, src, mapN, uvBounds) {
@@ -7612,6 +7596,8 @@ function suggestedPixelBrushIndex(rgb, brushes, backgroundRgb = null) {
   let type = null;
   if (sat < 28 && max > 222) type = "雪地";
   else if (b > r * 1.18 && b > g * 1.1 && b > 90) type = "水面";
+  else if (sat < 28 && max > 70 && max < 210) type = "砖地";
+  else if (r > b + 24 && g > b + 8 && r >= g * 0.82 && r <= g * 1.5 && sat > 22) type = "土地";
   else {
     const lab = rgbToLab(r, g, b);
     let best = Infinity;
@@ -7627,59 +7613,6 @@ function suggestedPixelBrushIndex(rgb, brushes, backgroundRgb = null) {
   }
   const index = brushes.findIndex((brush) => brushPaletteType(brush) === (type || "土地"));
   return Math.max(0, index);
-}
-
-function smoothImageTerrainIndices(cells, indices) {
-  const lookup = new Map();
-  cells.forEach((cell, index) => lookup.set(cellKey(cell.u, cell.v), index));
-  const dirs = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-    [1, -1],
-    [-1, 1],
-  ];
-  let current = indices.slice();
-  for (let pass = 0; pass < 2; pass++) {
-    const next = current.slice();
-    cells.forEach((cell, index) => {
-      const counts = new Map();
-      const bump = (value, weight) => {
-        if (value == null || value < 0) return;
-        counts.set(value, (counts.get(value) || 0) + weight);
-      };
-      bump(current[index], 2);
-      dirs.forEach(([du, dv]) => {
-        const neighbor = lookup.get(cellKey(cell.u + du, cell.v + dv));
-        if (neighbor == null) return;
-        bump(current[neighbor], 1);
-      });
-      if (current[index] < 0) {
-        let best = -1;
-        let n = 2;
-        counts.forEach((weight, value) => {
-          if (weight > n) {
-            n = weight;
-            best = value;
-          }
-        });
-        if (best >= 0) next[index] = best;
-        return;
-      }
-      let best = current[index];
-      let n = -1;
-      counts.forEach((weight, value) => {
-        if (weight > n) {
-          n = weight;
-          best = value;
-        }
-      });
-      next[index] = best;
-    });
-    current = next;
-  }
-  return current;
 }
 
 function collectImageTerrainCells() {
@@ -7698,10 +7631,6 @@ function collectImageTerrainCells() {
     Math.min(255, Number(document.getElementById("imageTerrainAlpha")?.value) || 0)
   );
   const uvBounds = imageTerrainUvBounds(cells);
-  const radius = Math.max(
-    1,
-    Math.round(0.4 * Math.min(src.width, src.height) / Math.max(8, Math.sqrt(cells.length)))
-  );
   const sampled = [];
   cells.forEach((cell) => {
     const point = cellToImageXY(cell, projection, fit, src, mapN, uvBounds);
@@ -7711,7 +7640,7 @@ function collectImageTerrainCells() {
     }
     sampled.push({
       ...cell,
-      rgb: sampleImageBox(src, point.x, point.y, radius, alphaThreshold),
+      rgb: sampleImagePixel(src, point.x, point.y, alphaThreshold),
     });
   });
   return { cells: sampled, src, mapN, projection, fit, alphaThreshold, uvBounds };
@@ -7750,7 +7679,6 @@ function renderImageTerrainMapping() {
     if (backgroundRgb && rgbDistance(cell.rgb, backgroundRgb) <= 28 * 28) return -1;
     return nearestImagePaletteIndex(cell.rgb[0], cell.rgb[1], cell.rgb[2], palette);
   });
-  indices = smoothImageTerrainIndices(collected.cells, indices);
   palette.forEach((entry) => {
     entry.count = 0;
   });
@@ -7759,27 +7687,6 @@ function renderImageTerrainMapping() {
     if (index < 0 || !palette[index]) return;
     palette[index].count += 1;
     writable += 1;
-  });
-  const size = 288;
-  preview.width = size;
-  preview.height = size;
-  const g = preview.getContext("2d");
-  g.clearRect(0, 0, size, size);
-  g.fillStyle = "#edf3ea";
-  g.fillRect(0, 0, size, size);
-  const mapN = collected.mapN;
-  const cellW = Math.max(2, Math.ceil(size / Math.max(1, mapN / 32)));
-  const cellH = Math.max(2, Math.round(cellW * 0.55));
-  collected.cells.forEach((cell, index) => {
-    const paletteIndex = indices[index];
-    if (paletteIndex < 0 || !palette[paletteIndex]) return;
-    g.fillStyle = `rgb(${palette[paletteIndex].rgb.join(",")})`;
-    g.fillRect(
-      Math.round((cell.cx / Math.max(1, mapN)) * size),
-      Math.round((cell.cy / Math.max(1, mapN)) * size),
-      cellW,
-      cellH
-    );
   });
   const brushes = pixelTerrainBrushes();
   imageTerrainDraft.sampled = { cells: collected.cells, indices };
@@ -7807,16 +7714,64 @@ function renderImageTerrainMapping() {
       select.appendChild(option);
     });
     select.value = String(suggestedPixelBrushIndex(entry.rgb, brushes, backgroundRgb));
+    select.onchange = paintImageTerrainPreviewFromMapping;
     const count = document.createElement("small");
     count.textContent = `${entry.count} 格`;
     row.append(swatch, select, count);
     mapping.appendChild(row);
   });
+  paintImageTerrainPreviewFromMapping();
   if (status) {
     status.textContent = writable
-      ? `铺满当前地图 ${mapN}×${mapN} · ${writable} / ${collected.cells.length} 格`
+      ? `铺满当前地图 ${collected.mapN}×${collected.mapN} · ${writable} / ${collected.cells.length} 格`
       : "当前设置下没有可写入的格子，试试关掉跳过背景，或改用拉伸铺满。";
   }
+}
+
+function imageTerrainMappedRgb(paletteIndex) {
+  const palette = imageTerrainDraft?.palette || [];
+  const select = document.querySelector(`#imageColorMap select[data-palette-index="${paletteIndex}"]`);
+  const brushes = pixelTerrainBrushes();
+  const brushIndex = Number(select?.value);
+  const brush = Number.isFinite(brushIndex) && brushIndex >= 0 ? brushes[brushIndex] : null;
+  if (brush) {
+    const type = brushPaletteType(brush);
+    if (TERRAIN_TYPE_RGB[type]) return TERRAIN_TYPE_RGB[type];
+  }
+  return palette[paletteIndex]?.rgb || null;
+}
+
+function paintImageTerrainPreviewFromMapping() {
+  const preview = document.getElementById("imageTerrainPreview");
+  const sampled = imageTerrainDraft?.sampled;
+  const palette = imageTerrainDraft?.palette;
+  if (!preview || !sampled?.cells || !palette) return;
+  const size = 288;
+  preview.width = size;
+  preview.height = size;
+  const g = preview.getContext("2d");
+  g.clearRect(0, 0, size, size);
+  g.fillStyle = "#edf3ea";
+  g.fillRect(0, 0, size, size);
+  const mapN = Math.max(1, worldExtent());
+  const hw = Math.max(1.2, (TILE_W / 2 / mapN) * size);
+  const hh = Math.max(0.7, (TILE_H / 2 / mapN) * size);
+  sampled.cells.forEach((cell, index) => {
+    const paletteIndex = sampled.indices[index];
+    if (paletteIndex < 0 || !palette[paletteIndex]) return;
+    const rgb = imageTerrainMappedRgb(paletteIndex);
+    if (!rgb) return;
+    const x = (cell.cx / mapN) * size;
+    const y = (cell.cy / mapN) * size;
+    g.fillStyle = `rgb(${rgb.join(",")})`;
+    g.beginPath();
+    g.moveTo(x, y - hh);
+    g.lineTo(x + hw, y);
+    g.lineTo(x, y + hh);
+    g.lineTo(x - hw, y);
+    g.closePath();
+    g.fill();
+  });
 }
 
 function nearestImagePaletteIndex(r, g, b, palette) {

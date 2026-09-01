@@ -149,6 +149,7 @@ const state = {
   pointerGesture: null,
   pointerPending: null,
   groupIsolateTap: null,
+  groupIsolate: null,
   paletteDrag: null,
   interaction: null,
   tool: "select",
@@ -164,6 +165,7 @@ const state = {
   assetRecent: [],
   sessionDirty: false,
   designName: "",
+  sourcePaper: null,
 };
 
 const canvas = document.getElementById("buildingView");
@@ -596,7 +598,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=239"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=244"]);
 }
 
 function sortThemes(packs) {
@@ -784,6 +786,41 @@ function currentPaperDownloadName(ext = "txt") {
   return `${stem || "build"}.${ext}`;
 }
 
+function paperLibraryFileName(raw) {
+  const stem = String(raw || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    .replace(/\.txt$/i, "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "")
+    .trim()
+    .slice(0, 80);
+  return `${stem || "build"}.txt`;
+}
+
+function sourcePaperId() {
+  return String(state.sourcePaper?.id || "").trim();
+}
+
+function rememberSourcePaper(paper) {
+  const id = String(paper?.id || paper?.contentId || "").trim();
+  if (!id) {
+    state.sourcePaper = null;
+    return;
+  }
+  state.sourcePaper = {
+    id,
+    name: paperLibraryFileName(paper?.name || state.designName),
+    groupId: String(paper?.groupId || paper?.group || ""),
+  };
+}
+
+function newPaperLibraryId() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 async function clearCurrentDesign({ ask = false } = {}) {
   const count = placedDesignCount();
   if (count < 1) {
@@ -804,6 +841,7 @@ async function clearCurrentDesign({ ask = false } = {}) {
   state.paperLayout = false;
   state.paperOrigin = null;
   state.source = null;
+  state.sourcePaper = null;
   state.baseAnchor = null;
   state.designName = "";
   updatePaperFileLabel();
@@ -2472,7 +2510,13 @@ function updateSelectionCaption() {
       .filter(Boolean)
   );
   const groupHint =
-    groupNames.size === 1 ? ` · 组「${[...groupNames][0]}」` : groupNames.size > 1 ? ` · ${groupNames.size}组` : "";
+    state.groupIsolate && count === 1
+      ? ` · 组内单件`
+      : groupNames.size === 1
+        ? ` · 组「${[...groupNames][0]}」`
+        : groupNames.size > 1
+          ? ` · ${groupNames.size}组`
+          : "";
   const lockedCount = state.selected.filter((index) => state.records[index]?.locked).length;
   const lockHint =
     lockedCount === count && count > 0
@@ -3751,9 +3795,31 @@ function expandGroupSelection(indices) {
   return [...set].sort((a, b) => a - b);
 }
 
+function isolatedGroupId() {
+  return state.groupIsolate?.group || "";
+}
+
+function recordBelongsToIsolatedGroup(index) {
+  const group = isolatedGroupId();
+  return !!(group && state.records[index]?.group === group);
+}
+
+function rememberGroupIsolate(indices) {
+  if (indices.length !== 1) {
+    state.groupIsolate = null;
+    return;
+  }
+  const group = state.records[indices[0]]?.group;
+  state.groupIsolate = group ? { group, index: indices[0] } : null;
+}
+
 /** 画布双击 / 双击点 / Alt+点击：选中成组里的单件，不扩成整组。 */
 function wantsIsolateGroupMember(event, hit) {
   if (hit < 0 || !state.records[hit]?.group) return false;
+  if (recordBelongsToIsolatedGroup(hit)) {
+    state.groupIsolateTap = null;
+    return true;
+  }
   if (Number(event.detail) >= 2 || event.altKey) {
     state.groupIsolateTap = null;
     return true;
@@ -3776,10 +3842,14 @@ function wantsIsolateGroupMember(event, hit) {
   return true;
 }
 
-function setSelection(indices, { expandGroup = false, layers = true } = {}) {
+function setSelection(indices, { expandGroup = false, layers = true, isolate = false } = {}) {
   let next = [...new Set(indices)].filter((index) => index >= 0 && index < state.records.length);
   if (expandGroup) next = expandGroupSelection(next);
   state.selected = next;
+  if (isolate) rememberGroupIsolate(next);
+  else if (expandGroup || next.length !== 1 || !recordBelongsToIsolatedGroup(next[0])) {
+    state.groupIsolate = null;
+  }
   updateSelectionCaption();
   updateAlignBar();
   syncViewportOverlays();
@@ -3788,6 +3858,7 @@ function setSelection(indices, { expandGroup = false, layers = true } = {}) {
 
 function clearSelection({ layers = true } = {}) {
   state.selected = [];
+  state.groupIsolate = null;
   updateSelectionCaption();
   updateAlignBar();
   syncViewportOverlays();
@@ -4194,6 +4265,7 @@ function buildingSessionSnapshot() {
     baseOverridden: !!state.baseOverridden,
     baseAnchor: state.baseAnchor ? { ...state.baseAnchor } : null,
     designName: state.designName || "",
+    sourcePaper: state.sourcePaper ? { ...state.sourcePaper } : null,
   };
 }
 
@@ -4237,44 +4309,109 @@ async function saveBuildingSessionForSwitch() {
   putBuildingSaves({ session: snap }, false).catch((error) => console.warn(error));
 }
 
-async function saveDesignNow() {
-  // 手动保存：立即快照并等服务器确认，按钮上给出结果反馈。
+function flashSaveDesignButton(ok) {
   const btn = document.getElementById("btnSaveDesign");
-  if (sessionSaveTimer) {
-    clearTimeout(sessionSaveTimer);
-    sessionSaveTimer = null;
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = ok ? "已保存" : "保存失败";
+  btn.classList.toggle("danger", !ok);
+  setTimeout(() => {
+    btn.textContent = "保存设计";
+    btn.classList.remove("danger");
+  }, 1600);
+}
+
+function openSaveDesignDialog() {
+  const originalId = sourcePaperId();
+  const originalName = paperLibraryFileName(state.sourcePaper?.name || state.designName);
+  const hint = document.getElementById("saveDesignHint");
+  if (hint) {
+    hint.textContent = originalId
+      ? `当前从图纸库打开「${originalName}」。可写回这张图纸，或另存一份新图纸。`
+      : "保存到图纸库。可自己取名。";
   }
-  const snap = buildingSessionSnapshot();
+  const originalBtn = document.getElementById("btnSaveDesignOriginal");
+  if (originalBtn) {
+    originalBtn.hidden = !originalId;
+    originalBtn.textContent = originalId ? "保存到原图纸" : "保存到原图纸";
+  }
+  const input = document.getElementById("saveDesignName");
+  if (input) {
+    input.value = paperFileStem() || originalName.replace(/\.txt$/i, "") || "未命名建筑";
+  }
+  setModalVisible("dlgSaveDesign", true);
+}
+
+async function saveDesignNow() {
+  openSaveDesignDialog();
+}
+
+async function formatCurrentPaperBytes() {
+  const payload = {
+    kind: "desk",
+    records: buildExportRecords(),
+    _source: state.source,
+  };
+  const response = await fetch("/api/format-building", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("建筑图纸生成失败 (" + response.status + ")");
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function commitDesignToPaperLibrary(mode) {
+  const originalId = sourcePaperId();
+  if (mode === "original" && !originalId) {
+    await appAlert("当前设计不是从图纸库打开的，请保存为新图纸。", { title: "保存设计" });
+    return;
+  }
+  const input = document.getElementById("saveDesignName");
+  const name = paperLibraryFileName(input?.value || paperFileStem() || state.sourcePaper?.name);
+  const newBtn = document.getElementById("btnSaveDesignNew");
+  const originalBtn = document.getElementById("btnSaveDesignOriginal");
+  if (newBtn) newBtn.disabled = true;
+  if (originalBtn) originalBtn.disabled = true;
   try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(snap));
+    const bytes = await formatCurrentPaperBytes();
+    const data = bytesToBase64(bytes);
+    const ident = mode === "original" ? originalId : newPaperLibraryId();
+    const report = buildingMaterialReport();
+    const upload = {
+      id: ident,
+      name,
+      data,
+      kind: "desk",
+      group: state.sourcePaper?.groupId || "",
+      count: report.visible,
+      meta: `${report.visible} 件素材 · ${report.totals.size} 种材料`,
+      unresolved: report.unresolved,
+    };
+    await PaperLibraryCore.persist([upload], { replace: false });
+    state.designName = name;
+    rememberSourcePaper({ id: ident, name, groupId: upload.group });
+    updatePaperFileLabel();
+    const file = new File([bytes], name);
+    file.paperMeta = { id: ident, kind: "desk", group: upload.group, data };
+    syncSavedPaperIntoLibrary(upload, file);
+    const canvasEl = document.getElementById("buildingView");
+    const blob = canvasEl ? await PaperLibraryCore.canvasToJpegBlob(canvasEl) : null;
+    if (blob) await PaperLibraryCore.putThumb(ident, blob);
+    if (sessionSaveTimer) {
+      clearTimeout(sessionSaveTimer);
+      sessionSaveTimer = null;
+    }
+    saveBuildingSession();
+    setModalVisible("dlgSaveDesign", false);
+    flashSaveDesignButton(true);
   } catch (error) {
-    console.warn("建筑会话保存失败", error);
-  }
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "保存中…";
-  }
-  let ok = true;
-  try {
-    await putBuildingSaves({ session: snap });
-    state.sessionDirty = false;
-  } catch (error) {
-    ok = false;
-    console.warn("保存设计到服务器失败", error);
-  }
-  if (btn) {
-    btn.textContent = ok ? "已保存" : "保存失败";
-    btn.classList.toggle("danger", !ok);
-    setTimeout(() => {
-      btn.textContent = "保存设计";
-      btn.classList.remove("danger");
-      btn.disabled = false;
-    }, 1600);
-  }
-  if (!ok) {
-    await appAlert("设计已存到本机浏览器，但服务器没有响应；换设备打开可能不是最新的。", {
-      title: "保存设计",
-    });
+    console.warn("保存到图纸库失败", error);
+    flashSaveDesignButton(false);
+    await appAlert(error.message || String(error), { title: "保存失败" });
+  } finally {
+    if (newBtn) newBtn.disabled = false;
+    if (originalBtn) originalBtn.disabled = false;
   }
 }
 
@@ -4335,6 +4472,13 @@ function restoreBuildingSession(remoteSnap) {
     state.baseOverridden = !!snap.baseOverridden;
     state.baseAnchor = null;
     state.designName = String(snap.designName || "");
+    state.sourcePaper = snap.sourcePaper?.id
+      ? {
+          id: String(snap.sourcePaper.id),
+          name: String(snap.sourcePaper.name || ""),
+          groupId: String(snap.sourcePaper.groupId || ""),
+        }
+      : null;
     updatePaperFileLabel();
     state.layerFilter = snap.layerFilter || "";
     state.railWidth = Math.max(300, Math.min(520, Number(snap.railWidth) || 340));
@@ -5119,7 +5263,7 @@ async function toggleLockSelected() {
 }
 
 function nudgeSelected(dx, dy, { history = true } = {}) {
-  const indices = expandGroupSelection(selectedUnlockedIndices()).filter(
+  const indices = selectedUnlockedIndices().filter(
     (index) => state.records[index] && !state.records[index].locked
   );
   if (!indices.length) return;
@@ -5532,10 +5676,14 @@ function beginCanvasPointer(event, shell) {
     } else {
       const isolate = wantsIsolateGroupMember(event, hit);
       if (isolate || !baseSelection.includes(hit)) {
-        setSelection([hit], { expandGroup: !isolate });
+        setSelection([hit], { expandGroup: !isolate, isolate });
       }
-      const movable = state.selected.filter((index) => !state.records[index]?.locked);
-      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
+      const dragIndices = isolate
+        ? [hit]
+        : state.selected.filter((index) => !state.records[index]?.locked);
+      interaction.mode = beginRecordDrag(startScene.x, startScene.y, dragIndices, transform)
+        ? "move"
+        : "select";
     }
     updateSelectionCaption();
     renderBuilding();
@@ -6121,7 +6269,7 @@ function selectLayerIndex(index, event) {
     }
     setSelection(range);
   } else {
-    setSelection([index]);
+    setSelection([index], { isolate: !!record.group });
   }
   state.component = null;
   state.customBrush = null;
@@ -6749,7 +6897,7 @@ const COMMANDS = [
   { id: "batchPreview", label: "打开图纸库", shortcut: "", run: () => togglePaperLibrary() },
   {
     id: "saveDesign",
-    label: "保存设计到服务器",
+    label: "保存到图纸库",
     shortcut: "Ctrl+S",
     run: () => saveDesignNow().catch((error) => console.warn(error)),
   },
@@ -8292,6 +8440,13 @@ function refreshPaperLibraryCard(entry) {
   if (!card) return;
   card.classList.toggle("has-unresolved", !!entry.unresolved);
   card.dataset.kind = entry.kind || "";
+  card.dataset.search = entry.search || String(entry.name || "").toLowerCase();
+  card.dataset.group = entry.groupId || "";
+  const title = card.querySelector(".paper-preview-copy strong");
+  if (title) {
+    title.textContent = entry.name;
+    title.title = entry.name;
+  }
   const meta = card.querySelector(".paper-preview-copy small");
   if (meta) meta.textContent = entry.meta;
   const badge = card.querySelector(".paper-preview-badge");
@@ -8759,6 +8914,51 @@ async function persistPaperLibrary(uploads, replace) {
   return PaperLibraryCore.persist(uploads, { replace: !!replace, groups: batchLibrary.groups });
 }
 
+function syncSavedPaperIntoLibrary(payload, file) {
+  const ident = String(payload?.id || "");
+  if (!ident) return;
+  let entry = batchLibrary.entries.find((row) => row.id === ident || row.contentId === ident);
+  if (entry) {
+    entry.name = payload.name;
+    entry.search = String(payload.name || "").toLowerCase();
+    entry.groupId = payload.group || "";
+    entry.count = payload.count || 0;
+    entry.meta = payload.meta || "";
+    entry.unresolved = payload.unresolved || 0;
+    entry.savedAt = Date.now();
+    entry.hasThumb = false;
+    entry.thumbReady = false;
+    entry.file = file || entry.file;
+    entry.documentData = null;
+    entry._hydrate = null;
+    refreshPaperLibraryCard(entry);
+    return;
+  }
+  if (!batchLibrary.entries.length) return;
+  entry = PaperLibraryCore.entryFromIndex({
+    id: ident,
+    name: payload.name,
+    kind: "desk",
+    group: payload.group || "",
+    count: payload.count || 0,
+    meta: payload.meta || "",
+    unresolved: payload.unresolved || 0,
+    savedAt: Date.now(),
+  });
+  entry.file = file || null;
+  batchLibrary.entries.unshift(entry);
+  const grid = document.getElementById("paperPreviewGrid");
+  if (!grid) return;
+  const { card } = renderPaperLibraryCard(entry);
+  grid.prepend(card);
+  grid.hidden = false;
+  const empty = document.getElementById("paperLibraryEmpty");
+  if (empty) empty.hidden = true;
+  applyPaperLibraryFilter();
+  updatePaperLibraryStatus();
+  updateBatchPreviewButton();
+}
+
 function paperSummaryPayload(entry) {
   return {
     id: entry.contentId,
@@ -9195,6 +9395,7 @@ async function importDesign(file, options = {}) {
   state.source = {
     encoding: documentData._source?.encoding || "gbk",
   };
+  rememberSourcePaper(file.paperMeta?.id ? { id: file.paperMeta.id, name: file.name, groupId: file.paperMeta.group } : null);
   state.paperLayout = true;
   // 左上角显示打开的是哪张图纸，防止忘记当前文件。
   state.designName = String(file.webkitRelativePath || file.name || "");
@@ -9278,18 +9479,8 @@ async function placeCurrentBuildingOnTerrain() {
 }
 
 async function exportDesign() {
-  const payload = {
-    kind: "desk",
-    records: buildExportRecords(),
-    _source: state.source,
-  };
-  const response = await fetch("/api/format-building", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error("建筑图纸生成失败 (" + response.status + ")");
-  const blob = await response.blob();
+  const bytes = await formatCurrentPaperBytes();
+  const blob = new Blob([bytes], { type: "text/plain" });
   const anchor = document.createElement("a");
   anchor.href = URL.createObjectURL(blob);
   anchor.download = currentPaperDownloadName("txt");
@@ -9526,6 +9717,18 @@ function bindBuilding() {
   };
   document.getElementById("btnSaveDesign")?.addEventListener("click", () => {
     saveDesignNow().catch((error) => console.warn(error));
+  });
+  document.getElementById("btnSaveDesignNew")?.addEventListener("click", () => {
+    commitDesignToPaperLibrary("new").catch((error) => console.warn(error));
+  });
+  document.getElementById("btnSaveDesignOriginal")?.addEventListener("click", () => {
+    commitDesignToPaperLibrary("original").catch((error) => console.warn(error));
+  });
+  document.getElementById("saveDesignName")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const mode = sourcePaperId() ? "original" : "new";
+    commitDesignToPaperLibrary(mode).catch((error) => console.warn(error));
   });
   document.getElementById("btnMakeBuilding").onclick = () => {
     openCurrentPaperPreview();
@@ -9774,7 +9977,7 @@ function bindBuilding() {
   document.querySelectorAll("[data-close-modal]").forEach((button) => {
     button.onclick = () => setModalVisible(button.dataset.closeModal, false);
   });
-  ["dlgCommands", "dlgShortcuts"].forEach((id) => {
+  ["dlgCommands", "dlgShortcuts", "dlgSaveDesign"].forEach((id) => {
     document.getElementById(id).addEventListener("click", (event) => {
       if (event.target.id === id) setModalVisible(id, false);
     });

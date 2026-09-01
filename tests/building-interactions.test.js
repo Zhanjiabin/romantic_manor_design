@@ -503,7 +503,10 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   assert.match(source, /function clusteredRgbPalette/);
   assert.match(source, /function listImageTerrainCells/);
   assert.match(source, /function collectImageTerrainCells/);
-  assert.match(source, /function smoothImageTerrainIndices/);
+  assert.match(source, /function sampleImagePixel/);
+  assert.match(source, /function paintImageTerrainPreviewFromMapping/);
+  assert.doesNotMatch(source, /function smoothImageTerrainIndices/);
+  assert.doesNotMatch(source, /function sampleImageBox/);
   assert.doesNotMatch(source, /function quantizedPixelKey/);
   assert.doesNotMatch(source, /Math\.min\(96,/);
   assert.match(source, /projection\.value = "front"/);
@@ -668,7 +671,7 @@ test("layer list clicks a grouped child without expanding the whole group", () =
     buildingJs.indexOf("function selectLayerIndex"),
     buildingJs.indexOf("async function renameLayer")
   );
-  assert.match(selectLayer, /setSelection\(\[index\]\)/);
+  assert.match(selectLayer, /setSelection\(\[index\], \{ isolate: !!record\.group \}\)/);
   assert.doesNotMatch(selectLayer, /expandGroup/);
   assert.match(selectLayer, /revealSelection\(\)/);
   const groupHeader = buildingJs.slice(
@@ -679,7 +682,17 @@ test("layer list clicks a grouped child without expanding the whole group", () =
   assert.match(groupHeader, /点下面的素材可选中单件/);
   // Canvas single-click still takes the whole group; double-click / Alt isolates one member.
   assert.match(buildingJs, /function wantsIsolateGroupMember\(/);
-  assert.match(buildingJs, /setSelection\(\[hit\], \{ expandGroup: !isolate \}\)/);
+  assert.match(buildingJs, /setSelection\(\[hit\], \{ expandGroup: !isolate, isolate \}\)/);
+  assert.match(buildingJs, /const dragIndices = isolate/);
+  assert.match(buildingJs, /beginRecordDrag\(startScene\.x, startScene\.y, dragIndices, transform\)/);
+  assert.match(buildingJs, /function rememberGroupIsolate\(/);
+  assert.match(buildingJs, /recordBelongsToIsolatedGroup\(hit\)/);
+  assert.match(buildingJs, /setSelection\(\[index\], \{ isolate: !!record\.group \}\)/);
+  const nudge = buildingJs.slice(
+    buildingJs.indexOf("function nudgeSelected"),
+    buildingJs.indexOf("const NUDGE_HOLD_DELAY")
+  );
+  assert.doesNotMatch(nudge, /expandGroupSelection/);
   assert.match(buildingJs, /双击 \/ Alt\+点击/);
   assert.match(buildingJs, /双击选组内单件/);
 });
@@ -726,7 +739,7 @@ test("building desk selection, line brush, and guide affordances follow the ctrl
   );
   assert.match(
     buildingJs,
-    /if \(isolate \|\| !baseSelection\.includes\(hit\)\) \{[\s\S]*setSelection\(\[hit\], \{ expandGroup: !isolate \}\);[\s\S]*beginRecordDrag\(startScene\.x, startScene\.y, movable, transform\)/
+    /if \(isolate \|\| !baseSelection\.includes\(hit\)\) \{[\s\S]*setSelection\(\[hit\], \{ expandGroup: !isolate, isolate \}\);[\s\S]*beginRecordDrag\(startScene\.x, startScene\.y, dragIndices, transform\)/
   );
   assert.match(buildingJs, /双击选组内单件/);
   assert.match(buildingJs, /Space\+左键 \/ 中键/);
@@ -753,6 +766,16 @@ test("building designs and uploaded paper libraries persist explicitly", () => {
   assert.match(buildingJs, /async function saveDesignNow/);
   assert.match(buildingJs, /designName: state\.designName \|\| ""/);
   assert.match(buildingJs, /state\.designName = String\(snap\.designName \|\| ""\)/);
+  assert.match(buildingHtml, /id="dlgSaveDesign"/);
+  assert.match(buildingHtml, /id="btnSaveDesignNew"/);
+  assert.match(buildingHtml, /id="btnSaveDesignOriginal"/);
+  assert.match(buildingJs, /function openSaveDesignDialog\(/);
+  assert.match(buildingJs, /async function commitDesignToPaperLibrary\(/);
+  assert.match(buildingJs, /function newPaperLibraryId\(/);
+  assert.match(buildingJs, /function rememberSourcePaper\(/);
+  assert.match(buildingJs, /file\.paperMeta\?\.id/);
+  assert.match(buildingJs, /PaperLibraryCore\.persist\(\[upload\], \{ replace: false \}\)/);
+  assert.match(buildingJs, /mode === "original" \? originalId : newPaperLibraryId\(\)/);
   assert.match(buildingJs, /async function openServerPaperLibrary/);
   assert.match(buildingJs, /function loadPaperLibraryCacheMap/);
   assert.match(buildingJs, /function paperFingerprint/);
@@ -789,6 +812,11 @@ test("building designs and uploaded paper libraries persist explicitly", () => {
   assert.doesNotMatch(buildingHtml, /更换文件夹/);
   const buildingCss = fs.readFileSync(path.join(__dirname, "../web/building.css"), "utf8");
   assert.match(buildingCss, /#paperInspectMaterials \{[\s\S]*overflow-y:\s*auto/);
+  assert.match(buildingCss, /\.save-design-actions/);
+  assert.match(buildingCss, /\.paper-preview-modal \.paper-preview-card/);
+  assert.match(buildingCss, /#paperPreviewMaterials::-webkit-scrollbar/);
+  assert.doesNotMatch(buildingCss, /max-height: min\(62vh, 620px\)/);
+  assert.doesNotMatch(buildingCss, /max-height: min\(31vh, 260px\)/);
   assert.match(buildingJs, /function fillInspectMaterialList/);
   assert.match(buildingJs, /function requestPaperInspectDraw/);
   assert.match(buildingJs, /const previewImageCache/);

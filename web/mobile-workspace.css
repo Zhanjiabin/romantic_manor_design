@@ -308,6 +308,12 @@ html.is-mobile-workspace .modal-body {
   padding-bottom: max(16px, env(safe-area-inset-bottom)) !important;
 }
 
+html.is-mobile-workspace .paper-preview-modal .modal-body {
+  overflow: hidden !important;
+  display: flex;
+  flex: 1 1 auto;
+}
+
 /* Terrain desk */
 html.is-mobile-workspace #desk.app {
   grid-template-rows: auto minmax(0, 1fr) auto;

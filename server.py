@@ -85,18 +85,46 @@ def max_body_bytes() -> int:
     return max(64 * 1024, n)
 
 
-def auth_credentials() -> tuple[str, str] | None:
-    raw = (os.environ.get("MANOR_BASIC_AUTH") or "").strip()
-    user = (os.environ.get("MANOR_USER") or "").strip()
-    password = os.environ.get("MANOR_PASSWORD") or ""
-    if raw:
-        user, sep, password = raw.partition(":")
-        user = user.strip()
-        if not sep:
-            password = ""
+def _account_pair(user: str, password: str) -> tuple[str, str] | None:
+    user = (user or "").strip()
+    password = password or ""
     if user and password:
         return user, password
     return None
+
+
+def _parse_account(raw: str) -> tuple[str, str] | None:
+    user, sep, password = (raw or "").partition(":")
+    if not sep:
+        return None
+    return _account_pair(user, password)
+
+
+def auth_accounts() -> list[tuple[str, str]]:
+    accounts: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(pair: tuple[str, str] | None) -> None:
+        if not pair or pair[0] in seen:
+            return
+        seen.add(pair[0])
+        accounts.append(pair)
+
+    raw = (os.environ.get("MANOR_BASIC_AUTH") or "").strip()
+    if raw:
+        add(_parse_account(raw))
+    else:
+        add(_account_pair(os.environ.get("MANOR_USER") or "", os.environ.get("MANOR_PASSWORD") or ""))
+    extra = (os.environ.get("MANOR_USERS") or "").strip()
+    if extra:
+        for part in extra.split(","):
+            add(_parse_account(part.strip()))
+    return accounts
+
+
+def auth_credentials() -> tuple[str, str] | None:
+    accounts = auth_accounts()
+    return accounts[0] if accounts else None
 
 
 def parse_basic_auth(header: str) -> tuple[str, str] | None:
@@ -130,13 +158,14 @@ def credentials_match(got_user: str, got_password: str, want_user: str, want_pas
 def require_auth_for_bind(host: str) -> None:
     if host in LOOPBACK:
         return
-    if auth_credentials():
+    if auth_accounts():
         return
     if (os.environ.get("MANOR_ALLOW_OPEN") or "").strip() == "1":
         print("警告: 已对公网开放且未设访问密码（MANOR_ALLOW_OPEN=1）")
         return
     raise SystemExit(
-        "监听非本机地址时必须设置 MANOR_USER 和 MANOR_PASSWORD（或 MANOR_BASIC_AUTH=用户:密码）。"
+        "监听非本机地址时必须设置 MANOR_USER 和 MANOR_PASSWORD"
+        "（或 MANOR_BASIC_AUTH=用户:密码，或 MANOR_USERS=用户:密码,用户:密码）。"
         "仅调试可设 MANOR_ALLOW_OPEN=1。"
     )
 
@@ -223,15 +252,15 @@ class Handler(SimpleHTTPRequestHandler):
         return unquote(urlsplit(self.path).path)
 
     def _authorized(self) -> bool:
-        creds = auth_credentials()
-        if not creds:
+        accounts = auth_accounts()
+        if not accounts:
             return True
         if self._request_path() in PUBLIC_PATHS:
             return True
         got = parse_basic_auth(self.headers.get("Authorization") or "")
         if not got:
             return False
-        return credentials_match(got[0], got[1], creds[0], creds[1])
+        return any(credentials_match(got[0], got[1], user, password) for user, password in accounts)
 
     def _challenge(self) -> bool:
         if self._authorized():
@@ -776,7 +805,7 @@ def main():
     print("bind", "%s:%d" % (host, port))
     print("game", GAME)
     print("tiles", TILE)
-    if auth_credentials():
+    if auth_accounts():
         print("auth", "basic")
     if should_open_browser(host):
         try:

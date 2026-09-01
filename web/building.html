@@ -12,10 +12,10 @@
   <link rel="stylesheet" href="/web/app.css?v=84" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=4" />
   <link rel="stylesheet" href="/web/paper-library.css?v=11" />
-  <link rel="stylesheet" href="/web/building.css?v=179" />
+  <link rel="stylesheet" href="/web/building.css?v=181" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
   <link rel="stylesheet" href="/web/materials-dock.css?v=7" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=86" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=87" />
 </head>
 <body>
   <div class="app building-app phase-select" id="buildingApp">
@@ -446,7 +446,7 @@
               <span>保留地基</span>
             </label>
             <div class="panel-actions">
-              <button type="button" class="btn" id="btnSaveDesign" title="立即保存当前设计到服务器，下次打开自动恢复 (Ctrl+S)">保存设计</button>
+              <button type="button" class="btn" id="btnSaveDesign" title="保存到图纸库：新图纸或写回原图纸 (Ctrl+S)">保存设计</button>
               <button type="button" class="btn btn-primary" id="btnMakeBuilding">生成图纸</button>
               <button type="button" class="btn btn-wide" id="btnPlaceOnTerrain" title="把当前建筑和户型一起放到地形设计桌预览">放到地形桌</button>
               <button type="button" class="btn" id="btnImportDesign" title="清空当前内容后导入图纸">覆盖导入</button>
@@ -566,6 +566,26 @@
     <button type="button" class="mobile-sheet-backdrop" id="buildingRailBackdrop" aria-label="关闭侧栏" hidden></button>
   </div>
 
+  <div class="modal" id="dlgSaveDesign" hidden>
+    <div class="modal-card modal-narrow" role="dialog" aria-modal="true" aria-labelledby="saveDesignTitle" aria-describedby="saveDesignHint">
+      <div class="modal-cap">
+        <span id="saveDesignTitle">保存到图纸库</span>
+        <button type="button" class="icon-x" data-close-modal="dlgSaveDesign" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <p class="app-dialog-msg" id="saveDesignHint">保存为新图纸，或写回从图纸库打开的原图纸。</p>
+        <label class="field">
+          <span>图纸名称</span>
+          <input class="input" id="saveDesignName" maxlength="80" placeholder="例如 咖啡馆西厢" autocomplete="off" />
+        </label>
+        <div class="save-design-actions">
+          <button type="button" class="btn btn-primary btn-block" id="btnSaveDesignNew">保存为新图纸</button>
+          <button type="button" class="btn btn-block" id="btnSaveDesignOriginal" hidden>保存到原图纸</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="dlgPreset" hidden>
     <div class="modal-card modal-narrow">
       <div class="modal-cap">
@@ -660,6 +680,6 @@
   <script src="/web/building-interactions.js?v=12"></script>
   <script src="/web/building-preview.js?v=6"></script>
   <script src="/web/material-ledger.js?v=3"></script>
-  <script src="/web/building.js?v=212"></script>
+  <script src="/web/building.js?v=215"></script>
 </body>
 </html>

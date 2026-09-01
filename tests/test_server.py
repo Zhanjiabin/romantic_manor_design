@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from server import (
     Handler,
+    auth_accounts,
     auth_credentials,
     credentials_match,
     listen_host,
@@ -33,6 +34,7 @@ def _clear_auth_env(monkey_keys=None):
         "MANOR_USER",
         "MANOR_PASSWORD",
         "MANOR_BASIC_AUTH",
+        "MANOR_USERS",
         "MANOR_ALLOW_OPEN",
         "MANOR_NO_BROWSER",
         "MANOR_OPEN_BROWSER",
@@ -73,6 +75,12 @@ def test_auth_from_user_password_and_combined():
         assert auth_credentials() == ("ada", "secret")
         os.environ["MANOR_BASIC_AUTH"] = "bee:other"
         assert auth_credentials() == ("bee", "other")
+        os.environ["MANOR_USERS"] = "zed:extra,  zed:ignored,amy:two"
+        assert auth_accounts() == [("bee", "other"), ("zed", "extra"), ("amy", "two")]
+        os.environ.pop("MANOR_BASIC_AUTH", None)
+        os.environ["MANOR_USER"] = "ada"
+        os.environ["MANOR_PASSWORD"] = "secret"
+        assert auth_accounts() == [("ada", "secret"), ("zed", "extra"), ("amy", "two")]
     finally:
         _restore_env(saved)
 
@@ -145,6 +153,46 @@ def test_http_auth_and_public_health():
         page = ok.read()
         assert ok.status == 200
         assert b"design" in page.lower() or b"\xe8\xae\xbe\xe8\xae\xa1" in page
+        conn.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        _restore_env(saved)
+
+
+def test_http_auth_accepts_extra_users():
+    saved = _clear_auth_env()
+    os.environ["MANOR_USER"] = "ada"
+    os.environ["MANOR_PASSWORD"] = "secret"
+    os.environ["MANOR_USERS"] = "zed:extra"
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = httpd.server_address[:2]
+        primary = base64.b64encode(b"ada:secret").decode("ascii")
+        extra = base64.b64encode(b"zed:extra").decode("ascii")
+        wrong = base64.b64encode(b"zed:secret").decode("ascii")
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/", headers={"Authorization": "Basic " + extra})
+        ok = conn.getresponse()
+        ok.read()
+        assert ok.status == 200
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/", headers={"Authorization": "Basic " + primary})
+        ok = conn.getresponse()
+        ok.read()
+        assert ok.status == 200
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/", headers={"Authorization": "Basic " + wrong})
+        denied = conn.getresponse()
+        denied.read()
+        assert denied.status == 401
         conn.close()
     finally:
         httpd.shutdown()

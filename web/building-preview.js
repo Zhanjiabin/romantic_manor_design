@@ -481,7 +481,11 @@
       bottom = Math.max(bottom, y + h);
     };
     if (includeMaskGrass) includeRect(0, 0, maskWidth, maskHeight);
-    if (includeFloor) includeRect(snug.x, snug.y, floorWidth, floorHeight);
+    // Always reserve the brick-floor rectangle in the scene bounds, even when it
+    // is not painted. groundAnchor is the floor front tip; cropping only to props
+    // leaves that tip outside the bitmap and makes "no foundation" papers float
+    // relative to papers that kept the brick floor.
+    includeRect(snug.x, snug.y, floorWidth, floorHeight);
     visible.forEach((row) => {
       const x = Number(row.record.x) + contentDx;
       const y = Number(row.record.y) + contentDy;
@@ -518,6 +522,19 @@
     };
     const floorQuad = floorQuadFromDiamond(floorDiamond);
     const bounds = alphaBounds(scene);
+    // Keep the logical floor front inside the cropped bitmap even when the brick
+    // floor itself is not painted (terrain "no foundation" mode). Otherwise the
+    // ground anchor falls outside the prop-only crop and papers float.
+    bounds.left = Math.min(bounds.left, Math.floor(rawGroundAnchor.x));
+    bounds.top = Math.min(bounds.top, Math.floor(rawGroundAnchor.y));
+    bounds.right = Math.max(bounds.right, Math.ceil(rawGroundAnchor.x) + 1);
+    bounds.bottom = Math.max(bounds.bottom, Math.ceil(rawGroundAnchor.y) + 1);
+    if (includeFloor || !includeMaskGrass) {
+      bounds.left = Math.min(bounds.left, Math.floor(snug.x - originX));
+      bounds.top = Math.min(bounds.top, Math.floor(snug.y - originY));
+      bounds.right = Math.max(bounds.right, Math.ceil(snug.x - originX + floorWidth));
+      bounds.bottom = Math.max(bounds.bottom, Math.ceil(snug.y - originY + floorHeight));
+    }
     const bitmap = document.createElement("canvas");
     bitmap.width = Math.max(1, bounds.right - bounds.left);
     bitmap.height = Math.max(1, bounds.bottom - bounds.top);

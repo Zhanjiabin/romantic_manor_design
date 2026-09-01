@@ -3384,7 +3384,7 @@ async function ensurePreviewRuntime(entity) {
   if (!entity) return null;
   const old = state.previewRuntime.get(entity.id);
   const cacheKey = entity.sourceType === "paper"
-    ? `terrain-v4|${entity.baseNo}|${entity.coordinateSpace || "paper"}|${entity.paperHash || ""}|f${entity.keepFoundation ? 1 : 0}`
+    ? `terrain-v5|${entity.baseNo}|${entity.coordinateSpace || "paper"}|${entity.paperHash || ""}|f${entity.keepFoundation ? 1 : 0}`
     : `native-v2|${entity.assetId || ""}`;
   if (old?.cacheKey === cacheKey && (old.bitmap || old.image || old.error)) return old;
   state.previewRuntime.set(entity.id, { cacheKey, loading: true });
@@ -3526,29 +3526,13 @@ function invertAffine(t) {
   };
 }
 
-function floorFitLinear(entity) {
-  if (entity?.sourceType !== "paper") return null;
-  const src = entity.floorQuad;
-  const dst = isoOccupancyQuad(entity);
-  if (!src?.left || !src?.right || !dst?.left || !dst?.right) return null;
-  const map = linearFromTwoRays(src.left, src.right, dst.left, dst.right);
-  if (!map) return null;
-  const mapped = (point) => ({
-    x: map.a * point.x + map.c * point.y,
-    y: map.b * point.x + map.d * point.y,
-  });
-  const drift = Math.max(
-    Math.hypot(mapped(src.left).x - dst.left.x, mapped(src.left).y - dst.left.y),
-    Math.hypot(mapped(src.right).x - dst.right.x, mapped(src.right).y - dst.right.y)
-  );
-  if (drift > 2) return null;
-  const need =
-    Math.hypot(src.left.x - dst.left.x, src.left.y - dst.left.y) > 1.5 ||
-    Math.hypot(src.right.x - dst.right.x, src.right.y - dst.right.y) > 1.5;
-  if (!need && Math.abs(map.a - 1) < 0.004 && Math.abs(map.d - 1) < 0.004 && Math.abs(map.b) < 0.004 && Math.abs(map.c) < 0.004) {
-    return null;
-  }
-  return map;
+function floorFitLinear(_entity) {
+  // Do not affine-warp the terrain preview bitmap onto the ideal occupancy diamond.
+  // House baseimg art is already slightly off true 2:1; warping each paper differently
+  // shears brick platforms and paper curb/floor sprites so adjacent buildings look
+  // stepped even when their ground anchors share one plane. Placement uses
+  // groundAnchor only; the selection footprint stays on isoOccupancyQuad.
+  return null;
 }
 
 function previewEntityLayout(entity) {
@@ -8015,7 +7999,7 @@ async function applyPlanOverlay() {
     };
     runtime = {
       ...result,
-      cacheKey: `terrain-v4|${entity.baseNo}|${entity.coordinateSpace}|${entity.paperHash}|f${entity.keepFoundation ? 1 : 0}`,
+      cacheKey: `terrain-v5|${entity.baseNo}|${entity.coordinateSpace}|${entity.paperHash}|f${entity.keepFoundation ? 1 : 0}`,
       loading: false,
     };
   } else {

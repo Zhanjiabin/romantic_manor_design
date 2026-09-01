@@ -316,6 +316,9 @@ test("locked rendering invariants stay explicit in building.js", () => {
   assert.match(css, /\.paper-inspect-viewport/);
   assert.match(css, /\.paper-inspect\[hidden\]/);
   assert.match(html, /id="snapAxis"/);
+  assert.match(html, /class="snap-step-field"/);
+  assert.match(html, /class="snap-step-unit">像素</);
+  assert.match(css, /\.snap-step-unit[\s\S]*white-space:\s*nowrap/);
   assert.match(html, /id="dlgPaperPreview"/);
   assert.match(html, /id="paperLibrary"/);
   assert.match(html, /id="paperInspect"/);
@@ -580,14 +583,16 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   assert.match(source, /function snapIsoSouth/);
   assert.match(source, /function isoOccupancyQuad/);
   assert.match(source, /function floorFitLinear/);
+  assert.match(source, /Do not affine-warp the terrain preview bitmap/);
   assert.match(source, /ctx\.transform\(transform\.a, transform\.b, transform\.c, transform\.d, transform\.e, transform\.f\)/);
   assert.match(source, /i and j have opposite parity/);
   assert.match(source, /function snapStampSouth/);
   assert.match(source, /function previewFloorQuad/);
   assert.match(source, /layout\.quad/);
-  assert.match(source, /terrain-v4\|/);
-  assert.doesNotMatch(source, /terrain-v3\|/);
+  assert.match(source, /terrain-v5\|/);
+  assert.doesNotMatch(source, /terrain-v4\|/);
   assert.doesNotMatch(source, /ix \* SNAP \+ SNAP \/ 2/);
+  assert.match(renderer, /Always reserve the brick-floor rectangle/);
 });
 
 test("terrain renderer clones the native water/light/junction passes", () => {
@@ -942,7 +947,8 @@ test("both desks expose the shared mobile-first workspace", () => {
   assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.building-app \.topbar[\s\S]*flex-direction:\s*row/);
   assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.building-app \.top-actions[\s\S]*justify-content:\s*flex-end/);
   assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.building-app \.top-actions-foot[\s\S]*display:\s*contents/);
-  assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.building-app \.compact-check[\s\S]*display:\s*none/);
+  assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.building-app \.snap-cluster[\s\S]*min-width:\s*max-content/);
+  assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.building-app \.snap-step-unit[\s\S]*white-space:\s*nowrap/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.building-app\.phase-design \.canvas-toolrail \.tool-hint[\s\S]*display:\s*none/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.stage-commandbar \.commandbar-drag-label[\s\S]*display:\s*none/);
   assert.match(paperCss, /html:not\(\.is-mobile-workspace\) \.paper-library-toolbar[\s\S]*display:\s*contents/);

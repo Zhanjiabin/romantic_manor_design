@@ -2385,10 +2385,18 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .snap-cluster,
 html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .veil-cluster {
   width: auto;
   max-width: 100%;
-  flex: 0 1 auto;
-  min-width: 0;
   padding: 1px 3px;
   gap: 2px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .snap-cluster {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .veil-cluster {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .snap-cluster .top-check,
@@ -2440,9 +2448,22 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .snap-axis {
   max-width: none;
 }
 
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .snap-step-field {
+  flex: 0 0 auto;
+  min-width: max-content;
+  height: 22px;
+  overflow: visible;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .snap-step-unit {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: visible;
+}
+
 html.is-mobile-workspace:not(.is-tablet-workspace) .building-app #snapStep {
-  min-width: 3.6em;
-  width: 3.8em;
+  min-width: 4.4em;
+  width: 4.6em;
   max-width: none;
 }
 

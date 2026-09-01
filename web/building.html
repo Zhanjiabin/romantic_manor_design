@@ -12,10 +12,10 @@
   <link rel="stylesheet" href="/web/app.css?v=84" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=4" />
   <link rel="stylesheet" href="/web/paper-library.css?v=11" />
-  <link rel="stylesheet" href="/web/building.css?v=178" />
+  <link rel="stylesheet" href="/web/building.css?v=179" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
   <link rel="stylesheet" href="/web/materials-dock.css?v=7" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=84" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=86" />
 </head>
 <body>
   <div class="app building-app phase-select" id="buildingApp">
@@ -44,12 +44,15 @@
             <option value="iso" selected>斜角</option>
             <option value="both">双轴</option>
           </select>
-          <select class="input snap-step" id="snapStep" title="吸附步长">
-            <option value="1">1px</option>
-            <option value="4" selected>4px</option>
-            <option value="8">8px</option>
-            <option value="16">16px</option>
-          </select>
+          <label class="snap-step-field" title="吸附步长">
+            <select class="input snap-step" id="snapStep" aria-label="吸附步长">
+              <option value="1">1</option>
+              <option value="4" selected>4</option>
+              <option value="8">8</option>
+              <option value="16">16</option>
+            </select>
+            <span class="snap-step-unit">像素</span>
+          </label>
         </div>
         <div class="top-actions-foot">
           <div class="top-cluster veil-cluster" title="幕布">

@@ -6,26 +6,103 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
 import time
+from contextvars import ContextVar
 from pathlib import Path
 
 from game_paths import ROOT
 
 DATA = ROOT / "data"
 _LOCK = threading.Lock()
+_INHERIT_LOCK = threading.Lock()
 _ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 VERSION_CAP = 30
+_save_user: ContextVar[str] = ContextVar("manor_save_user", default="")
+_LEGACY_FILES = ("terrain-draft.json", "building-session.json", "building-customs.json")
+_LEGACY_DIRS = ("terrain-versions", "terrain-assets", "building-papers")
 
 
-def saves_root() -> Path:
+def set_save_user(user: str | None) -> None:
+    _save_user.set(str(user or "").strip())
+
+
+def current_save_user() -> str:
+    return _save_user.get()
+
+
+def _legacy_owner() -> str:
+    raw = (os.environ.get("MANOR_BASIC_AUTH") or "").strip()
+    if raw:
+        return raw.split(":", 1)[0].strip()
+    return (os.environ.get("MANOR_USER") or "").strip()
+
+
+def _user_folder_name(user: str) -> str:
+    ident = safe_save_id(user)
+    if ident:
+        return ident
+    return hashlib.sha1(user.encode("utf-8")).hexdigest()[:16]
+
+
+def _base_saves_root() -> Path:
     env = (os.environ.get("MANOR_SAVES") or "").strip().strip('"')
-    root = Path(env) if env else (DATA / "saves")
+    return Path(env) if env else (DATA / "saves")
+
+
+def _prepare_saves_root(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "terrain-versions").mkdir(parents=True, exist_ok=True)
     (root / "terrain-assets").mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _user_dir_has_data(root: Path) -> bool:
+    if any((root / name).is_file() for name in _LEGACY_FILES):
+        return True
+    papers = root / "building-papers"
+    if papers.is_dir() and any(path.suffix == ".json" and not path.name.startswith("_") for path in papers.iterdir()):
+        return True
+    versions = root / "terrain-versions"
+    if versions.is_dir() and any(versions.glob("*.json")):
+        return True
+    return False
+
+
+def _maybe_inherit_legacy(base: Path, dest: Path, user: str) -> None:
+    if user != _legacy_owner() or _user_dir_has_data(dest):
+        return
+    marker = dest / ".inherited"
+    if marker.is_file():
+        return
+    copied = False
+    for name in _LEGACY_FILES:
+        src = base / name
+        if src.is_file():
+            shutil.copy2(src, dest / name)
+            copied = True
+    for name in _LEGACY_DIRS:
+        src = base / name
+        dst = dest / name
+        if src.is_dir() and not dst.exists():
+            shutil.copytree(src, dst)
+            copied = True
+    if copied:
+        marker.write_text(user, encoding="utf-8")
+
+
+def saves_root() -> Path:
+    base = _base_saves_root()
+    user = current_save_user()
+    if not user:
+        return _prepare_saves_root(base)
+    root = base / "users" / _user_folder_name(user)
+    root.mkdir(parents=True, exist_ok=True)
+    with _INHERIT_LOCK:
+        _maybe_inherit_legacy(base, root, user)
+    return _prepare_saves_root(root)
 
 
 def safe_save_id(value: str) -> str | None:

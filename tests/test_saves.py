@@ -25,6 +25,7 @@ from saves import (
     save_terrain_draft,
     save_terrain_version,
     safe_save_id,
+    set_save_user,
 )
 
 
@@ -196,3 +197,47 @@ def test_building_paper_keeps_id_when_content_changes():
             os.environ.pop("MANOR_SAVES", None)
         else:
             os.environ["MANOR_SAVES"] = prev
+
+
+def test_saves_are_isolated_per_user_and_primary_inherits_legacy():
+    tmp = tempfile.mkdtemp(prefix="manor-saves-users-")
+    prev = os.environ.get("MANOR_SAVES")
+    prev_user = os.environ.get("MANOR_USER")
+    os.environ["MANOR_SAVES"] = tmp
+    os.environ["MANOR_USER"] = "ada"
+    try:
+        set_save_user("")
+        save_terrain_draft({"id": "legacy", "name": "旧草稿", "savedAt": 1, "stamps": []})
+        save_building_papers([{"name": "shared.txt", "data": "VjE7bGVnYWN5"}])
+
+        set_save_user("ada")
+        ada_draft = load_terrain_bundle()["draft"]
+        assert ada_draft and ada_draft["id"] == "legacy"
+        assert load_building_papers()["papers"][0]["name"] == "shared.txt"
+        save_terrain_draft({"id": "ada-new", "name": "Ada", "savedAt": 2, "stamps": []})
+
+        set_save_user("zed")
+        assert load_terrain_bundle()["draft"] is None
+        assert load_building_papers()["papers"] == []
+        save_terrain_draft({"id": "zed-only", "name": "Zed", "savedAt": 3, "stamps": []})
+        save_building_papers([{"name": "zed.txt", "data": "VjE7emVk"}])
+
+        set_save_user("ada")
+        assert load_terrain_bundle()["draft"]["id"] == "ada-new"
+        names = [item["name"] for item in load_building_papers()["papers"]]
+        assert "shared.txt" in names
+        assert "zed.txt" not in names
+
+        set_save_user("zed")
+        assert load_terrain_bundle()["draft"]["id"] == "zed-only"
+        assert [item["name"] for item in load_building_papers()["papers"]] == ["zed.txt"]
+    finally:
+        set_save_user("")
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev
+        if prev_user is None:
+            os.environ.pop("MANOR_USER", None)
+        else:
+            os.environ["MANOR_USER"] = prev_user

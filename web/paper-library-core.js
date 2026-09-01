@@ -182,7 +182,7 @@
 
   function loadPaperSort() {
     try {
-      return parseSortValue(global.localStorage?.getItem(SORT_STORAGE_KEY));
+      return parseSortValue((global.deskGet || ((key) => global.localStorage?.getItem(key)))(SORT_STORAGE_KEY));
     } catch (error) {
       return parseSortValue("");
     }
@@ -190,7 +190,7 @@
 
   function savePaperSort(sort) {
     try {
-      global.localStorage?.setItem(SORT_STORAGE_KEY, sortValue(sort));
+      (global.deskSet || ((key, value) => global.localStorage?.setItem(key, value)))(SORT_STORAGE_KEY, sortValue(sort));
     } catch (error) {}
   }
 

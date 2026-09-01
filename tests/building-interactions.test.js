@@ -767,6 +767,10 @@ test("building designs and uploaded paper libraries persist explicitly", () => {
   assert.match(buildingJs, /designName: state\.designName \|\| ""/);
   assert.match(buildingJs, /state\.designName = String\(snap\.designName \|\| ""\)/);
   assert.match(buildingHtml, /id="dlgSaveDesign"/);
+  assert.doesNotMatch(
+    buildingJs,
+    /function setModalVisible\(id, visible\) \{[\s\S]{0,220}closeBuildingRail\(\)/
+  );
   assert.match(buildingHtml, /id="btnSaveDesignNew"/);
   assert.match(buildingHtml, /id="btnSaveDesignOriginal"/);
   assert.match(buildingJs, /function openSaveDesignDialog\(/);
@@ -883,7 +887,7 @@ test("desk switching saves locally first and restores the newer session", () => 
     buildingJs.indexOf("async function saveBuildingSessionForSwitch"),
     buildingJs.indexOf("async function saveDesignNow")
   );
-  assert.match(buildingSwitch, /localStorage\.setItem\(SESSION_KEY/);
+  assert.match(buildingSwitch, /deskSet\(SESSION_KEY/);
   assert.doesNotMatch(buildingSwitch, /await putBuildingSaves/);
   assert.match(appJs, /async function saveDraftForSwitch/);
   assert.match(appJs, /wireDeskSwitchSave\(saveDraftForSwitch\)/);
@@ -929,14 +933,35 @@ test("both desks expose the shared mobile-first workspace", () => {
     assert.doesNotMatch(html, /maximum-scale|user-scalable=no/);
     assert.match(html, /mobile-bottom-dock/);
     assert.match(html, /id="btnSwitchAccount"/);
+    assert.match(html, /data-account-switch/);
+    assert.match(html, /phone-account-btn/);
     assert.match(html, /desk-account\.js/);
   }
   const deskAccount = fs.readFileSync(path.join(__dirname, "../web/desk-account.js"), "utf8");
   const chromeCss = fs.readFileSync(path.join(__dirname, "../web/desk-chrome.css"), "utf8");
+  assert.doesNotMatch(deskAccount, /^#/);
+  assert.doesNotThrow(() => new Function(deskAccount));
   assert.match(deskAccount, /\/api\/whoami/);
   assert.match(deskAccount, /\/api\/logout/);
+  assert.match(deskAccount, /deskStorageKey/);
+  assert.match(deskAccount, /\/login\?next=/);
+  assert.doesNotMatch(deskAccount, /WWW-Authenticate|Authorization: \"Basic/);
+  const loginHtml = fs.readFileSync(path.join(__dirname, "../web/login.html"), "utf8");
+  const loginJs = fs.readFileSync(path.join(__dirname, "../web/login.js"), "utf8");
+  const loginCss = fs.readFileSync(path.join(__dirname, "../web/login.css"), "utf8");
+  assert.match(loginHtml, /viewport-fit=cover/);
+  assert.doesNotMatch(loginHtml, /maximum-scale|user-scalable=no/);
+  assert.match(loginJs, /\/api\/login/);
+  assert.doesNotThrow(() => new Function(loginJs));
+  assert.match(loginCss, /font-size:\s*16px/);
+  assert.match(loginCss, /min-height:\s*48px/);
   assert.match(chromeCss, /\.app \.topbar \{[\s\S]*min-height:\s*52px/);
   assert.match(chromeCss, /\.top-account-btn\[hidden\]/);
+  assert.match(chromeCss, /\.phone-account-btn/);
+  assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.top-account-btn/);
+  assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.phone-account-btn:not\(\[hidden\]\)/);
+  assert.match(buildingHtml, /id="btnCommandPalette"[\s\S]*id="btnSwitchAccount"/);
+  assert.match(chromeCss, /#dlgAppField\[hidden\]/);
   assert.match(buildingCss, /\.building-app \.topbar \{[\s\S]*min-height:\s*52px/);
   assert.doesNotMatch(buildingCss, /\.building-app \.topbar \{[^}]*min-height:\s*40px/);
   assert.match(mobileCss, /html\.is-mobile-workspace #desk \.topbar[\s\S]*min-height:\s*44px/);

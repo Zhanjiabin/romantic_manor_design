@@ -18,11 +18,13 @@ from server import (
     Handler,
     auth_accounts,
     auth_credentials,
+    clear_login_failures,
     credentials_match,
     listen_host,
     listen_port,
     parse_basic_auth,
     require_auth_for_bind,
+    safe_next_path,
     should_open_browser,
 )
 
@@ -35,6 +37,7 @@ def _clear_auth_env(monkey_keys=None):
         "MANOR_PASSWORD",
         "MANOR_BASIC_AUTH",
         "MANOR_USERS",
+        "MANOR_SESSION_SECRET",
         "MANOR_ALLOW_OPEN",
         "MANOR_NO_BROWSER",
         "MANOR_OPEN_BROWSER",
@@ -51,6 +54,23 @@ def _restore_env(saved):
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+
+
+def _login_headers(host, port, user, password):
+    clear_login_failures("127.0.0.1")
+    conn = HTTPConnection(host, port, timeout=5)
+    payload = json.dumps({"user": user, "password": password}).encode("utf-8")
+    conn.request("POST", "/api/login", body=payload, headers={"Content-Type": "application/json"})
+    res = conn.getresponse()
+    body = res.read()
+    status = res.status
+    authenticate = res.getheader("WWW-Authenticate")
+    cookie = (res.getheader("Set-Cookie") or "").split(";", 1)[0]
+    conn.close()
+    assert authenticate in (None, "")
+    assert status == 200, body
+    assert cookie.startswith("manor_session=")
+    return {"Cookie": cookie}
 
 
 def test_listen_defaults():
@@ -122,6 +142,13 @@ def test_should_open_browser_skips_remote():
         _restore_env(saved)
 
 
+def test_safe_next_path():
+    assert safe_next_path("/web/building.html") == "/web/building.html"
+    assert safe_next_path("//evil") == "/"
+    assert safe_next_path("https://evil.example/") == "/"
+    assert safe_next_path("/login") == "/"
+
+
 def test_http_auth_and_public_health():
     saved = _clear_auth_env()
     os.environ["MANOR_USER"] = "ada"
@@ -135,7 +162,17 @@ def test_http_auth_and_public_health():
         conn.request("GET", "/")
         denied = conn.getresponse()
         denied.read()
-        assert denied.status == 401
+        assert denied.status == 302
+        assert "/login" in (denied.getheader("Location") or "")
+        assert not denied.getheader("WWW-Authenticate")
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/login")
+        login = conn.getresponse()
+        page = login.read()
+        assert login.status == 200
+        assert "登录" in page.decode("utf-8")
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
@@ -146,9 +183,17 @@ def test_http_auth_and_public_health():
         assert b'"ok"' in body
         conn.close()
 
-        token = base64.b64encode(b"ada:secret").decode("ascii")
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/", headers={"Authorization": "Basic " + token})
+        conn.request("GET", "/api/saves/terrain")
+        api = conn.getresponse()
+        api.read()
+        assert api.status == 401
+        assert not api.getheader("WWW-Authenticate")
+        conn.close()
+
+        headers = _login_headers(host, port, "ada", "secret")
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/", headers=headers)
         ok = conn.getresponse()
         page = ok.read()
         assert ok.status == 200
@@ -170,29 +215,30 @@ def test_http_auth_accepts_extra_users():
     thread.start()
     try:
         host, port = httpd.server_address[:2]
-        primary = base64.b64encode(b"ada:secret").decode("ascii")
-        extra = base64.b64encode(b"zed:extra").decode("ascii")
-        wrong = base64.b64encode(b"zed:secret").decode("ascii")
+        extra = _login_headers(host, port, "zed", "extra")
+        primary = _login_headers(host, port, "ada", "secret")
 
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/", headers={"Authorization": "Basic " + extra})
+        conn.request("GET", "/", headers=extra)
         ok = conn.getresponse()
         ok.read()
         assert ok.status == 200
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/", headers={"Authorization": "Basic " + primary})
+        conn.request("GET", "/", headers=primary)
         ok = conn.getresponse()
         ok.read()
         assert ok.status == 200
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/", headers={"Authorization": "Basic " + wrong})
+        payload = json.dumps({"user": "zed", "password": "secret"}).encode("utf-8")
+        conn.request("POST", "/api/login", body=payload, headers={"Content-Type": "application/json"})
         denied = conn.getresponse()
         denied.read()
         assert denied.status == 401
+        assert not denied.getheader("WWW-Authenticate")
         conn.close()
     finally:
         httpd.shutdown()
@@ -210,21 +256,39 @@ def test_whoami_and_logout():
     thread.start()
     try:
         host, port = httpd.server_address[:2]
-        extra = base64.b64encode(b"zed:extra").decode("ascii")
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/api/whoami", headers={"Authorization": "Basic " + extra})
+        conn.request("GET", "/api/whoami")
+        anon = conn.getresponse()
+        anon_body = json.loads(anon.read())
+        assert anon.status == 200
+        assert anon_body["auth"] is True
+        assert anon_body["user"] == ""
+        conn.close()
+
+        headers = _login_headers(host, port, "zed", "extra")
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/whoami", headers=headers)
         who = conn.getresponse()
-        body = who.read()
+        payload = json.loads(who.read())
         assert who.status == 200
-        assert json.loads(body)["user"] == "zed"
+        assert payload["user"] == "zed"
+        assert payload["auth"] is True
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/api/logout", headers={"Authorization": "Basic " + extra})
+        conn.request("POST", "/api/logout", headers=headers)
         out = conn.getresponse()
-        out.read()
-        assert out.status == 401
-        assert "Basic" in (out.getheader("WWW-Authenticate") or "")
+        body = json.loads(out.read())
+        assert out.status == 200
+        assert body["ok"] is True
+        assert not out.getheader("WWW-Authenticate")
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/")
+        after = conn.getresponse()
+        after.read()
+        assert after.status == 302
         conn.close()
     finally:
         httpd.shutdown()
@@ -242,10 +306,9 @@ def test_http_saves_roundtrip():
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
-    token = base64.b64encode(b"ada:secret").decode("ascii")
-    headers = {"Authorization": "Basic " + token, "Content-Type": "application/json"}
     try:
         host, port = httpd.server_address[:2]
+        headers = {**_login_headers(host, port, "ada", "secret"), "Content-Type": "application/json"}
         conn = HTTPConnection(host, port, timeout=5)
         conn.request(
             "PUT",
@@ -259,7 +322,7 @@ def test_http_saves_roundtrip():
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/api/saves/terrain", headers={"Authorization": "Basic " + token})
+        conn.request("GET", "/api/saves/terrain", headers=headers)
         got = conn.getresponse()
         body = got.read()
         assert got.status == 200
@@ -273,7 +336,7 @@ def test_http_saves_roundtrip():
             "PUT",
             f"/api/saves/terrain/assets/{asset_id}",
             body=asset,
-            headers={"Authorization": "Basic " + token, "Content-Type": "image/png"},
+            headers={**headers, "Content-Type": "image/png"},
         )
         put_asset = conn.getresponse()
         put_asset.read()
@@ -284,7 +347,7 @@ def test_http_saves_roundtrip():
         conn.request(
             "GET",
             f"/api/saves/terrain/assets/{asset_id}",
-            headers={"Authorization": "Basic " + token},
+            headers=headers,
         )
         got_asset = conn.getresponse()
         assert got_asset.status == 200
@@ -302,7 +365,7 @@ def test_http_saves_roundtrip():
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", "/api/saves/building/papers", headers={"Authorization": "Basic " + token})
+        conn.request("GET", "/api/saves/building/papers", headers=headers)
         got_papers = conn.getresponse()
         papers_body = got_papers.read()
         assert got_papers.status == 200
@@ -313,7 +376,7 @@ def test_http_saves_roundtrip():
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", f"/api/saves/building/papers/{ident}", headers={"Authorization": "Basic " + token})
+        conn.request("GET", f"/api/saves/building/papers/{ident}", headers=headers)
         one = conn.getresponse()
         one_body = one.read()
         assert one.status == 200
@@ -334,12 +397,69 @@ def test_http_saves_roundtrip():
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
-        conn.request("GET", f"/api/saves/building/papers/{ident}/thumb", headers={"Authorization": "Basic " + token})
+        conn.request("GET", f"/api/saves/building/papers/{ident}/thumb", headers=headers)
         got_thumb = conn.getresponse()
         assert got_thumb.status == 200
         assert got_thumb.getheader("Content-Type") == "image/jpeg"
         assert got_thumb.read().startswith(b"\xff\xd8")
         conn.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        if prev_saves is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev_saves
+        _restore_env(saved)
+
+
+def test_http_saves_are_isolated_per_account():
+    saved = _clear_auth_env()
+    tmp = Path(tempfile.mkdtemp(prefix="manor-saves-http-users-"))
+    prev_saves = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = str(tmp)
+    os.environ["MANOR_USER"] = "ada"
+    os.environ["MANOR_PASSWORD"] = "secret"
+    os.environ["MANOR_USERS"] = "zed:extra"
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = httpd.server_address[:2]
+        ada = {**_login_headers(host, port, "ada", "secret"), "Content-Type": "application/json"}
+        zed = {**_login_headers(host, port, "zed", "extra"), "Content-Type": "application/json"}
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "PUT",
+            "/api/saves/terrain/draft",
+            body='{"id":"ada-d","name":"Ada","savedAt":1,"stamps":[]}',
+            headers=ada,
+        )
+        assert conn.getresponse().status == 200
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "PUT",
+            "/api/saves/terrain/draft",
+            body='{"id":"zed-d","name":"Zed","savedAt":2,"stamps":[]}',
+            headers=zed,
+        )
+        assert conn.getresponse().status == 200
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/terrain", headers=ada)
+        ada_body = json.loads(conn.getresponse().read())
+        conn.close()
+        assert ada_body["draft"]["id"] == "ada-d"
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/terrain", headers=zed)
+        zed_body = json.loads(conn.getresponse().read())
+        conn.close()
+        assert zed_body["draft"]["id"] == "zed-d"
     finally:
         httpd.shutdown()
         httpd.server_close()

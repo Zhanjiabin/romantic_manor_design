@@ -10,12 +10,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>建筑设计桌</title>
   <link rel="stylesheet" href="/web/app.css?v=84" />
-  <link rel="stylesheet" href="/web/desk-chrome.css?v=7" />
+  <link rel="stylesheet" href="/web/desk-chrome.css?v=10" />
   <link rel="stylesheet" href="/web/paper-library.css?v=11" />
   <link rel="stylesheet" href="/web/building.css?v=183" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
   <link rel="stylesheet" href="/web/materials-dock.css?v=7" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=89" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=90" />
 </head>
 <body>
   <div class="app building-app phase-select" id="buildingApp">
@@ -67,14 +67,14 @@
           </div>
           <span class="resource-status" id="resourceStatus" hidden></span>
           <button type="button" class="top-command-btn" id="btnCommandPalette" title="命令面板 Ctrl+K">命令</button>
+          <button type="button" class="top-command-btn top-account-btn" id="btnSwitchAccount" data-account-switch hidden title="切换账号">
+            <span class="top-account-kicker">账号</span>
+            <span class="desk-account-name">切换账号</span>
+          </button>
           <button type="button" class="top-command-btn" id="btnShortcuts" title="快捷键帮助 ?">?</button>
           <button type="button" class="top-command-btn rail-toggle" id="btnToggleRail" title="收起/展开右侧面板">侧栏</button>
         </div>
       </div>
-      <button type="button" class="btn btn-compact top-account-btn" id="btnSwitchAccount" hidden title="切换账号">
-        <span class="top-account-kicker">账号</span>
-        <span class="top-account-name" id="deskAccountName"></span>
-      </button>
     </header>
 
     <div class="workspace building-workspace">
@@ -433,6 +433,10 @@
 
         </div>
         <div class="rail-panel building-project-pane" id="buildingProjectPane" hidden>
+          <button type="button" class="btn btn-wide phone-account-btn" data-account-switch hidden title="切换账号">
+            <span class="top-account-kicker">账号</span>
+            <span class="desk-account-name">切换账号</span>
+          </button>
           <div class="project-base-summary">
             <span>当前户型</span>
             <strong id="projectCurrentBase">无</strong>
@@ -678,13 +682,13 @@
   <input type="file" id="buildingFolder" accept=".txt,text/plain" multiple webkitdirectory directory hidden />
   <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/paper-library-core.js?v=4"></script>
+  <script src="/web/paper-library-core.js?v=5"></script>
   <script src="/web/app-dialog.js?v=1"></script>
-  <script src="/web/desk-account.js?v=1"></script>
+  <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/building-interactions.js?v=12"></script>
   <script src="/web/building-preview.js?v=6"></script>
   <script src="/web/material-ledger.js?v=3"></script>
-  <script src="/web/building.js?v=215"></script>
+  <script src="/web/building.js?v=217"></script>
 </body>
 </html>

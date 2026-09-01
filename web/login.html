@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#2f6b4f" />
+  <title>登录 · 设计桌</title>
+  <link rel="stylesheet" href="/web/login.css?v=1" />
+</head>
+<body>
+  <main class="login-shell">
+    <form class="login-card" id="loginForm" method="post" action="/api/login" novalidate>
+      <div class="login-brand">
+        <span class="login-mark" aria-hidden="true"></span>
+        <div>
+          <p class="login-kicker">浪漫庄园</p>
+          <h1>设计桌</h1>
+        </div>
+      </div>
+      <p class="login-lead">用已有账号登录。地形桌和建筑桌共用同一份图纸。</p>
+      <label class="login-field">
+        <span>账号</span>
+        <input id="loginUser" name="user" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required />
+      </label>
+      <label class="login-field">
+        <span>密码</span>
+        <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <input type="hidden" name="next" id="loginNext" value="/" />
+      <p class="login-error" id="loginError" hidden></p>
+      <button type="submit" class="login-submit" id="loginSubmit">进入设计桌</button>
+    </form>
+  </main>
+  <script src="/web/login.js?v=1"></script>
+</body>
+</html>

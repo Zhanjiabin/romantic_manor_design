@@ -335,11 +335,31 @@ html.is-mobile-workspace #desk .rail {
 
 html.is-mobile-workspace .top-account-btn {
   min-width: 44px;
-  min-height: 44px;
-  padding-inline: 10px;
+  min-height: 26px;
+  max-width: 8rem;
+  padding-inline: 8px;
+  gap: 0;
 }
-html.is-mobile-workspace:not(.is-tablet-workspace) .top-account-kicker {
-  display: none;
+html.is-tablet-workspace .top-account-kicker,
+html.is-mobile-workspace:not(.is-tablet-workspace) .top-account-btn {
+  display: none !important;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) .phone-account-btn:not([hidden]) {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  max-width: none;
+  padding: 0 12px;
+  font-size: 15px;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) #buildingProjectPane > .phone-account-btn {
+  margin-bottom: 8px;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) .project-strip > .phone-account-btn {
+  margin-top: 2px;
 }
 
 html.is-mobile-workspace #desk .topbar {
@@ -751,6 +771,7 @@ html.is-tablet-workspace #terrainProjectSheet .preview-row-actions .btn {
 
 /* iPad terrain: keep game IO in the top-right like desktop. */
 html.is-tablet-workspace #desk .topbar {
+  display: flex;
   flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
@@ -790,10 +811,17 @@ html.is-tablet-workspace #desk .desk-switch-inline a {
 }
 
 html.is-tablet-workspace #desk .top-actions {
+  display: flex;
+  flex-wrap: nowrap;
   flex: 1 1 auto;
   justify-content: flex-end;
+  align-items: center;
   min-width: 0;
   overflow: visible;
+}
+
+html.is-tablet-workspace #desk .top-account-btn {
+  min-height: 36px;
 }
 
 html.is-tablet-workspace #desk .top-actions > .top-io-cluster {
@@ -2331,15 +2359,25 @@ html.is-mobile-workspace .building-app .top-cluster .compact-check {
   min-height: 26px;
 }
 
+html.is-tablet-workspace .building-app .topbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  grid-template-columns: none;
+}
+
 html.is-tablet-workspace .building-app .top-actions {
+  display: flex;
+  flex-wrap: nowrap !important;
   width: fit-content;
-  max-width: min(100%, calc(100vw - 120px));
+  max-width: min(100%, calc(100vw - 168px));
+  align-items: center;
 }
 
 html.is-tablet-workspace .building-app .top-actions > .snap-cluster {
-  flex-wrap: wrap !important;
+  flex-wrap: nowrap !important;
   width: fit-content;
-  max-width: min(100%, calc(100vw - 120px));
+  max-width: none;
 }
 
 html.is-tablet-workspace .building-app .veil-cluster,

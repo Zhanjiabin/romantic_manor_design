@@ -65,9 +65,18 @@
   gap: 6px;
   max-width: 12rem;
   flex: 0 0 auto;
-  margin-left: 4px;
+  margin-left: 0;
 }
 .top-account-btn[hidden] {
+  display: none !important;
+}
+.phone-account-btn {
+  display: none !important;
+}
+.phone-account-btn[hidden] {
+  display: none !important;
+}
+.top-account-kicker[hidden] {
   display: none !important;
 }
 .top-account-kicker {
@@ -76,7 +85,7 @@
   font-weight: 650;
   white-space: nowrap;
 }
-.top-account-name {
+.desk-account-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -99,8 +108,8 @@
   max-height: none;
   overflow: hidden;
 }
-#dlgApp:not([hidden]) .app-dialog {
-  animation: app-dialog-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+#dlgAppField[hidden] {
+  display: none !important;
 }
 @keyframes app-dialog-in {
   from {

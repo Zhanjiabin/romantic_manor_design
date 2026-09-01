@@ -159,6 +159,7 @@ let imageTerrainDraft = null;
 let planOverlayDraft = null;
 
 async function boot() {
+  if (window.deskAccountReady) await window.deskAccountReady;
   document.documentElement.classList.add("boot-pending");
   window.MobileWorkspace?.init();
   window.MobileWorkspace?.onModeChange(() => {
@@ -243,7 +244,7 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
-  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=215"]);
+  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=217"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
     if (terrainInteractionBusy()) return;
@@ -5205,7 +5206,7 @@ function pickNewerSnap(a, b) {
 
 function saveDraftLocal(snap) {
   try {
-    localStorage.setItem(TERRAIN_DRAFT_LS, JSON.stringify(snap || projectSnapshot("自动保存")));
+    deskSet(TERRAIN_DRAFT_LS, JSON.stringify(snap || projectSnapshot("自动保存")));
   } catch (err) {
     console.warn(err);
   }
@@ -5261,7 +5262,7 @@ async function deleteTerrainVersionRemote(id) {
 
 function loadDraftLocal() {
   try {
-    const raw = localStorage.getItem(TERRAIN_DRAFT_LS);
+    const raw = deskGet(TERRAIN_DRAFT_LS);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch {
@@ -6641,7 +6642,7 @@ function hashPaperRecords(records) {
 
 function preferredPreviewBaseNo(previewCatalog) {
   try {
-    const session = JSON.parse(localStorage.getItem("manor-building-session-v1") || "null");
+    const session = JSON.parse(deskGet("manor-building-session-v1") || "null");
     if (BuildingPreview.baseByNo(previewCatalog, session?.baseNo)) return Number(session.baseNo);
   } catch {
     // Use a real catalog default when no building-desk session exists.
@@ -8143,7 +8144,7 @@ function bindPreviewNudgePad() {
   if (!pad) return;
   const stepBtn = document.getElementById("btnNudgeStep");
   try {
-    const stored = Number(localStorage.getItem(PREVIEW_NUDGE_STEP_KEY));
+    const stored = Number(deskGet(PREVIEW_NUDGE_STEP_KEY));
     if (Number.isFinite(stored) && stored >= 1) previewNudgeCells = Math.min(32, Math.max(1, Math.round(stored)));
   } catch (error) {}
   const updateStepLabel = () => {
@@ -8177,7 +8178,7 @@ function bindPreviewNudgePad() {
     getValue: () => previewNudgeCells,
     setValue: (value) => {
       previewNudgeCells = value;
-      try { localStorage.setItem(PREVIEW_NUDGE_STEP_KEY, String(previewNudgeCells)); } catch (error) {}
+      try { deskSet(PREVIEW_NUDGE_STEP_KEY, String(previewNudgeCells)); } catch (error) {}
       updateStepLabel();
     },
   });

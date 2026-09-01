@@ -221,7 +221,7 @@ function hudLayoutParent() {
 
 function loadHudLayout() {
   try {
-    return JSON.parse(localStorage.getItem(HUD_LAYOUT_KEY) || "{}") || {};
+    return JSON.parse(deskGet(HUD_LAYOUT_KEY) || "{}") || {};
   } catch {
     return {};
   }
@@ -237,7 +237,7 @@ function saveHudLayout() {
   if (tools?.classList.contains("is-placed")) {
     payload.tools = { left: parseFloat(tools.style.left), top: parseFloat(tools.style.top) };
   }
-  localStorage.setItem(HUD_LAYOUT_KEY, JSON.stringify(payload));
+  deskSet(HUD_LAYOUT_KEY, JSON.stringify(payload));
 }
 
 function clampHudPosition(el, left, top) {
@@ -432,7 +432,7 @@ function bindFloatingHuds() {
 
 function loadAssetPreferences() {
   try {
-    const saved = JSON.parse(localStorage.getItem(ASSET_PREFS_KEY) || "{}");
+    const saved = JSON.parse(deskGet(ASSET_PREFS_KEY) || "{}");
     state.assetFavorites = new Set(Array.isArray(saved.favorites) ? saved.favorites : []);
     state.assetRecent = Array.isArray(saved.recent) ? saved.recent.slice(0, 40) : [];
   } catch {
@@ -442,7 +442,7 @@ function loadAssetPreferences() {
 }
 
 function saveAssetPreferences() {
-  localStorage.setItem(
+  deskSet(
     ASSET_PREFS_KEY,
     JSON.stringify({ favorites: [...state.assetFavorites], recent: state.assetRecent.slice(0, 40) })
   );
@@ -459,6 +459,7 @@ function rememberAsset(component, pack = component?._pack || state.pack) {
 }
 
 async function bootBuilding() {
+  if (window.deskAccountReady) await window.deskAccountReady;
   document.documentElement.classList.add("boot-pending");
   window.MobileWorkspace?.init();
   window.MaterialLedger?.bind();
@@ -503,7 +504,7 @@ async function bootBuilding() {
   if (remoteSaves && remoteSaves.customs) {
     applyCustomsData(remoteSaves.customs);
     try {
-      localStorage.setItem(
+      deskSet(
         CUSTOMS_KEY,
         JSON.stringify(
           Array.isArray(remoteSaves.customs)
@@ -598,7 +599,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=244"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=246"]);
 }
 
 function sortThemes(packs) {
@@ -4271,7 +4272,7 @@ function buildingSessionSnapshot() {
 
 function readLocalBuildingSession() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
+    const raw = deskGet(SESSION_KEY);
     if (!raw) return null;
     const snap = JSON.parse(raw);
     return snap && snap.v === 1 ? snap : null;
@@ -4290,7 +4291,7 @@ function pickNewerBuildingSnap(a, b) {
 function saveBuildingSession() {
   const snap = buildingSessionSnapshot();
   try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(snap));
+    deskSet(SESSION_KEY, JSON.stringify(snap));
     state.sessionDirty = false;
   } catch (error) {
     console.warn("建筑会话保存失败", error);
@@ -4301,7 +4302,7 @@ function saveBuildingSession() {
 async function saveBuildingSessionForSwitch() {
   const snap = buildingSessionSnapshot();
   try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(snap));
+    deskSet(SESSION_KEY, JSON.stringify(snap));
     state.sessionDirty = false;
   } catch (error) {
     console.warn("建筑会话保存失败", error);
@@ -4431,7 +4432,7 @@ function restoreBuildingSession(remoteSnap) {
   let snap = remoteSnap && typeof remoteSnap === "object" ? remoteSnap : null;
   if (!snap) {
     try {
-      const raw = localStorage.getItem(SESSION_KEY);
+      const raw = deskGet(SESSION_KEY);
       if (!raw) return false;
       snap = JSON.parse(raw);
     } catch {
@@ -5302,7 +5303,7 @@ function bindNudgePad() {
   if (!pad) return;
   const stepBtn = document.getElementById("btnNudgeStep");
   try {
-    const stored = Number(localStorage.getItem(NUDGE_STEP_KEY));
+    const stored = Number(deskGet(NUDGE_STEP_KEY));
     if (Number.isFinite(stored) && stored >= 1) nudgePadStep = Math.min(128, Math.max(1, Math.round(stored)));
   } catch (error) {}
   const updateStepLabel = () => {
@@ -5336,7 +5337,7 @@ function bindNudgePad() {
     getValue: () => nudgePadStep,
     setValue: (value) => {
       nudgePadStep = value;
-      try { localStorage.setItem(NUDGE_STEP_KEY, String(nudgePadStep)); } catch (error) {}
+      try { deskSet(NUDGE_STEP_KEY, String(nudgePadStep)); } catch (error) {}
       updateStepLabel();
     },
   });
@@ -5875,7 +5876,7 @@ function applyCustomsData(data) {
 
 function loadCustoms() {
   try {
-    const raw = localStorage.getItem(CUSTOMS_KEY);
+    const raw = deskGet(CUSTOMS_KEY);
     applyCustomsData(raw ? JSON.parse(raw) : []);
   } catch {
     state.customs = [];
@@ -5888,7 +5889,7 @@ function saveCustoms() {
     items: state.customs,
     folders: customFolders(),
   };
-  localStorage.setItem(CUSTOMS_KEY, JSON.stringify(customs));
+  deskSet(CUSTOMS_KEY, JSON.stringify(customs));
   putBuildingSaves({ customs }, true).catch((error) => console.warn(error));
 }
 
@@ -7233,7 +7234,6 @@ function setModalVisible(id, visible) {
   const modal = document.getElementById(id);
   if (!modal) return;
   if (visible) {
-    closeBuildingRail();
     window.MobileWorkspace?.openLayer(modal, document.activeElement);
     const input = modal.querySelector("input");
     requestAnimationFrame(() => input?.focus());
@@ -7352,7 +7352,7 @@ function buildingSheetRail() {
 
 function loadSheetLayout() {
   try {
-    const saved = JSON.parse(localStorage.getItem(SHEET_LAYOUT_KEY) || "{}") || {};
+    const saved = JSON.parse(deskGet(SHEET_LAYOUT_KEY) || "{}") || {};
     state.sheetPinned = !!saved.pinned;
     const box = saved.layout;
     state.sheetLayout =
@@ -7370,7 +7370,7 @@ function loadSheetLayout() {
 }
 
 function saveSheetLayout() {
-  localStorage.setItem(
+  deskSet(
     SHEET_LAYOUT_KEY,
     JSON.stringify({
       pinned: !!state.sheetPinned,

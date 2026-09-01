@@ -10,8 +10,10 @@ import json
 import os
 import sys
 import threading
+import time
 import webbrowser
 from collections import OrderedDict
+from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -51,14 +53,26 @@ from saves import (
     save_terrain_asset,
     save_terrain_draft,
     save_terrain_version,
+    set_save_user,
 )
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_MAX_BODY = 8 * 1024 * 1024
-PUBLIC_PATHS = frozenset({"/api/health"})
+PUBLIC_PATHS = frozenset({
+    "/api/health",
+    "/api/whoami",
+    "/api/login",
+    "/api/logout",
+    "/login",
+})
+PUBLIC_PREFIXES = ("/web/login.",)
+SESSION_COOKIE = "manor_session"
+SESSION_MAX_AGE = 30 * 24 * 3600
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 ALE_PNG_MAX_BYTES = 80 * 1024 * 1024
+_login_fail_lock = threading.Lock()
+_login_fails: dict[str, list[float]] = {}
 
 
 def listen_host() -> str:
@@ -153,6 +167,103 @@ def credentials_match(got_user: str, got_password: str, want_user: str, want_pas
         hashlib.sha256(want_password.encode("utf-8")).digest(),
     )
     return user_ok and pass_ok
+
+
+def session_secret() -> bytes:
+    explicit = (os.environ.get("MANOR_SESSION_SECRET") or "").strip()
+    if explicit:
+        return hashlib.sha256(explicit.encode("utf-8")).digest()
+    material = "|".join(f"{user}:{password}" for user, password in auth_accounts())
+    return hashlib.sha256(("manor-desk-session|" + material).encode("utf-8")).digest()
+
+
+def cookie_secure() -> bool:
+    return (os.environ.get("MANOR_SITE") or "").strip().lower().startswith("https://")
+
+
+def sign_session(user: str, exp: int) -> str:
+    payload = f"{user}\n{exp}".encode("utf-8")
+    sig = hmac.new(session_secret(), payload, hashlib.sha256).hexdigest()
+    user_part = base64.urlsafe_b64encode(user.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{user_part}.{exp}.{sig}"
+
+
+def parse_session_token(token: str) -> str | None:
+    parts = (token or "").split(".")
+    if len(parts) != 3:
+        return None
+    user_part, exp_s, sig = parts
+    try:
+        pad = "=" * (-len(user_part) % 4)
+        user = base64.urlsafe_b64decode(user_part + pad).decode("utf-8")
+        exp = int(exp_s)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if exp < int(time.time()):
+        return None
+    expected = hmac.new(session_secret(), f"{user}\n{exp}".encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return None
+    if not any(account_user == user for account_user, _ in auth_accounts()):
+        return None
+    return user
+
+
+def cookie_session_user(cookie_header: str) -> str:
+    jar = SimpleCookie()
+    try:
+        jar.load(cookie_header or "")
+    except Exception:
+        return ""
+    morsel = jar.get(SESSION_COOKIE)
+    if not morsel:
+        return ""
+    return parse_session_token(morsel.value) or ""
+
+
+def session_cookie_header(token: str, max_age: int) -> str:
+    parts = [
+        f"{SESSION_COOKIE}={token}",
+        "Path=/",
+        f"Max-Age={max(0, int(max_age))}",
+        "HttpOnly",
+        "SameSite=Lax",
+    ]
+    if cookie_secure():
+        parts.append("Secure")
+    return "; ".join(parts)
+
+
+def safe_next_path(raw: str) -> str:
+    text = (raw or "").strip() or "/"
+    if not text.startswith("/") or text.startswith("//") or "\\" in text:
+        return "/"
+    parts = urlsplit(text)
+    if parts.scheme or parts.netloc:
+        return "/"
+    path = parts.path or "/"
+    if path.startswith("//") or path == "/login":
+        return "/"
+    query = f"?{parts.query}" if parts.query else ""
+    return path + query
+
+
+def login_allowed(ip: str) -> bool:
+    now = time.time()
+    with _login_fail_lock:
+        recent = [stamp for stamp in _login_fails.get(ip, []) if now - stamp < 900]
+        _login_fails[ip] = recent
+        return len(recent) < 12
+
+
+def record_login_failure(ip: str) -> None:
+    with _login_fail_lock:
+        _login_fails.setdefault(ip, []).append(time.time())
+
+
+def clear_login_failures(ip: str) -> None:
+    with _login_fail_lock:
+        _login_fails.pop(ip, None)
 
 
 def require_auth_for_bind(host: str) -> None:
@@ -251,27 +362,55 @@ class Handler(SimpleHTTPRequestHandler):
     def _request_path(self) -> str:
         return unquote(urlsplit(self.path).path)
 
+    def _is_public_path(self, path: str) -> bool:
+        return path in PUBLIC_PATHS or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES)
+
+    def _current_user(self) -> str:
+        cached = getattr(self, "_auth_user", None)
+        if cached is not None:
+            return cached
+        user = cookie_session_user(self.headers.get("Cookie") or "") if auth_accounts() else ""
+        self._auth_user = user
+        return user
+
     def _authorized(self) -> bool:
         path = self._request_path()
-        if path == "/api/logout":
-            return False
-        accounts = auth_accounts()
-        if not accounts:
+        if self._is_public_path(path):
             return True
-        if path in PUBLIC_PATHS:
+        if not auth_accounts():
             return True
-        got = parse_basic_auth(self.headers.get("Authorization") or "")
-        if not got:
+        return bool(self._current_user())
+
+    def _wants_login_page(self) -> bool:
+        if self.command != "GET":
             return False
-        return any(credentials_match(got[0], got[1], user, password) for user, password in accounts)
+        path = self._request_path()
+        if path.startswith("/api/"):
+            return False
+        accept = (self.headers.get("Accept") or "").lower()
+        if "application/json" in accept and "text/html" not in accept:
+            return False
+        return True
+
+    def _redirect(self, location: str, extra_headers: list[tuple[str, str]] | None = None) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        for key, value in extra_headers or []:
+            self.send_header(key, value)
+        self.end_headers()
 
     def _challenge(self) -> bool:
         if self._authorized():
             return False
-        body = b"auth required"
+        if self._wants_login_page():
+            nxt = quote(self.path or "/", safe="/?=&")
+            self._redirect("/login?next=" + nxt)
+            return True
+        body = json.dumps({"error": "需要登录"}, ensure_ascii=False).encode("utf-8")
         self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Manor Desk", charset="UTF-8"')
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -281,7 +420,7 @@ class Handler(SimpleHTTPRequestHandler):
             pass
         return True
 
-    def _send(self, code, body: bytes, ctype="application/octet-stream", cache="no-cache", etag=None, encoding=None):
+    def _send(self, code, body: bytes, ctype="application/octet-stream", cache="no-cache", etag=None, encoding=None, headers=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -292,6 +431,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Vary", "Accept-Encoding")
         if encoding:
             self.send_header("Content-Encoding", encoding)
+        for key, value in headers or []:
+            self.send_header(key, value)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -323,6 +464,62 @@ class Handler(SimpleHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         return self.rfile.read(n) if n else b""
 
+    def _send_logout(self):
+        body = json.dumps({"ok": True}, ensure_ascii=False).encode("utf-8")
+        return self._send(
+            200,
+            body,
+            "application/json; charset=utf-8",
+            cache="no-store",
+            headers=[("Set-Cookie", session_cookie_header("", 0))],
+        )
+
+    def _handle_login(self, raw: bytes):
+        ip = self.client_address[0] if self.client_address else ""
+        if not login_allowed(ip):
+            body = json.dumps({"ok": False, "error": "尝试太多次，请稍后再试"}, ensure_ascii=False).encode("utf-8")
+            return self._send(429, body, "application/json; charset=utf-8")
+        ctype = (self.headers.get("Content-Type") or "").lower()
+        nxt = "/"
+        user = ""
+        password = ""
+        try:
+            if "json" in ctype:
+                obj = json.loads(raw.decode("utf-8") or "{}")
+                user = str(obj.get("user") or "").strip()
+                password = str(obj.get("password") or "")
+                nxt = safe_next_path(str(obj.get("next") or "/"))
+            else:
+                form = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
+                user = (form.get("user") or [""])[0].strip()
+                password = (form.get("password") or [""])[0]
+                nxt = safe_next_path((form.get("next") or [""])[0])
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            body = json.dumps({"ok": False, "error": "提交格式不对"}, ensure_ascii=False).encode("utf-8")
+            return self._send(400, body, "application/json; charset=utf-8")
+        matched = ""
+        for account_user, account_password in auth_accounts():
+            if credentials_match(user, password, account_user, account_password):
+                matched = account_user
+                break
+        if not matched:
+            record_login_failure(ip)
+            body = json.dumps({"ok": False, "error": "账号或密码不对"}, ensure_ascii=False).encode("utf-8")
+            return self._send(401, body, "application/json; charset=utf-8")
+        clear_login_failures(ip)
+        token = sign_session(matched, int(time.time()) + SESSION_MAX_AGE)
+        cookie = session_cookie_header(token, SESSION_MAX_AGE)
+        if "json" in ctype:
+            body = json.dumps({"ok": True, "user": matched, "next": nxt}, ensure_ascii=False).encode("utf-8")
+            return self._send(
+                200,
+                body,
+                "application/json; charset=utf-8",
+                cache="no-store",
+                headers=[("Set-Cookie", cookie)],
+            )
+        return self._redirect(nxt, extra_headers=[("Set-Cookie", cookie)])
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -330,12 +527,21 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
+    def _bind_save_user(self) -> None:
+        set_save_user(self._current_user() if auth_accounts() else "")
+
     def do_GET(self):
+        self._bind_save_user()
         if self._challenge():
             return
         request = urlsplit(self.path)
         path = unquote(request.path)
         query = parse_qs(request.query)
+        if path == "/login":
+            nxt = safe_next_path((query.get("next") or [""])[0])
+            if not auth_accounts() or self._current_user():
+                return self._redirect(nxt if auth_accounts() else "/")
+            return self._file(WEB / "login.html", guess=True)
         if path in ("/", "/index.html"):
             return self._file(WEB / "index.html", guess=True)
         if path.startswith("/data/"):
@@ -417,10 +623,14 @@ class Handler(SimpleHTTPRequestHandler):
             }
             return self._send(200, json.dumps(payload).encode("utf-8"), "application/json")
         if path == "/api/whoami":
-            got = parse_basic_auth(self.headers.get("Authorization") or "")
-            user = got[0] if got and auth_accounts() else ""
-            body = json.dumps({"user": user}, ensure_ascii=False).encode("utf-8")
+            accounts = auth_accounts()
+            body = json.dumps(
+                {"user": self._current_user(), "auth": bool(accounts)},
+                ensure_ascii=False,
+            ).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
+        if path == "/api/logout":
+            return self._send_logout()
         if path == "/api/saves/terrain":
             body = json.dumps(load_terrain_bundle(), ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
@@ -471,12 +681,17 @@ class Handler(SimpleHTTPRequestHandler):
         return self._read_body()
 
     def do_POST(self):
+        self._bind_save_user()
         if self._challenge():
             return
         path = unquote(self.path.split("?", 1)[0])
         raw = self._limited_body()
         if raw is None:
             return
+        if path == "/api/login":
+            return self._handle_login(raw)
+        if path == "/api/logout":
+            return self._send_logout()
         try:
             if path == "/api/from-gbk":
                 text = None
@@ -552,6 +767,7 @@ class Handler(SimpleHTTPRequestHandler):
         return self._send(404, b"not found", "text/plain")
 
     def do_PUT(self):
+        self._bind_save_user()
         if self._challenge():
             return
         path = unquote(self.path.split("?", 1)[0])
@@ -599,6 +815,7 @@ class Handler(SimpleHTTPRequestHandler):
         return self._send(404, b"not found", "text/plain")
 
     def do_DELETE(self):
+        self._bind_save_user()
         if self._challenge():
             return
         path = unquote(self.path.split("?", 1)[0])
@@ -813,8 +1030,7 @@ def main():
     print("bind", "%s:%d" % (host, port))
     print("game", GAME)
     print("tiles", TILE)
-    if auth_accounts():
-        print("auth", "basic")
+    print("auth", "session" if auth_accounts() else "off")
     if should_open_browser(host):
         try:
             webbrowser.open("http://127.0.0.1:%d/" % port)

@@ -84,7 +84,11 @@ test("hover tips are wired and not clipped by toolbar overflow", () => {
   assert.match(css, /\.shortcut-tip-body/);
   assert.match(css, /\.tool-glyph/);
   assert.match(js, /function applyCommandTooltips\(/);
-  assert.match(js, /function wireHoverTips\(/);
+  assert.match(js, /const hoverTipsAllowed/);
+  assert.match(js, /workspaceMode\(\)\.mobile \|\| isCoarsePointer\(\)/);
+  assert.match(js, /pointerType !== "mouse"/);
+  assert.match(js, /\(hover: hover\) and \(pointer: fine\)/);
+  assert.match(js, /addEventListener\("pointerdown"/);
   assert.match(js, /applyCommandTooltips\(\);\s*wireHoverTips\(\);/);
   assert.match(js, /element\.removeAttribute\("title"\)/);
   assert.match(js, /dataset\.tipKeys/);
@@ -92,6 +96,9 @@ test("hover tips are wired and not clipped by toolbar overflow", () => {
   assert.match(js, /anchorX - tipW \/ 2/);
   assert.match(js, /function clearHoverTip/);
   assert.match(js, /#canvasToolrail \.tool-item"\)\.forEach\(clearHoverTip\)/);
+  const mobileCss = fs.readFileSync(path.join(root, "web/mobile-workspace.css"), "utf8");
+  assert.match(mobileCss, /html\.is-mobile-workspace \.shortcut-tip/);
+  assert.match(mobileCss, /html\.is-touch-workspace \.shortcut-tip/);
   assert.doesNotMatch(html, /data-tool="[^"]+"[^>]*\stitle=/);
   assert.doesNotMatch(html, /data-marquee-mode="[^"]+"[^>]*\stitle=/);
   assert.match(css, /\.canvas-toolrail \.tool-hint[\s\S]*min-height:\s*32px/);
@@ -123,7 +130,7 @@ test("组件 category replaces 套件 and the customs rail tab", () => {
   assert.doesNotMatch(html, /data-tab="customs"/);
   assert.match(html, /id="tabCustoms"/);
   assert.match(html, /class="customs-pane"/);
-  assert.match(css, /\.rail-tabs[\s\S]{0,120}grid-template-columns:\s*repeat\(2, 1fr\)/);
+  assert.match(css, /\.rail-tabs[\s\S]{0,120}grid-template-columns:\s*repeat\(3, 1fr\)/);
 });
 
 test("category grid and theme picker both have an 全部 filter", () => {
@@ -194,8 +201,8 @@ test("layer order uses WASD plus Z/X cycle like facing", () => {
   assert.match(js, /function currentLayerSlot\(/);
   assert.match(js, /function moveSelectedToLayerSlot\(/);
   assert.match(html, /id="layerOrderControl"/);
-  assert.match(html, /class="command-row"/);
-  assert.equal((html.match(/class="command-row"/g) || []).length, 2);
+  assert.match(html, /class="command-row /);
+  assert.equal((html.match(/class="command-row /g) || []).length, 2);
   assert.match(html, /id="alignBar"/);
   assert.doesNotMatch(html, /id="alignBar" hidden/);
   assert.match(js, /bar\.hidden = false/);

@@ -1988,11 +1988,13 @@ body.is-palette-dragging * { cursor: grabbing !important; }
   user-select: none;
 }
 .stage-commandbar.is-placed,
-.canvas-tool-dock.is-placed {
+.canvas-tool-dock.is-placed,
+.materials-dock.is-placed {
   transform: none;
 }
 .stage-commandbar.is-dragging-hud,
-.canvas-tool-dock.is-dragging-hud {
+.canvas-tool-dock.is-dragging-hud,
+.materials-dock.is-dragging-hud {
   z-index: 32;
   cursor: grabbing;
   box-shadow: 0 16px 36px rgba(16, 34, 24, 0.28);

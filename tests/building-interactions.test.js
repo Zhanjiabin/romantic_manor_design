@@ -349,7 +349,15 @@ test("locked rendering invariants stay explicit in building.js", () => {
   assert.match(html, /id="projectMaterialsMeta"/);
   assert.match(html, /id="btnDesignMaterials"/);
   assert.match(html, /id="tabMaterials"/);
-  assert.match(html, /id="materialsDock"/);
+  assert.match(html, /id="btnMaterialsDockToggle"/);
+  assert.match(html, /id="mobileSelectionBar"[\s\S]*data-command="savePreset"/);
+  assert.match(source, /MATERIALS_DOCK_KEY/);
+  assert.match(source, /function setMaterialsDockCollapsed/);
+  assert.match(source, /btnMaterialsDockToggle/);
+  const dockCss = fs.readFileSync(path.join(__dirname, "../web/materials-dock.css"), "utf8");
+  assert.match(dockCss, /\.materials-dock\.is-collapsed/);
+  assert.match(mobileCss, /\[data-command="savePreset"\]\s*\{\s*display:\s*inline-flex/);
+  assert.doesNotMatch(mobileCss, /\[data-command="savePreset"\][^}]*display:\s*none/);
   assert.doesNotMatch(html, /id="btnPieceMaterialsDock"/);
   assert.match(html, /materials-dock\.css/);
   assert.doesNotMatch(html, /id="projectMaterialsList"/);

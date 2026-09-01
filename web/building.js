@@ -59,6 +59,7 @@ const SESSION_KEY = "manor-building-session-v1";
 const ASSET_PREFS_KEY = "manor-building-asset-prefs-v1";
 const HUD_LAYOUT_KEY = "manor-building-hud-layout-v2";
 const SHEET_LAYOUT_KEY = "manor-building-sheet-layout-v1";
+const MATERIALS_DOCK_KEY = "manor-building-materials-dock-collapsed";
 const SHEET_MIN_W = 280;
 const SHEET_MIN_H = 260;
 const OBJECT_SNAP_PX = 6;
@@ -230,12 +231,16 @@ function loadHudLayout() {
 function saveHudLayout() {
   const command = document.getElementById("designDock");
   const tools = document.getElementById("canvasToolDock");
+  const materials = document.getElementById("materialsDock");
   const payload = {};
   if (command?.classList.contains("is-placed")) {
     payload.command = { left: parseFloat(command.style.left), top: parseFloat(command.style.top) };
   }
   if (tools?.classList.contains("is-placed")) {
     payload.tools = { left: parseFloat(tools.style.left), top: parseFloat(tools.style.top) };
+  }
+  if (materials?.classList.contains("is-placed")) {
+    payload.materials = { left: parseFloat(materials.style.left), top: parseFloat(materials.style.top) };
   }
   deskSet(HUD_LAYOUT_KEY, JSON.stringify(payload));
 }
@@ -306,11 +311,13 @@ function layoutFloatingHuds() {
   const saved = loadHudLayout();
   const command = document.getElementById("designDock");
   const tools = document.getElementById("canvasToolDock");
+  const materials = document.getElementById("materialsDock");
   const rail = document.getElementById("canvasToolrail");
   if (rail) rail.style.maxHeight = `${Math.max(120, parent.clientHeight - 16)}px`;
   [
     [command, "command"],
     [tools, "tools"],
+    [materials, "materials"],
   ].forEach(([el, key]) => {
     if (!el || el.hidden) return;
     const current = el.classList.contains("is-placed")
@@ -423,10 +430,12 @@ function bindFloatingHud(el, mode, listenOn) {
 function bindFloatingHuds() {
   const command = document.getElementById("designDock");
   const tools = document.getElementById("canvasToolDock");
+  const materials = document.getElementById("materialsDock");
   const toolrail = tools?.querySelector(".canvas-toolrail");
   bindFloatingHud(command, "chrome", command);
   if (toolrail) bindFloatingHud(tools, "chrome", toolrail);
   else bindFloatingHud(tools, "grip", tools?.querySelector(".hud-drag-grip"));
+  bindFloatingHud(materials, "grip", materials?.querySelector(".materials-dock-grip"));
   layoutFloatingHuds();
 }
 
@@ -599,7 +608,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=246"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=248"]);
 }
 
 function sortThemes(packs) {
@@ -705,9 +714,39 @@ function updateAssetFilterSummary() {
     : `${themeFilterLabel()} · ${catLabel} · 无素材`;
 }
 
+function materialsDockCollapsed() {
+  try {
+    return deskGet(MATERIALS_DOCK_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function applyMaterialsDockCollapsed(collapsed) {
+  const dock = document.getElementById("materialsDock");
+  const button = document.getElementById("btnMaterialsDockToggle");
+  if (dock) dock.classList.toggle("is-collapsed", !!collapsed);
+  if (button) {
+    button.textContent = collapsed ? "展开" : "收起";
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.setAttribute("aria-label", collapsed ? "展开材料清单" : "收起材料清单");
+  }
+  layoutFloatingHuds();
+}
+
+function setMaterialsDockCollapsed(collapsed) {
+  applyMaterialsDockCollapsed(collapsed);
+  try {
+    deskSet(MATERIALS_DOCK_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* ignore quota */
+  }
+}
+
 function syncMaterialsDock() {
   const dock = document.getElementById("materialsDock");
   if (dock) dock.hidden = state.phase !== "design";
+  applyMaterialsDockCollapsed(materialsDockCollapsed());
 }
 
 function setPhase(phase) {
@@ -6974,6 +7013,7 @@ function applyCommandTooltips() {
   });
   applyHoverTip(document.getElementById("commandHudGrip"), "拖动命令栏", "双击复位");
   applyHoverTip(document.getElementById("toolHudGrip"), "拖动画布工具", "双击复位");
+  applyHoverTip(document.getElementById("materialsDockGrip"), "拖动材料清单", "双击复位");
   applyHoverTip(document.getElementById("btnZoomIn"), "放大", "+");
   applyHoverTip(document.getElementById("btnZoomOut"), "缩小", "-");
   applyHoverTip(document.getElementById("btnZoomReset"), "适应画布", "0");
@@ -7047,8 +7087,18 @@ function wireHoverTips() {
     }
     return true;
   };
-  const showFor = (el) => {
+  const hoverTipsAllowed = (event) => {
+    if (workspaceMode().mobile || isCoarsePointer()) return false;
+    if (event && event.pointerType && event.pointerType !== "mouse") return false;
+    if (window.matchMedia && !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return false;
+    return true;
+  };
+  const showFor = (el, event) => {
     if (!el) return;
+    if (!hoverTipsAllowed(event)) {
+      hide();
+      return;
+    }
     clearTimeout(hideTimer);
     const same = current === el && !pop.hidden;
     current = el;
@@ -7066,8 +7116,11 @@ function wireHoverTips() {
     const el = event.target?.closest?.("[data-tip]");
     if (!el) return;
     if (el.closest("#canvasToolrail") && !el.classList.contains("hud-drag-grip")) return;
-    showFor(el);
+    showFor(el, event);
   });
+  document.addEventListener("pointerdown", (event) => {
+    if (!hoverTipsAllowed(event)) hide();
+  }, true);
   document.addEventListener("pointerout", (event) => {
     const el = event.target?.closest?.("[data-tip]");
     if (!el) return;
@@ -9697,6 +9750,9 @@ function bindBuilding() {
   };
   document.getElementById("btnSavePaperPreview").onclick = saveCurrentPaperPreview;
   document.getElementById("btnAllMaterials").onclick = () => openBuildingMaterialLedger();
+  document.getElementById("btnMaterialsDockToggle")?.addEventListener("click", () => {
+    setMaterialsDockCollapsed(!document.getElementById("materialsDock")?.classList.contains("is-collapsed"));
+  });
   document.getElementById("btnDesignMaterials")?.addEventListener("click", () => openBuildingMaterialLedger());
   document.getElementById("btnProjectMaterials")?.addEventListener("click", () => openBuildingMaterialLedger());
   document.getElementById("btnProjectMaterialsTab")?.addEventListener("click", () => openBuildingRail("materials"));

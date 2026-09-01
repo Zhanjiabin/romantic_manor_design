@@ -1292,11 +1292,11 @@ html.is-mobile-workspace .stage-commandbar,
 html.is-mobile-workspace .stage-commandbar.is-placed,
 html.is-mobile-workspace .stage-commandbar.is-dragging-hud {
   top: max(4px, env(safe-area-inset-top)) !important;
-  left: 8px !important;
+  left: 4px !important;
   right: auto !important;
   bottom: auto !important;
   width: max-content;
-  max-width: min(calc(100vw - 24px), 100%);
+  max-width: calc(100vw - 8px);
   height: auto;
   max-height: none;
   overflow: visible;
@@ -1311,12 +1311,13 @@ html.is-mobile-workspace .stage-commandbar.is-dragging-hud {
 html.is-tablet-workspace .stage-commandbar,
 html.is-tablet-workspace .stage-commandbar.is-placed,
 html.is-tablet-workspace .stage-commandbar.is-dragging-hud {
-  width: fit-content;
-  max-width: min(calc(100vw - 24px), 360px);
+  width: max-content;
+  max-width: calc(100vw - 8px);
 }
 
 html.is-mobile-workspace .stage-commandbar .stage-tool-row {
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: stretch;
   width: max-content;
   max-width: 100%;
@@ -1328,18 +1329,18 @@ html.is-mobile-workspace .stage-commandbar .commandbar-drag-cap {
   display: flex !important;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  width: auto;
+  flex: 0 0 14px;
+  width: 14px;
+  min-width: 14px !important;
   align-self: stretch;
-  min-width: 100%;
-  box-sizing: border-box;
-  min-height: 22px;
-  height: 22px;
+  min-height: 0;
+  height: auto;
   margin: 0;
-  padding: 0 6px;
+  padding: 0;
+  box-sizing: border-box;
   border: 0;
-  border-bottom: 1px solid rgba(183, 200, 178, 0.45);
-  border-radius: 10px 10px 0 0;
+  border-right: 1px solid rgba(183, 200, 178, 0.45);
+  border-radius: 10px 0 0 10px;
   background: rgba(234, 241, 231, 0.92);
   background-image: none;
   cursor: grab;
@@ -1364,22 +1365,23 @@ html.is-mobile-workspace .stage-commandbar .canvas-toolbar {
   flex-wrap: nowrap;
   align-items: flex-start;
   align-content: flex-start;
-  gap: 3px;
+  gap: 2px;
   width: max-content;
   max-width: 100%;
   min-width: 0;
   overflow: visible;
-  padding: 3px;
+  padding: 2px 3px 2px 2px;
 }
 
 html.is-mobile-workspace .stage-commandbar .command-row,
+html.is-mobile-workspace .stage-commandbar .command-row-primary,
 html.is-mobile-workspace .stage-commandbar .command-row-actions {
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 3px;
+  gap: 2px;
   width: max-content;
   max-width: 100%;
   overflow: visible;
@@ -1389,64 +1391,28 @@ html.is-mobile-workspace .stage-commandbar .command-row-actions {
 
 html.is-tablet-workspace .stage-commandbar .canvas-toolbar {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  align-content: flex-start;
-  width: 100%;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  width: max-content;
   max-width: 100%;
-  gap: 4px 3px;
+  gap: 2px;
 }
 
 html.is-tablet-workspace .stage-commandbar .stage-tool-row {
-  width: 100%;
+  width: max-content;
   max-width: 100%;
-}
-
-html.is-tablet-workspace .stage-commandbar .command-row,
-html.is-tablet-workspace .stage-commandbar .command-row-primary,
-html.is-tablet-workspace .stage-commandbar .command-row-actions {
-  display: contents;
-}
-
-html.is-tablet-workspace .stage-commandbar .command-row-primary > .tool-sep:not(:first-of-type),
-html.is-tablet-workspace .stage-commandbar .command-row-actions > .tool-sep {
-  display: none;
-}
-
-html.is-tablet-workspace .stage-commandbar #facingControl {
-  order: 1;
-}
-
-html.is-tablet-workspace .stage-commandbar .command-row-primary > .tool-sep:first-of-type {
-  order: 2;
-}
-
-html.is-tablet-workspace .stage-commandbar #layerOrderControl {
-  order: 3;
-}
-
-html.is-tablet-workspace .stage-commandbar .tool-group-history {
-  order: 20;
-}
-
-html.is-tablet-workspace .stage-commandbar .tool-group-z {
-  order: 21;
-}
-
-html.is-tablet-workspace .stage-commandbar .tool-group-edit {
-  order: 22;
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .stage-commandbar:not(.is-placed):not(.is-dragging-hud) {
   top: auto !important;
-  left: 50% !important;
+  left: 4px !important;
   right: auto !important;
-  bottom: 0 !important;
-  transform: translateX(-50%) !important;
-  width: calc(100% - 8px);
+  bottom: 4px !important;
+  transform: none !important;
+  width: max-content;
   max-width: calc(100% - 8px);
-  border-radius: 12px 12px 0 0;
+  border-radius: 10px;
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .stage-commandbar .facing-cap {
@@ -1469,7 +1435,7 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .stage-commandbar .facing-con
 html.is-mobile-workspace:not(.is-tablet-workspace) .stage-commandbar .stage-tool-row {
   flex-direction: row;
   align-items: stretch;
-  width: max-content;
+  width: 100%;
   max-width: 100%;
 }
 
@@ -1488,15 +1454,13 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .stage-commandbar .commandbar
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .stage-commandbar .canvas-toolbar {
   flex-direction: row;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   width: 100%;
   max-width: 100%;
   padding: 2px;
   gap: 2px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
+  overflow-x: hidden;
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .stage-commandbar .canvas-toolbar::-webkit-scrollbar {
@@ -1578,7 +1542,12 @@ html.is-mobile-workspace .stage-commandbar .tool-glyph {
 }
 
 html.is-mobile-workspace .stage-commandbar [data-command="savePreset"] {
-  display: none;
+  display: inline-flex;
+}
+
+html.is-mobile-workspace .shortcut-tip,
+html.is-touch-workspace .shortcut-tip {
+  display: none !important;
 }
 
 html.is-mobile-workspace .stage-commandbar .align-bar,

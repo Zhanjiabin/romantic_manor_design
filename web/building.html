@@ -12,10 +12,10 @@
   <link rel="stylesheet" href="/web/app.css?v=84" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=10" />
   <link rel="stylesheet" href="/web/paper-library.css?v=11" />
-  <link rel="stylesheet" href="/web/building.css?v=183" />
+  <link rel="stylesheet" href="/web/building.css?v=184" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
-  <link rel="stylesheet" href="/web/materials-dock.css?v=7" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=90" />
+  <link rel="stylesheet" href="/web/materials-dock.css?v=9" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=93" />
 </head>
 <body>
   <div class="app building-app phase-select" id="buildingApp">
@@ -268,18 +268,25 @@
             <button type="button" data-command="up" aria-label="上移一层">↑</button>
             <button type="button" data-command="flip" aria-label="转向">↻</button>
             <button type="button" data-command="duplicate" aria-label="复制">⧉</button>
+            <button type="button" data-command="savePreset" aria-label="存为组件">★</button>
             <button type="button" class="danger" data-command="delete" aria-label="删除">✕</button>
           </div>
           <div class="materials-dock" id="materialsDock" hidden aria-label="材料清单">
+            <button type="button" class="hud-drag-grip materials-dock-grip" id="materialsDockGrip" aria-label="拖动材料清单">
+              <span class="materials-dock-grip-mark" aria-hidden="true">≡</span>
+            </button>
             <div class="materials-dock-row materials-dock-piece">
               <span class="materials-dock-label">此件</span>
-              <button type="button" class="current-materials materials-dock-strip" id="currentMaterials" title="点此查看此件材料明细"></button>
+              <button type="button" class="current-materials materials-dock-strip" id="currentMaterials"></button>
             </div>
             <div class="materials-dock-row materials-dock-all">
               <span class="materials-dock-label">全部</span>
               <div class="all-material-strip materials-dock-strip" id="allMaterials"></div>
               <span class="material-meta" id="allMaterialsMeta"></span>
-              <button type="button" class="btn btn-compact materials-dock-detail" id="btnAllMaterials" title="整栋材料清单">明细</button>
+              <div class="materials-dock-actions">
+                <button type="button" class="btn btn-compact materials-dock-toggle" id="btnMaterialsDockToggle" aria-expanded="true" aria-controls="materialsDock">收起</button>
+                <button type="button" class="btn btn-compact materials-dock-detail" id="btnAllMaterials" aria-label="查看全部材料明细">明细</button>
+              </div>
             </div>
           </div>
         </div>
@@ -689,6 +696,6 @@
   <script src="/web/building-interactions.js?v=12"></script>
   <script src="/web/building-preview.js?v=6"></script>
   <script src="/web/material-ledger.js?v=3"></script>
-  <script src="/web/building.js?v=217"></script>
+  <script src="/web/building.js?v=219"></script>
 </body>
 </html>

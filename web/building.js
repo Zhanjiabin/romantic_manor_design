@@ -77,7 +77,7 @@ const STAMP_CAP = 360;
 const STAMP_PREVIEW_MAX = 80;
 const PLACE_TOOLS = new Set(["paint", "stamp", "tile", "rect", "line", "circle", "triangle", "diamond", "ring"]);
 const TOOL_INFO = {
-  select: { label: "选择", hint: "点击选中 · Space+拖动移动素材 · 空白处拖动圈选" },
+  select: { label: "选择", hint: "点击选中 · 双击选组内单件 · 拖动移动 · 空白处圈选 · Space/中键平移" },
   paint: { label: "纯笔刷", hint: "只铺不选 · 按贴地点连续盖，自动避开已占格子" },
   stamp: { label: "点刷", hint: "点击盖一枚，拖着按地块格子连续盖" },
   tile: { label: "平铺", hint: "按 2:1 地块格子铺满 · Shift 正方形区域" },
@@ -148,6 +148,7 @@ const state = {
   activePointers: new Map(),
   pointerGesture: null,
   pointerPending: null,
+  groupIsolateTap: null,
   paletteDrag: null,
   interaction: null,
   tool: "select",
@@ -3750,6 +3751,31 @@ function expandGroupSelection(indices) {
   return [...set].sort((a, b) => a - b);
 }
 
+/** 画布双击 / 双击点 / Alt+点击：选中成组里的单件，不扩成整组。 */
+function wantsIsolateGroupMember(event, hit) {
+  if (hit < 0 || !state.records[hit]?.group) return false;
+  if (Number(event.detail) >= 2 || event.altKey) {
+    state.groupIsolateTap = null;
+    return true;
+  }
+  const now = performance.now();
+  const prev = state.groupIsolateTap;
+  const near =
+    prev &&
+    now - prev.t <= 450 &&
+    Math.hypot(event.clientX - prev.x, event.clientY - prev.y) <= 36 &&
+    (prev.hit === hit || state.records[prev.hit]?.group === state.records[hit]?.group);
+  state.groupIsolateTap = {
+    t: now,
+    x: event.clientX,
+    y: event.clientY,
+    hit,
+  };
+  if (!near) return false;
+  state.groupIsolateTap = null;
+  return true;
+}
+
 function setSelection(indices, { expandGroup = false, layers = true } = {}) {
   let next = [...new Set(indices)].filter((index) => index >= 0 && index < state.records.length);
   if (expandGroup) next = expandGroupSelection(next);
@@ -4890,8 +4916,15 @@ function reorderSelected(command) {
   renderBuilding();
 }
 
+function selectionInLayerOrder(indices) {
+  // 图层顺序 = records 下标。框选/点选顺序不能决定粘贴后的前后遮挡。
+  return [...new Set(indices)]
+    .filter((index) => Number.isInteger(index) && state.records[index])
+    .sort((a, b) => a - b);
+}
+
 function duplicateSelected() {
-  const indices = selectedUnlockedIndices();
+  const indices = selectionInLayerOrder(selectedUnlockedIndices());
   if (!indices.length) return;
   pushHistory();
   const clones = [];
@@ -4934,7 +4967,7 @@ function serializeClipboardRecords(indices) {
 }
 
 function copySelected() {
-  const indices = state.selected.filter((index) => state.records[index]);
+  const indices = selectionInLayerOrder(state.selected);
   if (!indices.length) return;
   state.clipboard = serializeClipboardRecords(indices);
 }
@@ -5386,6 +5419,7 @@ function beginCanvasPointer(event, shell) {
         button: 0,
         clientX: event.clientX,
         clientY: event.clientY,
+        detail: Number(event.detail) || 0,
         shiftKey: !!event.shiftKey,
         ctrlKey: !!event.ctrlKey,
         metaKey: !!event.metaKey,
@@ -5451,22 +5485,7 @@ function beginCanvasPointer(event, shell) {
   }
 
   if (state.spacePan) {
-    // 长按空格 + 左键拖动 = 移动素材；空格落在空白处仍然平移画布。
-    const spaceHit = hitRecord(startScene.x, startScene.y, { solid: true, includeLocked: true });
-    const inUnion = spaceHit < 0 && pointInSelectionUnion(startScene.x, startScene.y);
-    if (spaceHit >= 0 || inUnion) {
-      clearBrushHighlight();
-      if (spaceHit >= 0 && !baseSelection.includes(spaceHit)) {
-        setSelection([spaceHit], { expandGroup: true });
-      }
-      const movable = state.selected.filter((index) => !state.records[index]?.locked);
-      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform)
-        ? "move"
-        : "select";
-      updateSelectionCaption();
-      renderBuilding();
-      return;
-    }
+    // Space + 左键拖动 = 平移画布（与中键拖动画板相同）。
     interaction.mode = "pan";
     interaction.startScroll = { x: shell.scrollLeft, y: shell.scrollTop };
     shell.classList.add("is-panning");
@@ -5511,15 +5530,12 @@ function beginCanvasPointer(event, shell) {
       setSelection([...selected]);
       interaction.mode = "select";
     } else {
-      if (!baseSelection.includes(hit)) setSelection([hit], { expandGroup: true });
-      // 桌面端拖动素材需要长按空格（防止点选时误拖）；触屏没有键盘，
-      // 保留手指直接拖动。
-      if (event.pointerType === "touch") {
-        const movable = state.selected.filter((index) => !state.records[index]?.locked);
-        interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
-      } else {
-        interaction.mode = "select";
+      const isolate = wantsIsolateGroupMember(event, hit);
+      if (isolate || !baseSelection.includes(hit)) {
+        setSelection([hit], { expandGroup: !isolate });
       }
+      const movable = state.selected.filter((index) => !state.records[index]?.locked);
+      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
     }
     updateSelectionCaption();
     renderBuilding();
@@ -5528,12 +5544,8 @@ function beginCanvasPointer(event, shell) {
 
   if (operation === "replace" && pointInSelectionUnion(startScene.x, startScene.y)) {
     clearBrushHighlight();
-    if (event.pointerType === "touch") {
-      const movable = state.selected.filter((index) => !state.records[index]?.locked);
-      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
-    } else {
-      interaction.mode = "select";
-    }
+    const movable = state.selected.filter((index) => !state.records[index]?.locked);
+    interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform) ? "move" : "select";
     renderBuilding();
     return;
   }
@@ -5991,7 +6003,7 @@ function fillCustoms() {
 }
 
 async function openPresetDialog() {
-  const indices = state.selected.filter((index) => state.records[index]);
+  const indices = selectionInLayerOrder(state.selected);
   if (!indices.length) {
     await appAlert("请先选择要保存的组件。");
     return;
@@ -6009,7 +6021,7 @@ function closePresetDialog() {
 }
 
 function confirmPresetDialog() {
-  const indices = state.selected.filter((index) => state.records[index]);
+  const indices = selectionInLayerOrder(state.selected);
   if (!indices.length) {
     closePresetDialog();
     return;
@@ -6092,8 +6104,8 @@ function selectLayerIndex(index, event) {
   const record = state.records[index];
   if (!record) return;
   // Layer-list clicks always target this row. Group expansion is only for the
-  // group header and for canvas hits — otherwise grouped materials cannot be
-  // selected one at a time (and touch has no Alt isolate).
+  // group header and for canvas single-clicks — canvas double-click / Alt+click
+  // isolates one grouped member (same as picking a child row here).
   if (event.ctrlKey || event.metaKey) {
     const set = new Set(state.selected);
     if (set.has(index)) set.delete(index);
@@ -6747,9 +6759,10 @@ const SHORTCUT_NOTES = [
   { label: "选中后看邻近参考线", shortcut: "按住 Ctrl" },
   { label: "选中素材微移", shortcut: "方向键" },
   { label: "大步微移", shortcut: "Shift+方向键" },
-  { label: "拖动素材（先选中或直接按住拖）", shortcut: "Space+左键拖" },
+  { label: "拖动素材", shortcut: "左键拖" },
+  { label: "选中成组里的单件", shortcut: "双击 / Alt+点击" },
   { label: "右键拖：平移画布；单击：菜单", shortcut: "右键" },
-  { label: "平移画布（空白处）", shortcut: "Space / 中键" },
+  { label: "平移画布", shortcut: "Space+左键 / 中键" },
   { label: "圈选碰到 / 完整包含", shortcut: "M / Shift+M" },
   { label: "点刷 / 平铺 / 矩形 / 直线", shortcut: "B / T / U / L" },
   { label: "圆 / 三角 / 描边", shortcut: "O / I / G" },

@@ -69,7 +69,7 @@ test("command bar and tool rail can be dragged to any position", () => {
   assert.match(js, /setPointerCapture/);
   assert.match(js, /--hud-left/);
   assert.match(js, /dataset\.hudTapAt/);
-  assert.match(js, /manor-building-hud-layout-v1/);
+  assert.match(js, /manor-building-hud-layout-v2/);
   assert.match(js, /function clampHudPosition\(/);
   assert.match(css, /\.hud-drag-grip/);
   assert.match(css, /\.stage-commandbar\.is-placed/);

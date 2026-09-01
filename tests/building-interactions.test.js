@@ -677,8 +677,11 @@ test("layer list clicks a grouped child without expanding the whole group", () =
   );
   assert.match(groupHeader, /setSelection\(memberIndices\)/);
   assert.match(groupHeader, /点下面的素材可选中单件/);
-  // Canvas hits still take the whole group so grouped props move together.
-  assert.match(buildingJs, /setSelection\(\[hit\], \{ expandGroup: true \}\)/);
+  // Canvas single-click still takes the whole group; double-click / Alt isolates one member.
+  assert.match(buildingJs, /function wantsIsolateGroupMember\(/);
+  assert.match(buildingJs, /setSelection\(\[hit\], \{ expandGroup: !isolate \}\)/);
+  assert.match(buildingJs, /双击 \/ Alt\+点击/);
+  assert.match(buildingJs, /双击选组内单件/);
 });
 
 test("building desk selection, line brush, and guide affordances follow the ctrl-first workflow", () => {
@@ -712,6 +715,31 @@ test("building desk selection, line brush, and guide affordances follow the ctrl
   assert.match(buildingJs, /snap-gap-badge/);
   assert.match(buildingJs, /function appendNeighborRefGuides/);
   assert.match(buildingJs, /setRefGuidesActive\(true\)/);
+  // Mouse drag moves selected records; Space+drag pans like middle-mouse.
+  assert.match(
+    buildingJs,
+    /if \(state\.spacePan\) \{[\s\S]*interaction\.mode = "pan";[\s\S]*shell\.classList\.add\("is-panning"\);/
+  );
+  assert.doesNotMatch(
+    buildingJs,
+    /桌面端拖动素材需要长按空格/
+  );
+  assert.match(
+    buildingJs,
+    /if \(isolate \|\| !baseSelection\.includes\(hit\)\) \{[\s\S]*setSelection\(\[hit\], \{ expandGroup: !isolate \}\);[\s\S]*beginRecordDrag\(startScene\.x, startScene\.y, movable, transform\)/
+  );
+  assert.match(buildingJs, /双击选组内单件/);
+  assert.match(buildingJs, /Space\+左键 \/ 中键/);
+  // Copy / duplicate must follow records[] layer order, not marquee/click order.
+  assert.match(buildingJs, /function selectionInLayerOrder\(/);
+  assert.match(
+    buildingJs,
+    /function duplicateSelected\(\) \{[\s\S]*selectionInLayerOrder\(selectedUnlockedIndices\(\)\)/
+  );
+  assert.match(
+    buildingJs,
+    /function copySelected\(\) \{[\s\S]*selectionInLayerOrder\(state\.selected\)/
+  );
   const css = fs.readFileSync(path.join(__dirname, "../web/building.css"), "utf8");
   assert.match(css, /\.ref-guide\.is-aligned/);
   assert.match(css, /\.snap-guide\.is-core/);

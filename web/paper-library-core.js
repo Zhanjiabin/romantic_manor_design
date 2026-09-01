@@ -27,17 +27,41 @@
 
   function sniffKind(bytes) {
     const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    let ascii = "";
-    const n = Math.min(view.length, 160);
-    for (let i = 0; i < n; i++) ascii += String.fromCharCode(view[i]);
-    if (/^\s*V1;/i.test(ascii)) return "v1";
-    if (
-      ascii.includes("size=")
-      || ascii.includes("mapflag=")
-      || ascii.includes("模板")
-      || (view[0] === 0xc4 && view[1] === 0xa3)
-    ) return "terrain";
+    const headN = Math.min(view.length, 24);
+    let offset = 0;
+    if (view[0] === 0xef && view[1] === 0xbb && view[2] === 0xbf) offset = 3;
+    while (offset < headN && (view[offset] === 0x20 || view[offset] === 0x09 || view[offset] === 0x0d || view[offset] === 0x0a)) {
+      offset += 1;
+    }
+    if ((view[offset] === 0x56 || view[offset] === 0x76) && view[offset + 1] === 0x31 && view[offset + 2] === 0x3b) {
+      return "v1";
+    }
+    if (looksLikeTerrainPaper(view, offset)) return "terrain";
     return "unknown";
+  }
+
+  function looksLikeTerrainPaper(view, offset = 0) {
+    const start = Math.max(0, offset);
+    const probe = Math.min(view.length, Math.max(start + 24, 400));
+    for (let i = start; i < probe; i++) {
+      if (view[i] === 0xc4 && view[i + 1] === 0xa3 && view[i + 2] === 0xb0 && view[i + 3] === 0xe5) return true;
+      if (
+        view[i] === 0xe6 && view[i + 1] === 0xa8 && view[i + 2] === 0xa1
+        && view[i + 3] === 0xe6 && view[i + 4] === 0x9d && view[i + 5] === 0xbf
+      ) return true;
+    }
+    const take = (from, to) => {
+      let text = "";
+      for (let i = from; i < to; i++) text += String.fromCharCode(view[i]);
+      return text;
+    };
+    const head = take(0, Math.min(view.length, 400));
+    if (head.includes("size=") || head.includes("mapflag=") || head.includes("模板")) return true;
+    if (view.length > 400) {
+      const tail = take(Math.max(0, view.length - 160), view.length);
+      if (tail.includes("size=") && tail.includes("mapflag=")) return true;
+    }
+    return false;
   }
 
   function kindLabel(kind) {
@@ -51,7 +75,7 @@
     const kind = String(item?.kind || "").trim();
     if (kind === "desk" || kind === "terrain" || kind === "manor") return kind;
     const meta = String(item?.meta || "");
-    if (/格/.test(meta) && /地块/.test(meta)) return "terrain";
+    if (/地块/.test(meta)) return "terrain";
     if (/庄园/.test(meta)) return "manor";
     return "desk";
   }
@@ -330,6 +354,7 @@
     base64ToBytes,
     contentIdFromBase64,
     sniffKind,
+    looksLikeTerrainPaper,
     kindLabel,
     resolvePaperKind,
     kindMatchesFilter,

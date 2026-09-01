@@ -608,7 +608,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=248"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=252"]);
 }
 
 function sortThemes(packs) {
@@ -895,7 +895,41 @@ async function clearCurrentDesign({ ask = false } = {}) {
   return true;
 }
 
+let houseSelectBackup = null;
+
+function enterHouseSelect() {
+  if (state.phase === "design" && state.base) {
+    houseSelectBackup = { base: state.base, baseKind: state.baseKind };
+  }
+  state.baseKind = state.base?.kind ?? state.baseKind ?? 0;
+  fillBaseKindTabs();
+  fillBaseIcons();
+  setPhase("select");
+  invalidateBaseLayout();
+  updateBase();
+  renderBuilding();
+}
+
+function cancelHouseSelect() {
+  if (houseSelectBackup) {
+    state.base = houseSelectBackup.base;
+    state.baseKind = houseSelectBackup.baseKind ?? state.base?.kind ?? 0;
+    houseSelectBackup = null;
+  } else if (!(state.base && placedDesignCount() > 0)) {
+    window.location.href = "/";
+    return;
+  }
+  setPhase("design");
+  invalidateBaseLayout();
+  updateBase();
+  fillLayers();
+  syncDesignResetButtons();
+  renderBuilding();
+  if (workspaceMode().mobile) closeBuildingRail();
+}
+
 async function beginDesign() {
+  houseSelectBackup = null;
   if (!state.base) {
     await appAlert("请先选择户型。", { title: "还没选户型" });
     return;
@@ -7962,7 +7996,6 @@ function paperKindLabel(kind) {
 }
 
 function libraryAcceptsKind(kind) {
-  if (PAPER_LIBRARY_DESK === "building") return kind === "desk";
   return kind === "desk" || kind === "terrain" || kind === "manor";
 }
 
@@ -8217,7 +8250,7 @@ function paperLibraryMaterials(records) {
 function paperLibrarySkipNote() {
   const notes = [];
   if (batchLibrary.skippedDup) notes.push(`跳过 ${batchLibrary.skippedDup} 张重复`);
-  if (batchLibrary.skippedKind) notes.push(`跳过 ${batchLibrary.skippedKind} 张非建筑图纸`);
+  if (batchLibrary.skippedKind) notes.push(`跳过 ${batchLibrary.skippedKind} 张无法识别的图纸`);
   if (batchLibrary.failed) notes.push(`${batchLibrary.failed} 张无法读取`);
   return notes.length ? ` · ${notes.join(" · ")}` : "";
 }
@@ -9253,14 +9286,23 @@ async function loadPaperLibraryFiles(candidates, { persist = false, append = tru
         batchLibrary.skippedDup += 1;
         continue;
       }
-      if (persist && sniffPaperKind(bytes) === "terrain" && !libraryAcceptsKind("terrain")) {
+      const sniff = sniffPaperKind(bytes);
+      if (persist && sniff === "terrain" && !libraryAcceptsKind("terrain")) {
         batchLibrary.skippedKind += 1;
         continue;
       }
       const fingerprint = paperFingerprint(relative, bytes);
       const cached = cacheMap.get(`id:${contentId}`) || cacheMap.get(fingerprint);
+      const cachedKind = cached?.documentData
+        ? PaperLibraryCore.resolvePaperKind(cached.documentData)
+        : "";
+      const cacheMatches = !!(cached?.documentData && (
+        sniff === "unknown"
+        || (sniff === "terrain" && cachedKind === "terrain")
+        || (sniff === "v1" && cachedKind !== "terrain")
+      ));
       let entry;
-      if (cached?.documentData) {
+      if (cacheMatches) {
         entry = entryFromPaperCache(cached, file, `${gen}-${index}`);
         entry.contentId = contentId;
         entry.groupId = meta.group || cached.groupId || entry.groupId || "";
@@ -9275,6 +9317,7 @@ async function loadPaperLibraryFiles(candidates, { persist = false, append = tru
           groupId: meta.group || "",
         });
       }
+      if (sniff === "terrain") entry.kind = "terrain";
       if (persist && !libraryAcceptsKind(entry.kind)) {
         batchLibrary.skippedKind += 1;
         continue;
@@ -9560,21 +9603,11 @@ function bindBuilding() {
     mutex: "building-workspace",
     resetScroll: false,
   });
-  document.getElementById("btnChooseBase").onclick = () => {
-    state.baseKind = state.base?.kind ?? 0;
-    fillBaseKindTabs();
-    fillBaseIcons();
-    setPhase("select");
-    invalidateBaseLayout();
-    updateBase();
-    renderBuilding();
-  };
+  document.getElementById("btnChooseBase").onclick = () => enterHouseSelect();
   document.getElementById("btnNextBase").onclick = () => beginDesign();
   const btnClearDesign = document.getElementById("btnClearDesign");
   if (btnClearDesign) btnClearDesign.onclick = () => clearCurrentDesign({ ask: true });
-  document.getElementById("btnBackBase").onclick = () => {
-    window.location.href = "/";
-  };
+  document.getElementById("btnBackBase").onclick = () => cancelHouseSelect();
   document.getElementById("keepFoundation").onchange = (event) => {
     state.keepFoundation = event.target.checked;
     markBuildingDirty();
@@ -9984,7 +10017,7 @@ function bindBuilding() {
     syncMobilePanUi();
   });
   document.getElementById("btnProjectChooseBase")?.addEventListener("click", () => {
-    setPhase("select");
+    enterHouseSelect();
     openBuildingRail("base");
   });
   document.getElementById("btnBuildingSheetClose")?.addEventListener("click", closeBuildingRail);

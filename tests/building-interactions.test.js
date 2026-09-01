@@ -459,14 +459,26 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   assert.doesNotMatch(html, /class="project-card project-card-io"/);
   assert.doesNotMatch(html, /class="project-io"/);
   assert.match(html, /planOverlayKeepFoundation" checked/);
+  assert.match(html, /planOverlayKeepFrame" checked/);
   assert.match(source, /function syncTerrainTopIoPlacement/);
   assert.match(source, /function terrainPhoneChrome/);
   assert.match(source, /preview-row-actions/);
   assert.match(source, /keepFoundation\.checked = true/);
+  assert.match(source, /keepFrame\.checked = true/);
+  assert.match(source, /function moveSelectedPreviewLayer/);
+  assert.match(source, /function sortedPreviewBuildings/);
+  assert.match(source, /function previewDrawDepth/);
+  assert.match(source, /function drawPreviewFrame/);
+  assert.match(source, /mk\("上移"/);
+  assert.match(source, /mk\("下移"/);
+  assert.match(source, /keepFrame: !!entity\.keepFrame/);
+  assert.match(source, /entity\.keepFrame \|\| entity\.id === state\.selectedPreviewId/);
   assert.match(mobileCss, /touch-action:\s*pan-y/);
   assert.match(mobileCss, /html\.is-tablet-workspace #desk \.top-actions > \.top-io-cluster/);
   assert.match(mobileCss, /html\.is-tablet-workspace #desk #terrainProjectSheet \.project-io-slot[\s\S]*display:\s*none/);
   assert.match(mobileCss, /html\.is-mobile-workspace #terrainProjectSheet \.preview-row-actions \.btn[\s\S]*min-height:\s*44px/);
+  assert.match(mobileCss, /html\.is-mobile-workspace #terrainProjectSheet \.preview-row-actions[\s\S]*minmax\(64px, 1fr\)/);
+  assert.match(mobileCss, /html\.is-mobile-workspace #terrainProjectSheet \.preview-toggle-row \.check[\s\S]*min-height:\s*44px/);
   assert.match(html, /id="terrainViewToggles"/);
   assert.match(html, /id="showBuild"/);
   assert.match(html, /id="showGrid"/);
@@ -497,7 +509,11 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   assert.doesNotMatch(html, /导入庄园/);
   assert.doesNotMatch(html, /放置设计建筑/);
   assert.match(html, /id="previewKeepFoundation"/);
+  assert.match(html, /id="previewKeepFrame"/);
   assert.match(html, /id="planOverlayKeepFoundation"/);
+  assert.match(html, />保留地基</);
+  assert.match(html, />保留绿框</);
+  assert.doesNotMatch(html, /保留砖块地基/);
   assert.doesNotMatch(html, /id="btnMatList"/);
   assert.doesNotMatch(html, /材料与地基/);
   assert.match(html, /id="imageTerrainProjection"/);
@@ -556,6 +572,7 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   assert.match(source, /function drawPreviewFootprint/);
   assert.match(source, /selectPreviewBuilding\(previewHit\.entity\.id, \{ reveal: false \}\)/);
   assert.match(source, /function drawSceneObjects/);
+  assert.match(source, /previewDrawDepth\(entity\)/);
   assert.match(source, /function openDeskBuildingCode/);
   assert.match(source, /BuildingPreview\.renderPaper/);
   assert.match(source, /setLayer\("terrain"\)/);
@@ -581,11 +598,16 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   assert.match(source, /pixelSizing: "native"/);
   assert.match(source, /prepared\.bitmap\.width/);
   assert.doesNotMatch(source, /const pixelWidth = width \* TILE_W/);
+  const frameRenderer = source.slice(
+    source.indexOf("function drawPreviewFrame("),
+    source.indexOf("function drawPreviewEntity(")
+  );
+  assert.match(frameRenderer, /drawPreviewFootprint\(layout, true\)/);
   const selectionRenderer = source.slice(
     source.indexOf("function drawPreviewSelection()"),
     source.indexOf("function drawPlanOverlay()")
   );
-  assert.match(selectionRenderer, /drawPreviewFootprint\(layout, true\)/);
+  assert.match(selectionRenderer, /previewResizeHandles\(layout\)/);
   assert.doesNotMatch(selectionRenderer, /if \(entity\.sourceType !== "image" \|\| entity\.locked\) return/);
   assert.doesNotMatch(selectionRenderer, /#ffe14a|setLineDash|strokeRect\(image/);
   assert.doesNotMatch(renderer, /packFrames|packFrameOwners|frameBorrow/);
@@ -810,7 +832,14 @@ test("building designs and uploaded paper libraries persist explicitly", () => {
   assert.match(buildingJs, /persistPaperLibrary\(uploads, false\)/);
   assert.doesNotMatch(buildingJs, /persistPaperLibrary\(uploads, true\)/);
   assert.match(buildingJs, /function libraryAcceptsKind/);
-  assert.match(buildingJs, /if \(PAPER_LIBRARY_DESK === "building"\) return kind === "desk"/);
+  assert.match(buildingJs, /return kind === "desk" \|\| kind === "terrain" \|\| kind === "manor"/);
+  assert.doesNotMatch(buildingJs, /PAPER_LIBRARY_DESK === "building"\) return kind === "desk"/);
+  assert.match(buildingJs, /function enterHouseSelect/);
+  assert.match(buildingJs, /function cancelHouseSelect/);
+  assert.match(buildingJs, /houseSelectBackup/);
+  assert.match(buildingJs, /placedDesignCount\(\) > 0/);
+  assert.match(buildingJs, /btnBackBase"\)\.onclick = \(\) => cancelHouseSelect\(\)/);
+  assert.doesNotMatch(buildingJs, /btnBackBase"\)\.onclick = \(\) => \{\s*window\.location\.href = "\/"/);
   assert.match(buildingJs, /append: true/);
   assert.match(buildingHtml, />导入</);
   assert.match(buildingHtml, /data-paper-kind="desk"/);
@@ -850,9 +879,21 @@ test("paper library kind filter resolves legacy entries and hides filtered cards
   const core = ctx.window.PaperLibraryCore;
   assert.equal(core.resolvePaperKind({ kind: "", meta: "269 件素材 · 17 种材料" }), "desk");
   assert.equal(core.resolvePaperKind({ kind: "", meta: "128 格 · 42 个地块" }), "terrain");
+  assert.equal(core.resolvePaperKind({ kind: "", meta: "42 个地块" }), "terrain");
   assert.equal(core.kindMatchesFilter("", "desk"), true);
   assert.equal(core.kindMatchesFilter("", "terrain"), false);
   assert.equal(core.kindMatchesFilter("desk", "terrain"), false);
+  assert.equal(core.kindMatchesFilter("terrain", "terrain"), true);
+  const gbkTemplate = Uint8Array.from([0xc4, 0xa3, 0xb0, 0xe5, 0x3d, 0x28, 0x48, 0x29, 0x3b]);
+  assert.equal(core.sniffKind(gbkTemplate), "terrain");
+  const delayedGbk = new Uint8Array(80);
+  delayedGbk.set([0xc4, 0xa3, 0xb0, 0xe5, 0x3d], 40);
+  assert.equal(core.sniffKind(delayedGbk), "terrain");
+  const longTerrain = new Uint8Array(500);
+  longTerrain.set(Array.from("size=800;mapflag=0").map((ch) => ch.charCodeAt(0)), 480);
+  assert.equal(core.sniffKind(longTerrain), "terrain");
+  const v1 = Uint8Array.from([0x56, 0x31, 0x3b, 0x41]);
+  assert.equal(core.sniffKind(v1), "v1");
   assert.match(buildingCss, /\.paper-preview-item\[hidden\]/);
 });
 
@@ -918,6 +959,12 @@ test("scene preview entities persist in project v2 but stay out of game exports"
   assert.match(source, /function snapshotHist[\s\S]*previewBuildings:/);
   assert.match(source, /function storePreviewAsset/);
   assert.match(source, /function loadPreviewAsset/);
+  assert.match(source, /function mergePreviewBuildingLists/);
+  assert.match(source, /function vacantPreviewCenter/);
+  assert.match(source, /await putTerrainDraft\(snap\)/);
+  assert.match(source, /await Promise\.race\(\[[\s\S]*reconcileTerrainRemote/);
+  assert.match(source, /previewBuildings: mergePreviewBuildingLists\(localPreviews/);
+  assert.match(source, /\.\.\.vacantPreviewCenter\(\{ footprint: result\.footprint \}\)/);
   const terrainExport = source.slice(source.indexOf("async function exportTerrain()"), source.indexOf("async function exportBuild()"));
   const buildingExport = source.slice(source.indexOf("async function exportBuild()"));
   assert.doesNotMatch(terrainExport, /previewBuildings/);
@@ -994,6 +1041,7 @@ test("both desks expose the shared mobile-first workspace", () => {
   assert.doesNotMatch(terrainJs, /base64ToBytes\(paper\.data\)/);
   assert.match(terrainJs, /terrainLibraryAcceptsKind/);
   assert.match(terrainJs, /kind === "desk" \|\| kind === "terrain" \|\| kind === "manor"/);
+  assert.match(terrainJs, /sniff === "terrain"\) documentData\.kind = "terrain"/);
   assert.match(buildingJs, /function syncMobileBuildingPanels/);
   assert.match(buildingJs, /openBuildingRail\("project"\)/);
   assert.doesNotMatch(buildingJs, /scrollIntoView\(\{ block: "start" \}\)/);
@@ -1083,13 +1131,10 @@ test("both desks expose the shared mobile-first workspace", () => {
   assert.match(mobileCss, /html\.is-mobile-workspace \.mobile-workspace-only\[hidden\]/);
   assert.match(mobileCss, /html\.is-tablet-workspace \.mobile-sheet-backdrop/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.stage-commandbar[\s\S]*width:\s*max-content/);
-  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar[\s\S]*width:\s*fit-content/);
-  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar[\s\S]*max-width:\s*min\(calc\(100vw - 24px\), 360px\)/);
-  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar \.command-row-primary[\s\S]*display:\s*contents/);
-  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar \.tool-group-history[\s\S]*order:\s*20/);
-  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar \.tool-group-z[\s\S]*order:\s*21/);
+  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar[\s\S]*width:\s*max-content/);
+  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar[\s\S]*max-width:\s*calc\(100vw - 8px\)/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.stage-commandbar \.canvas-toolbar[\s\S]*flex-direction:\s*column/);
-  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar \.canvas-toolbar[\s\S]*flex-direction:\s*row/);
+  assert.match(mobileCss, /html\.is-tablet-workspace \.stage-commandbar \.canvas-toolbar[\s\S]*flex-direction:\s*column/);
   assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.stage-commandbar \.canvas-toolbar[\s\S]*flex-direction:\s*row/);
   assert.match(mobileCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.stage-commandbar \.command-row-primary[\s\S]*display:\s*contents/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.stage-commandbar \.command-row[\s\S]*display:\s*flex/);

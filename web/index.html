@@ -9,11 +9,11 @@
   <meta name="theme-color" content="#2f6b4f" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>设计桌</title>
-  <link rel="stylesheet" href="/web/app.css?v=101" />
+  <link rel="stylesheet" href="/web/app.css?v=102" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=10" />
   <link rel="stylesheet" href="/web/paper-library.css?v=11" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=93" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=94" />
 </head>
 <body>
   <div class="app" id="desk">
@@ -280,9 +280,13 @@
                     <input type="checkbox" id="previewAspectLocked" checked />
                     <span>锁定宽高比</span>
                   </label>
-                  <label class="check" id="previewFoundationField" title="保留户型自带的砖块地板。绿色外壳不会画到地形上。">
+                  <label class="check" id="previewFoundationField" title="保留户型自带的砖块地板。">
                     <input type="checkbox" id="previewKeepFoundation" checked />
-                    <span>保留砖块地基</span>
+                    <span>保留地基</span>
+                  </label>
+                  <label class="check" id="previewKeepFrameField" title="取消选中后仍显示占地绿框。">
+                    <input type="checkbox" id="previewKeepFrame" />
+                    <span>保留绿框</span>
                   </label>
                 </div>
                 <label class="field preview-opacity-field"><span>透明度 <b id="previewOpacityLabel">100%</b></span><input id="previewOpacity" type="range" min="10" max="100" value="100" /></label>
@@ -457,12 +461,18 @@
             <input type="checkbox" id="planOverlayAspect" checked />
             <span>图片保持宽高比</span>
           </label>
-          <label class="check" id="planOverlayFoundationField" title="保留户型自带的砖块地板。绿色外壳不会画到地形上。">
-            <input type="checkbox" id="planOverlayKeepFoundation" checked />
-            <span>保留砖块地基</span>
-          </label>
+          <div class="field-row preview-toggle-row" id="planOverlayFlagRow">
+            <label class="check" id="planOverlayFoundationField" title="保留户型自带的砖块地板。">
+              <input type="checkbox" id="planOverlayKeepFoundation" checked />
+              <span>保留地基</span>
+            </label>
+            <label class="check" id="planOverlayKeepFrameField" title="放到地图后一直显示占地绿框。">
+              <input type="checkbox" id="planOverlayKeepFrame" checked />
+              <span>保留绿框</span>
+            </label>
+          </div>
           <label class="field" id="planOverlayOpacityField"><span>透明度 <b id="planOverlayOpacityLabel">100%</b></span><input id="planOverlayOpacity" type="range" min="10" max="100" value="100" /></label>
-          <p class="dlg-desc" id="planOverlayHelp">建筑代码和图片均按原生像素比例透明裁切。地形上不会带绿色外壳；勾选「保留砖块地基」才画出户型自带的砖块地板。图片可在放置后拖动四角修改大小。</p>
+          <p class="dlg-desc" id="planOverlayHelp">建筑代码和图片均按原生像素比例透明裁切。勾选「保留地基」才画出户型自带的砖块地板；勾选「保留绿框」会一直显示占地绿框。图片可在放置后拖动四角修改大小。</p>
           <button type="button" class="btn btn-primary btn-block" id="btnApplyPlanOverlay">放到地图中央</button>
         </div>
       </div>
@@ -502,12 +512,12 @@
   <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
 
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/paper-library-core.js?v=5"></script>
+  <script src="/web/paper-library-core.js?v=7"></script>
   <script src="/web/app-dialog.js?v=1"></script>
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/building-preview.js?v=8"></script>
   <script src="/web/material-ledger.js?v=3"></script>
-  <script src="/web/app.js?v=248"></script>
+  <script src="/web/app.js?v=252"></script>
 </body>
 </html>

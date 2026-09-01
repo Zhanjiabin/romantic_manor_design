@@ -672,7 +672,7 @@ html.is-mobile-workspace #terrainProjectSheet .preview-building-row.is-selected 
 html.is-mobile-workspace #terrainProjectSheet .preview-row-actions {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
   gap: 4px;
   padding: 4px 0 2px;
 }
@@ -735,8 +735,18 @@ html.is-mobile-workspace #terrainProjectSheet .preview-inspector-actions .btn {
 }
 
 html.is-mobile-workspace #terrainProjectSheet .preview-toggle-row .check {
-  min-height: 30px;
-  font-size: 11px;
+  min-height: 44px;
+  min-width: 44px;
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+html.is-mobile-workspace #dlgPlanOverlay #planOverlayFlagRow {
+  grid-template-columns: 1fr 1fr;
+}
+
+html.is-mobile-workspace #dlgPlanOverlay #planOverlayFlagRow .check {
+  min-height: 44px;
 }
 
 html.is-mobile-workspace #terrainProjectSheet .preview-panel-foot {
@@ -860,7 +870,7 @@ html.is-tablet-workspace #terrainProjectSheet .preview-building-row.is-selected 
 html.is-tablet-workspace #terrainProjectSheet .preview-row-actions {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
   gap: 4px;
   width: 100%;
   padding: 4px 0 2px;

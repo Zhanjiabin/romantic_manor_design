@@ -1480,6 +1480,10 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
   padding: 0 6px;
   font-size: 11px;
 }
+.preview-row-actions .btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
 .preview-building-icons { display: flex; gap: 2px; }
 .preview-icon-button {
   width: 32px;
@@ -1512,6 +1516,7 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
 .preview-image-only[hidden],
 #previewAspectField[hidden],
 #previewFoundationField[hidden],
+#previewKeepFrameField[hidden],
 #btnPreviewBuildingMaterials[hidden] { display: none !important; }
 .preview-inspector-name { font-size: 12px; font-weight: 700; }
 .preview-size-row .field { min-width: 0; }
@@ -1531,6 +1536,17 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
   min-height: 28px;
   font-size: 12px;
 }
+#planOverlayFlagRow {
+  align-items: stretch;
+}
+#planOverlayFlagRow .check {
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(183, 200, 178, 0.65);
+}
+#planOverlayFoundationField[hidden] { display: none !important; }
 .preview-scene-note {
   margin: 0;
   color: var(--ink-soft);

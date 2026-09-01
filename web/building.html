@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/building.css?v=184" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
   <link rel="stylesheet" href="/web/materials-dock.css?v=9" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=93" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=94" />
 </head>
 <body>
   <div class="app building-app phase-select" id="buildingApp">
@@ -510,7 +510,7 @@
         </header>
         <div class="paper-library-empty" id="paperLibraryEmpty">
           <strong>还没有图纸</strong>
-          <p>导入文件夹或文件。建筑桌只收入建筑图纸；已有图纸会按内容去重后叠加。</p>
+          <p>导入文件夹或文件。建筑图纸可在本桌打开，地形图纸会收入库并转到地形桌查看；已有图纸会按内容去重后叠加。</p>
           <button type="button" class="btn btn-primary" id="btnPaperLibraryPick">导入图纸</button>
         </div>
         <div class="paper-preview-grid" id="paperPreviewGrid" hidden></div>
@@ -689,13 +689,13 @@
   <input type="file" id="buildingFolder" accept=".txt,text/plain" multiple webkitdirectory directory hidden />
   <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/paper-library-core.js?v=5"></script>
+  <script src="/web/paper-library-core.js?v=7"></script>
   <script src="/web/app-dialog.js?v=1"></script>
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/building-interactions.js?v=12"></script>
   <script src="/web/building-preview.js?v=6"></script>
   <script src="/web/material-ledger.js?v=3"></script>
-  <script src="/web/building.js?v=219"></script>
+  <script src="/web/building.js?v=223"></script>
 </body>
 </html>

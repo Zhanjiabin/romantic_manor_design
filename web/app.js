@@ -234,7 +234,12 @@ async function boot() {
     fitTerrainContent();
     draw();
   }
-  if (!sample) reconcileTerrainRemote(restored).catch((err) => console.warn(err));
+  if (!sample) {
+    await Promise.race([
+      reconcileTerrainRemote(restored).catch((err) => console.warn(err)),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
+  }
   await consumePendingBuildingImport();
   await consumePendingTerrainImport();
   await consumePendingPreviewBuilding();
@@ -244,7 +249,7 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
-  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=219"]);
+  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=223"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
     if (terrainInteractionBusy()) return;
@@ -3376,6 +3381,58 @@ function previewEntityById(id) {
   return state.previewBuildings.find((entity) => entity.id === id) || null;
 }
 
+function previewLayerValue(entity) {
+  const n = Number(entity?.layer);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function previewIsoDepth(entity) {
+  return (Number(entity?.x) || 0) + (Number(entity?.y) || 0);
+}
+
+function previewDrawDepth(entity) {
+  return previewLayerValue(entity) * 1e12 + previewIsoDepth(entity);
+}
+
+function comparePreviewDrawOrder(a, b) {
+  const layer = previewLayerValue(a) - previewLayerValue(b);
+  if (layer) return layer;
+  const iso = previewIsoDepth(a) - previewIsoDepth(b);
+  if (iso) return iso;
+  return String(a?.id || "").localeCompare(String(b?.id || ""));
+}
+
+function sortedPreviewBuildings(dir = 1) {
+  return [...state.previewBuildings].sort((a, b) => comparePreviewDrawOrder(a, b) * dir);
+}
+
+function nextPreviewLayer() {
+  return state.previewBuildings.reduce((max, entity) => Math.max(max, previewLayerValue(entity)), -1) + 1;
+}
+
+function moveSelectedPreviewLayer(delta) {
+  const entity = previewEntityById(state.selectedPreviewId);
+  if (!entity) return;
+  const ordered = sortedPreviewBuildings(1);
+  const index = ordered.findIndex((row) => row.id === entity.id);
+  const next = index + delta;
+  if (index < 0 || next < 0 || next >= ordered.length) return;
+  pushHist();
+  if (ordered.some((row, i) => i && previewLayerValue(row) === previewLayerValue(ordered[i - 1]))) {
+    ordered.forEach((row, i) => {
+      row.layer = i;
+    });
+  }
+  const other = ordered[next];
+  const a = previewLayerValue(entity);
+  const b = previewLayerValue(other);
+  entity.layer = b;
+  other.layer = a;
+  markDirty();
+  updatePreviewBuildingUi();
+  draw();
+}
+
 function previewBitmap(entity) {
   const runtime = state.previewRuntime.get(entity?.id);
   return runtime?.bitmap || runtime?.image || null;
@@ -3497,6 +3554,37 @@ function snapPreviewCenter(x, y, entity) {
     x: Math.max(0, Math.min(worldExtent(), front.x)),
     y: Math.max(0, Math.min(worldExtent(), front.y - halfHeight)),
   };
+}
+
+function previewCentersOverlap(left, right) {
+  return Math.hypot((Number(left?.x) || 0) - (Number(right?.x) || 0), (Number(left?.y) || 0) - (Number(right?.y) || 0)) < 12;
+}
+
+function vacantPreviewCenter(entity, existing = state.previewBuildings) {
+  const center = view
+    ? screenToWorld(view.width / 2, view.height / 2)
+    : { x: worldExtent() / 2, y: worldExtent() / 2 };
+  const first = snapPreviewCenter(center.x, center.y, entity);
+  const occupied = (pos) => (existing || []).some((row) => previewCentersOverlap(row, pos));
+  if (!occupied(first)) return first;
+  const { halfWidth, halfHeight } = previewTileHalf(entity);
+  const stepX = Math.max(TILE_W, halfWidth);
+  const stepY = Math.max(TILE_H, halfHeight);
+  for (let ring = 1; ring <= 12; ring += 1) {
+    const candidates = [
+      { x: first.x + ring * stepX, y: first.y },
+      { x: first.x, y: first.y + ring * stepY },
+      { x: first.x - ring * stepX, y: first.y },
+      { x: first.x, y: first.y - ring * stepY },
+      { x: first.x + ring * stepX, y: first.y + ring * stepY },
+      { x: first.x - ring * stepX, y: first.y + ring * stepY },
+    ];
+    for (const candidate of candidates) {
+      const snapped = snapPreviewCenter(candidate.x, candidate.y, entity);
+      if (!occupied(snapped)) return snapped;
+    }
+  }
+  return first;
 }
 
 function linearFromTwoRays(srcA, srcB, dstA, dstB) {
@@ -3719,7 +3807,7 @@ function previewHitTest(x, y) {
     }
   }
   const pad = previewTouchRadius();
-  const ordered = [...state.previewBuildings].sort((a, b) => (a.x + a.y) - (b.x + b.y));
+  const ordered = sortedPreviewBuildings(1);
   for (let i = ordered.length - 1; i >= 0; i -= 1) {
     const entity = ordered[i];
     if (entity.visible === false) continue;
@@ -3734,23 +3822,6 @@ function previewHitTest(x, y) {
 
 function planOverlayHitScreen(x, y) {
   return !!previewHitTest(x, y);
-}
-
-function drawPreviewEntity(entity) {
-  if (entity.visible === false || !buildingsVisibleOnMap()) return;
-  const layout = previewEntityLayout(entity);
-  if (!layout) return;
-  const { image, bitmap, transform } = layout;
-  ctx.save();
-  ctx.globalAlpha = Math.max(0.1, Math.min(1, Number(entity.opacity ?? 1)));
-  ctx.imageSmoothingEnabled = !!layout.warped || Math.abs(state.cam.k - 1) > 0.001;
-  if (transform) {
-    ctx.transform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
-    ctx.drawImage(bitmap, 0, 0);
-  } else {
-    ctx.drawImage(bitmap, image.x, image.y, image.width, image.height);
-  }
-  ctx.restore();
 }
 
 function drawPreviewFootprint(layout, fill) {
@@ -3773,6 +3844,37 @@ function drawPreviewFootprint(layout, fill) {
   ctx.stroke();
 }
 
+function drawPreviewFrame(entity, { selected = false } = {}) {
+  const layout = previewEntityLayout(entity);
+  if (!layout) return;
+  ctx.save();
+  ctx.fillStyle = selected ? "rgba(47, 125, 91, 0.16)" : "rgba(47, 125, 91, 0.08)";
+  ctx.strokeStyle = selected ? "#2f7d5b" : "rgba(47, 125, 91, 0.88)";
+  ctx.lineWidth = window.MobileWorkspace?.modeForViewport().coarse ? (selected ? 3 : 2) : (selected ? 2 : 1.5);
+  drawPreviewFootprint(layout, true);
+  ctx.restore();
+}
+
+function drawPreviewEntity(entity) {
+  if (entity.visible === false || !buildingsVisibleOnMap()) return;
+  const layout = previewEntityLayout(entity);
+  if (!layout) return;
+  const { image, bitmap, transform } = layout;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0.1, Math.min(1, Number(entity.opacity ?? 1)));
+  ctx.imageSmoothingEnabled = !!layout.warped || Math.abs(state.cam.k - 1) > 0.001;
+  if (transform) {
+    ctx.transform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
+    ctx.drawImage(bitmap, 0, 0);
+  } else {
+    ctx.drawImage(bitmap, image.x, image.y, image.width, image.height);
+  }
+  ctx.restore();
+  if (entity.keepFrame || entity.id === state.selectedPreviewId) {
+    drawPreviewFrame(entity, { selected: entity.id === state.selectedPreviewId });
+  }
+}
+
 function drawPreviewSelection() {
   const entity = previewEntityById(state.selectedPreviewId);
   if (!entity || entity.visible === false) return;
@@ -3781,10 +3883,6 @@ function drawPreviewSelection() {
   if (!layout) return;
   const { ground } = layout;
   ctx.save();
-  ctx.fillStyle = "rgba(47, 125, 91, 0.16)";
-  ctx.strokeStyle = "#2f7d5b";
-  ctx.lineWidth = window.MobileWorkspace?.modeForViewport().coarse ? 3 : 2;
-  drawPreviewFootprint(layout, true);
   ctx.fillStyle = "#2f7d5b";
   ctx.strokeStyle = "#fff";
   ctx.lineWidth = 2;
@@ -3811,7 +3909,7 @@ function buildingsVisibleOnMap() {
 
 function drawPlanOverlay() {
   if (!buildingsVisibleOnMap()) return;
-  state.previewBuildings.forEach((entity) => {
+  sortedPreviewBuildings(1).forEach((entity) => {
     if (!state.previewRuntime.has(entity.id)) ensurePreviewRuntime(entity);
     drawPreviewEntity(entity);
   });
@@ -3827,7 +3925,7 @@ function drawSceneObjects() {
     scene.push({ type: "manor", depth: building.x + building.y, building, index });
   });
   state.previewBuildings.forEach((entity) => {
-    if (entity.visible !== false) scene.push({ type: "preview", depth: entity.x + entity.y, entity });
+    if (entity.visible !== false) scene.push({ type: "preview", depth: previewDrawDepth(entity), entity });
   });
   scene.sort((a, b) => a.depth - b.depth);
   scene.forEach((row) => {
@@ -4528,6 +4626,17 @@ function serializePreviewEntity(entity) {
   };
 }
 
+function mergePreviewBuildingLists(primary, secondary) {
+  const byId = new Map();
+  (secondary || []).forEach((entity) => {
+    if (entity?.id) byId.set(entity.id, entity);
+  });
+  (primary || []).forEach((entity) => {
+    if (entity?.id) byId.set(entity.id, entity);
+  });
+  return [...byId.values()];
+}
+
 function deserializePreviewEntity(entity) {
   const row = {
     ...serializePreviewEntity(entity),
@@ -4536,6 +4645,8 @@ function deserializePreviewEntity(entity) {
     locked: !!entity.locked,
     opacity: Math.max(0.1, Math.min(1, Number(entity.opacity ?? 1))),
     keepFoundation: !!entity.keepFoundation,
+    keepFrame: !!entity.keepFrame,
+    layer: Number.isFinite(Number(entity.layer)) ? Math.round(Number(entity.layer)) : 0,
   };
   const pos = snapPreviewCenter(Number(row.x) || 0, Number(row.y) || 0, row);
   row.x = pos.x;
@@ -5343,6 +5454,7 @@ async function saveNamedVersion(name) {
     console.warn(err);
   }
   try {
+    await putTerrainDraft(snap);
     await putTerrainVersion(snap);
     state.dirty = false;
     setSaveStatus("已保存到服务器 " + snap.name);
@@ -5423,11 +5535,16 @@ async function reconcileTerrainRemote(localSnap) {
     const remoteDraft = remote && remote.draft;
     const newest = pickNewerSnap(localSnap, remoteDraft);
     if (!draftHasWork(newest)) return null;
+    const localPreviews = (state.previewBuildings || []).map(serializePreviewEntity);
     if (newest !== localSnap) {
-      applyProject(newest, { quiet: true });
+      const merged = {
+        ...newest,
+        previewBuildings: mergePreviewBuildingLists(localPreviews, newest.previewBuildings || []),
+      };
+      applyProject(merged, { quiet: true });
       state.dirty = false;
       setSaveStatus("已恢复 " + formatSaveTime(newest.savedAt));
-      saveDraftLocal(newest);
+      saveDraftLocal(merged);
       fitTerrainContent();
       draw();
     }
@@ -5900,6 +6017,14 @@ function bind() {
     entity.keepFoundation = event.target.checked;
     state.previewRuntime.delete(entity.id);
     ensurePreviewRuntime(entity).catch((error) => console.warn(error));
+    markDirty();
+    draw();
+  });
+  document.getElementById("previewKeepFrame")?.addEventListener("change", (event) => {
+    const entity = previewEntityById(state.selectedPreviewId);
+    if (!entity) return;
+    pushHist();
+    entity.keepFrame = event.target.checked;
     markDirty();
     draw();
   });
@@ -6745,6 +6870,8 @@ async function openDeskBuildingCode(doc, fileName, options = {}) {
   document.getElementById("planOverlayOpacityField").hidden = true;
   const keepFoundation = document.getElementById("planOverlayKeepFoundation");
   if (keepFoundation) keepFoundation.checked = true;
+  const keepFrame = document.getElementById("planOverlayKeepFrame");
+  if (keepFrame) keepFrame.checked = true;
   const title = document.querySelector("#dlgPlanOverlay .modal-cap span");
   if (title) title.textContent = "导入设计桌图纸";
   showDlg("dlgPlanOverlay", true);
@@ -7154,12 +7281,14 @@ async function loadTerrainPaperLibraryFiles(candidates, { persist = false, appen
         terrainPaperLibrary.skippedDup += 1;
         continue;
       }
+      const sniff = PaperLibraryCore.sniffKind(bytes);
       let documentData;
       if (!persist && (meta.kind === "desk" || meta.kind === "terrain" || meta.kind === "manor")) {
         documentData = { kind: meta.kind, records: [], stamps: [], size: "" };
       } else {
         documentData = await PaperLibraryCore.parseFile(bytes.buffer);
       }
+      if (sniff === "terrain") documentData.kind = "terrain";
       if (persist && !terrainLibraryAcceptsKind(documentData.kind)) continue;
       knownIds.add(contentId);
       const entry = {
@@ -7907,6 +8036,8 @@ async function openPlanOverlay(file) {
     document.getElementById("planOverlayAspect").checked = true;
     document.getElementById("planOverlayOpacity").value = "100";
     document.getElementById("planOverlayOpacityLabel").textContent = "100%";
+    const keepFrame = document.getElementById("planOverlayKeepFrame");
+    if (keepFrame) keepFrame.checked = true;
     document.getElementById("btnApplyPlanOverlay").disabled = false;
     showDlg("dlgPlanOverlay", true);
   } catch (error) {
@@ -7927,7 +8058,6 @@ async function applyPlanOverlay() {
   if (!planOverlayDraft) return;
   const width = Math.max(1, Math.min(64, Number(document.getElementById("planOverlayWidth")?.value) || 1));
   const height = Math.max(1, Math.min(64, Number(document.getElementById("planOverlayHeight")?.value) || 1));
-  const center = screenToWorld(view.width / 2, view.height / 2);
   const id = `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   let entity;
   let runtime;
@@ -7948,10 +8078,12 @@ async function applyPlanOverlay() {
       floorQuad: copyFloorQuad(result.floorQuad),
       unresolved: [...result.unresolved],
       keepFoundation: document.getElementById("planOverlayKeepFoundation")?.checked === true,
+      keepFrame: document.getElementById("planOverlayKeepFrame")?.checked === true,
+      layer: nextPreviewLayer(),
       visible: true,
       locked: false,
       opacity: 1,
-      ...snapPreviewCenter(center.x, center.y, { footprint: result.footprint }),
+      ...vacantPreviewCenter({ footprint: result.footprint }),
     };
     runtime = {
       ...result,
@@ -7979,7 +8111,9 @@ async function applyPlanOverlay() {
       visible: true,
       locked: false,
       opacity: Math.max(0.1, Number(document.getElementById("planOverlayOpacity")?.value || 100) / 100),
-      ...snapPreviewCenter(center.x, center.y, { footprint: [width, height] }),
+      keepFrame: document.getElementById("planOverlayKeepFrame")?.checked === true,
+      layer: nextPreviewLayer(),
+      ...vacantPreviewCenter({ footprint: [width, height] }),
     };
     runtime = {
       ...prepared,
@@ -8227,6 +8361,8 @@ function duplicateSelectedPreview() {
     groundAnchor: source.groundAnchor ? { ...source.groundAnchor } : undefined,
     floorQuad: copyFloorQuad(source.floorQuad),
     crop: source.crop ? [...source.crop] : undefined,
+    keepFrame: !!source.keepFrame,
+    layer: nextPreviewLayer(),
     ...snapPreviewCenter(source.x + SNAP * 2, source.y + SNAP * 2, source),
     locked: false,
   };
@@ -8373,7 +8509,8 @@ function updatePreviewBuildingUi() {
   if (empty) empty.hidden = state.previewBuildings.length > 0;
   if (list) {
     list.replaceChildren();
-    state.previewBuildings.forEach((entity) => {
+    const listed = sortedPreviewBuildings(-1);
+    listed.forEach((entity, rank) => {
       const selected = entity.id === state.selectedPreviewId;
       const row = document.createElement("div");
       row.className = `preview-building-row${selected ? " is-selected" : ""}`;
@@ -8391,29 +8528,34 @@ function updatePreviewBuildingUi() {
       strong.title = displayName;
       const small = document.createElement("small");
       const runtime = state.previewRuntime.get(entity.id);
+      const layerLabel = `图层 ${listed.length - rank}`;
       small.textContent = runtime?.error
         ? runtime.error
         : entity.sourceType === "paper"
-          ? `真实户型 ${entity.baseNo} · ${(entity.footprint || []).join("×")}`
-          : `${Math.round(entity.width || 0)}×${Math.round(entity.height || 0)} 像素`;
+          ? `${layerLabel} · 真实户型 ${entity.baseNo} · ${(entity.footprint || []).join("×")}`
+          : `${layerLabel} · ${Math.round(entity.width || 0)}×${Math.round(entity.height || 0)} 像素`;
       copy.append(strong, small);
       row.append(image, copy);
       if (selected) {
         const actions = document.createElement("div");
         actions.className = "preview-row-actions";
         actions.addEventListener("click", (event) => event.stopPropagation());
-        const mk = (label, className, run) => {
+        const mk = (label, className, run, disabled = false) => {
           const button = document.createElement("button");
           button.type = "button";
           button.className = className;
           button.textContent = label;
+          button.disabled = !!disabled;
           button.addEventListener("click", (event) => {
             event.stopPropagation();
+            if (button.disabled) return;
             run();
           });
           return button;
         };
         actions.append(
+          mk("上移", "btn btn-compact", () => moveSelectedPreviewLayer(1), rank <= 0),
+          mk("下移", "btn btn-compact", () => moveSelectedPreviewLayer(-1), rank >= listed.length - 1),
           mk("复制", "btn btn-compact", duplicateSelectedPreview),
           mk(entity.locked ? "解锁" : "锁定", "btn btn-compact", toggleSelectedPreviewLock),
           mk("删除", "btn btn-compact danger", deleteSelectedPreview),
@@ -8441,6 +8583,10 @@ function updatePreviewBuildingUi() {
   document.getElementById("previewAspectField").hidden = !isImage;
   document.getElementById("previewFoundationField").hidden = !isPaper;
   document.getElementById("previewKeepFoundation").checked = !!selected.keepFoundation;
+  const keepFrameField = document.getElementById("previewKeepFrameField");
+  if (keepFrameField) keepFrameField.hidden = false;
+  const keepFrame = document.getElementById("previewKeepFrame");
+  if (keepFrame) keepFrame.checked = !!selected.keepFrame;
   document.getElementById("previewWidth").value = String(Math.round(selected.width || 0));
   document.getElementById("previewHeight").value = String(Math.round(selected.height || 0));
   document.getElementById("previewFootprintWidth").value = String(selected.footprint?.[0] || 1);

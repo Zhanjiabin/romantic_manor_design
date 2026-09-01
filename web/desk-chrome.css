@@ -49,6 +49,41 @@
   box-shadow: var(--focus-ring);
 }
 
+.app .topbar {
+  min-height: 52px;
+  padding: 8px 14px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+  align-items: center;
+  box-sizing: border-box;
+}
+
+.top-account-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 12rem;
+  flex: 0 0 auto;
+  margin-left: 4px;
+}
+.top-account-btn[hidden] {
+  display: none !important;
+}
+.top-account-kicker {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.top-account-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
 @media (max-width: 720px) {
   .app .desk-switch-inline a {
     padding: 0 10px;

@@ -928,7 +928,18 @@ test("both desks expose the shared mobile-first workspace", () => {
     assert.match(html, /viewport-fit=cover/);
     assert.doesNotMatch(html, /maximum-scale|user-scalable=no/);
     assert.match(html, /mobile-bottom-dock/);
+    assert.match(html, /id="btnSwitchAccount"/);
+    assert.match(html, /desk-account\.js/);
   }
+  const deskAccount = fs.readFileSync(path.join(__dirname, "../web/desk-account.js"), "utf8");
+  const chromeCss = fs.readFileSync(path.join(__dirname, "../web/desk-chrome.css"), "utf8");
+  assert.match(deskAccount, /\/api\/whoami/);
+  assert.match(deskAccount, /\/api\/logout/);
+  assert.match(chromeCss, /\.app \.topbar \{[\s\S]*min-height:\s*52px/);
+  assert.match(chromeCss, /\.top-account-btn\[hidden\]/);
+  assert.match(buildingCss, /\.building-app \.topbar \{[\s\S]*min-height:\s*52px/);
+  assert.doesNotMatch(buildingCss, /\.building-app \.topbar \{[^}]*min-height:\s*40px/);
+  assert.match(mobileCss, /html\.is-mobile-workspace #desk \.topbar[\s\S]*min-height:\s*44px/);
   assert.match(terrainHtml, /id="btnMobileTerrainTools"/);
   assert.match(buildingHtml, /id="btnBuildingMobileAssets"/);
   assert.match(buildingHtml, /id="btnBuildingMobileTools"/);

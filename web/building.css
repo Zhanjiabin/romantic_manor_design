@@ -18,16 +18,15 @@ html.boot-ready .building-app {
 }
 
 .building-app .topbar {
-  min-height: 40px;
-  padding: 4px 10px;
-  padding-top: max(4px, env(safe-area-inset-top));
-  padding-left: max(10px, env(safe-area-inset-left));
-  padding-right: max(10px, env(safe-area-inset-right));
-  gap: 8px;
+  min-height: 52px;
+  padding: 8px 14px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+  gap: 12px;
+  align-items: center;
+  box-sizing: border-box;
 }
-.building-app .brand-mark { width: 18px; height: 18px; border-radius: 6px; }
-.building-app .brand-title { font-size: 15px; }
-.building-app .desk-switch-inline a { height: 24px; padding: 0 10px; font: 600 12px/24px var(--font); }
 
 .building-workspace {
   position: relative;

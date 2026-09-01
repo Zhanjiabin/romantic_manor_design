@@ -333,11 +333,21 @@ html.is-mobile-workspace #desk .rail {
   grid-row: 1;
 }
 
+html.is-mobile-workspace .top-account-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: 10px;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) .top-account-kicker {
+  display: none;
+}
+
 html.is-mobile-workspace #desk .topbar {
   min-height: 44px;
-  padding-top: max(4px, env(safe-area-inset-top));
-  padding-bottom: 4px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-bottom: 8px;
   gap: 6px;
+  align-items: center;
 }
 
 html.is-mobile-workspace #desk .top-actions #btnDrawerLeft,
@@ -2230,11 +2240,11 @@ html.is-mobile-workspace .building-app .topbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   justify-content: space-between;
-  align-items: start;
+  align-items: center;
   gap: 4px 8px;
   min-height: 44px;
-  padding-top: max(4px, env(safe-area-inset-top));
-  padding-bottom: 4px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-bottom: 8px;
   overflow: visible;
   background: transparent;
   border-bottom: 0;
@@ -2354,8 +2364,7 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .topbar {
   flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
-  height: auto;
-  min-height: 0;
+  min-height: 44px;
   gap: 6px;
   padding-left: max(8px, env(safe-area-inset-left));
   padding-right: max(6px, env(safe-area-inset-right));

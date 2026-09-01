@@ -200,6 +200,38 @@ def test_http_auth_accepts_extra_users():
         _restore_env(saved)
 
 
+def test_whoami_and_logout():
+    saved = _clear_auth_env()
+    os.environ["MANOR_USER"] = "ada"
+    os.environ["MANOR_PASSWORD"] = "secret"
+    os.environ["MANOR_USERS"] = "zed:extra"
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = httpd.server_address[:2]
+        extra = base64.b64encode(b"zed:extra").decode("ascii")
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/whoami", headers={"Authorization": "Basic " + extra})
+        who = conn.getresponse()
+        body = who.read()
+        assert who.status == 200
+        assert json.loads(body)["user"] == "zed"
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/logout", headers={"Authorization": "Basic " + extra})
+        out = conn.getresponse()
+        out.read()
+        assert out.status == 401
+        assert "Basic" in (out.getheader("WWW-Authenticate") or "")
+        conn.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        _restore_env(saved)
+
+
 def test_http_saves_roundtrip():
     saved = _clear_auth_env()
     tmp = Path(tempfile.mkdtemp(prefix="manor-saves-http-"))

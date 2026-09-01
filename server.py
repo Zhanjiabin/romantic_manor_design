@@ -252,10 +252,13 @@ class Handler(SimpleHTTPRequestHandler):
         return unquote(urlsplit(self.path).path)
 
     def _authorized(self) -> bool:
+        path = self._request_path()
+        if path == "/api/logout":
+            return False
         accounts = auth_accounts()
         if not accounts:
             return True
-        if self._request_path() in PUBLIC_PATHS:
+        if path in PUBLIC_PATHS:
             return True
         got = parse_basic_auth(self.headers.get("Authorization") or "")
         if not got:
@@ -413,6 +416,11 @@ class Handler(SimpleHTTPRequestHandler):
                 "grass": (TILE / "maptexture" / "c01.jpg").is_file(),
             }
             return self._send(200, json.dumps(payload).encode("utf-8"), "application/json")
+        if path == "/api/whoami":
+            got = parse_basic_auth(self.headers.get("Authorization") or "")
+            user = got[0] if got and auth_accounts() else ""
+            body = json.dumps({"user": user}, ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
         if path == "/api/saves/terrain":
             body = json.dumps(load_terrain_bundle(), ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")

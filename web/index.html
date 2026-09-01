@@ -10,10 +10,10 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>设计桌</title>
   <link rel="stylesheet" href="/web/app.css?v=101" />
-  <link rel="stylesheet" href="/web/desk-chrome.css?v=4" />
+  <link rel="stylesheet" href="/web/desk-chrome.css?v=7" />
   <link rel="stylesheet" href="/web/paper-library.css?v=11" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=87" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=89" />
 </head>
 <body>
   <div class="app" id="desk">
@@ -47,6 +47,10 @@
         <button type="button" class="btn btn-compact mobile-only" id="btnSaveMobile" title="保存到服务器">保存</button>
         <button type="button" class="btn btn-compact mobile-only" id="btnDrawerRight">文件</button>
       </div>
+      <button type="button" class="btn btn-compact top-account-btn" id="btnSwitchAccount" hidden title="切换账号">
+        <span class="top-account-kicker">账号</span>
+        <span class="top-account-name" id="deskAccountName"></span>
+      </button>
     </header>
 
     <div class="workspace">
@@ -496,6 +500,7 @@
   <script src="/web/codec.js?v=43"></script>
   <script src="/web/paper-library-core.js?v=4"></script>
   <script src="/web/app-dialog.js?v=1"></script>
+  <script src="/web/desk-account.js?v=1"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/building-preview.js?v=8"></script>
   <script src="/web/material-ledger.js?v=3"></script>

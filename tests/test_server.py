@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sys
 import tempfile
@@ -226,7 +227,38 @@ def test_http_saves_roundtrip():
         papers_body = got_papers.read()
         assert got_papers.status == 200
         assert b"hut.txt" in papers_body
-        assert b"VjE7dGVzdA==" in papers_body
+        assert b"VjE7dGVzdA==" not in papers_body
+        listed = json.loads(papers_body)
+        ident = listed["papers"][0]["id"]
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", f"/api/saves/building/papers/{ident}", headers={"Authorization": "Basic " + token})
+        one = conn.getresponse()
+        one_body = one.read()
+        assert one.status == 200
+        assert json.loads(one_body)["data"] == "VjE7dGVzdA=="
+        conn.close()
+
+        jpeg = b"\xff\xd8\xff\xd9" + b"\x00" * 24
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "PUT",
+            f"/api/saves/building/papers/{ident}/thumb",
+            body=jpeg,
+            headers={**headers, "Content-Type": "image/jpeg"},
+        )
+        put_thumb = conn.getresponse()
+        assert put_thumb.status == 200
+        put_thumb.read()
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", f"/api/saves/building/papers/{ident}/thumb", headers={"Authorization": "Basic " + token})
+        got_thumb = conn.getresponse()
+        assert got_thumb.status == 200
+        assert got_thumb.getheader("Content-Type") == "image/jpeg"
+        assert got_thumb.read().startswith(b"\xff\xd8")
         conn.close()
     finally:
         httpd.shutdown()

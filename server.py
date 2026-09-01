@@ -14,7 +14,7 @@ import webbrowser
 from collections import OrderedDict
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parent
 from game_paths import GAME, TILE, BDESIGN_RES, BDESIGN_IMGS, RCITEM, MAPDESIGN
@@ -32,16 +32,22 @@ from codec.ale import AleError, dumps_png
 from codec.terrain import dumps_document as dumps_terrain_document
 from codec.terrain import dumps_gbk as dumps_terrain
 from codec.terrain import loads_gbk as loads_terrain
+from export_xlsx import build_materials_xlsx
 from saves import (
     clear_building_papers,
     delete_building_paper,
     delete_terrain_version,
     load_building_bundle,
+    load_building_paper,
     load_building_papers,
+    load_paper_thumb,
     load_terrain_asset,
     load_terrain_bundle,
+    paper_exists,
     save_building_bundle,
     save_building_papers,
+    save_paper_library_meta,
+    save_paper_thumb,
     save_terrain_asset,
     save_terrain_draft,
     save_terrain_version,
@@ -263,6 +269,24 @@ class Handler(SimpleHTTPRequestHandler):
     def _send_png(self, png: bytes):
         self._send(200, png, "image/png", cache="public, max-age=604800, immutable")
 
+    def _send_download(self, body: bytes, filename: str, ctype: str):
+        ascii_name = "materials.xlsx"
+        encoded = quote(filename or ascii_name)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header(
+            "Content-Disposition",
+            f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}",
+        )
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
+            return
+
     def _read_body(self) -> bytes:
         n = int(self.headers.get("Content-Length") or 0)
         return self.rfile.read(n) if n else b""
@@ -329,14 +353,14 @@ class Handler(SimpleHTTPRequestHandler):
                 from tools.build_kinds import main as build
 
                 build()
-            return self._send(200, kinds.read_bytes(), "application/json; charset=utf-8")
+            return self._file(kinds, guess=True)
         if path == "/api/editor-catalog":
             catalog = DATA / "editor_catalog.json"
             if not catalog.is_file():
                 from tools.build_editor_catalog import main as build_catalog
 
                 build_catalog()
-            return self._send(200, catalog.read_bytes(), "application/json; charset=utf-8")
+            return self._file(catalog, guess=True)
         if path == "/api/item-icons":
             icons = DATA / "item_icons.json"
             if not icons.is_file():
@@ -345,7 +369,7 @@ class Handler(SimpleHTTPRequestHandler):
                 build_item_icons()
             if not icons.is_file():
                 return self._send(404, b"missing item icons", "text/plain")
-            return self._send(200, icons.read_bytes(), "application/json; charset=utf-8")
+            return self._file(icons, guess=True)
         if path == "/api/sample-terrain":
             paper = GAME / "图代码" / "地形.txt"
             if not paper.is_file():
@@ -376,6 +400,26 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/saves/building/papers":
             body = json.dumps(load_building_papers(), ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
+        paper_prefix = "/api/saves/building/papers/"
+        if path.startswith(paper_prefix):
+            rest = path[len(paper_prefix) :]
+            parts = [part for part in rest.split("/") if part]
+            if not parts:
+                return self._send(404, b"missing", "text/plain")
+            ident = parts[0]
+            if len(parts) == 1:
+                paper = load_building_paper(ident)
+                if not paper:
+                    return self._send(404, b"missing", "text/plain")
+                body = json.dumps(paper, ensure_ascii=False).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
+            if len(parts) == 2 and parts[1] == "thumb":
+                thumb = load_paper_thumb(ident)
+                if not thumb:
+                    return self._send(404, b"missing", "text/plain")
+                payload, content_type = thumb
+                return self._send(200, payload, content_type, cache="public, max-age=86400")
+            return self._send(404, b"not found", "text/plain")
         return self._send(404, b"not found", "text/plain")
 
     def _limited_body(self):
@@ -457,6 +501,14 @@ class Handler(SimpleHTTPRequestHandler):
                     else dumps_building(obj["records"], kind=obj.get("kind") or "manor")
                 )
                 return self._send(200, data, "application/octet-stream")
+            if path == "/api/export-materials":
+                obj = json.loads(raw.decode("utf-8") or "{}")
+                data, filename = build_materials_xlsx(obj)
+                return self._send_download(
+                    data,
+                    filename,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
         except Exception as e:
             msg = str(e).encode("utf-8", errors="replace")
             return self._send(400, msg, "text/plain; charset=utf-8")
@@ -478,6 +530,15 @@ class Handler(SimpleHTTPRequestHandler):
                     self.headers.get("Content-Type") or "application/octet-stream",
                 )
                 return self._send(200, b'{"ok":true}', "application/json")
+            paper_prefix = "/api/saves/building/papers/"
+            if path.startswith(paper_prefix) and path.endswith("/thumb"):
+                ident = path[len(paper_prefix) : -len("/thumb")].strip("/")
+                if "/" in ident or not ident:
+                    return self._send(404, b"missing", "text/plain")
+                if not paper_exists(ident):
+                    return self._send(404, b"missing", "text/plain")
+                save_paper_thumb(ident, raw, self.headers.get("Content-Type") or "")
+                return self._send(200, b'{"ok":true}', "application/json")
             obj = json.loads(raw.decode("utf-8") or "null")
             if path == "/api/saves/terrain/draft":
                 save_terrain_draft(obj)
@@ -491,6 +552,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/saves/building/papers":
                 if obj.get("replace"):
                     clear_building_papers()
+                if "groups" in obj:
+                    save_paper_library_meta(obj.get("groups"))
                 saved = save_building_papers(obj.get("papers") or [])
                 payload = json.dumps({"ok": True, "saved": saved}).encode("utf-8")
                 return self._send(200, payload, "application/json")

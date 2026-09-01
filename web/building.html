@@ -9,10 +9,13 @@
   <meta name="theme-color" content="#1e4a36" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>建筑设计桌</title>
-  <link rel="stylesheet" href="/web/app.css?v=79" />
+  <link rel="stylesheet" href="/web/app.css?v=84" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=4" />
-  <link rel="stylesheet" href="/web/building.css?v=145" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=10" />
+  <link rel="stylesheet" href="/web/paper-library.css?v=11" />
+  <link rel="stylesheet" href="/web/building.css?v=178" />
+  <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
+  <link rel="stylesheet" href="/web/materials-dock.css?v=7" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=84" />
 </head>
 <body>
   <div class="app building-app phase-select" id="buildingApp">
@@ -29,7 +32,7 @@
       </div>
       <div class="top-actions">
         <div class="top-cluster snap-cluster" title="吸附">
-          <label class="check top-check">
+          <label class="check top-check" aria-label="吸附">
             <input type="checkbox" id="snapEnabled" checked />
             <span>吸附</span>
           </label>
@@ -48,20 +51,22 @@
             <option value="16">16px</option>
           </select>
         </div>
-        <div class="top-cluster" title="幕布">
-          <label class="check top-check">
-            <input type="checkbox" id="veilEnabled" checked />
-            <span>幕布</span>
-          </label>
-          <label class="veil-opacity-wrap">
-            <input type="range" id="veilOpacity" min="0" max="90" value="42" step="1" />
-            <span id="veilOpacityLabel">42%</span>
-          </label>
+        <div class="top-actions-foot">
+          <div class="top-cluster veil-cluster" title="幕布">
+            <label class="check top-check" aria-label="幕布">
+              <input type="checkbox" id="veilEnabled" checked />
+              <span>幕布</span>
+            </label>
+            <label class="veil-opacity-wrap">
+              <input type="range" id="veilOpacity" min="0" max="90" value="42" step="1" />
+              <span id="veilOpacityLabel">42%</span>
+            </label>
+          </div>
+          <span class="resource-status" id="resourceStatus" hidden></span>
+          <button type="button" class="top-command-btn" id="btnCommandPalette" title="命令面板 Ctrl+K">命令</button>
+          <button type="button" class="top-command-btn" id="btnShortcuts" title="快捷键帮助 ?">?</button>
+          <button type="button" class="top-command-btn rail-toggle" id="btnToggleRail" title="收起/展开右侧面板">侧栏</button>
         </div>
-        <span class="resource-status" id="resourceStatus" hidden></span>
-        <button type="button" class="top-command-btn" id="btnCommandPalette" title="命令面板 Ctrl+K">命令</button>
-        <button type="button" class="top-command-btn" id="btnShortcuts" title="快捷键帮助 ?">?</button>
-        <button type="button" class="top-command-btn rail-toggle" id="btnToggleRail" title="收起/展开右侧面板">侧栏</button>
       </div>
     </header>
 
@@ -69,19 +74,16 @@
       <main class="building-stage" id="buildingStage">
         <div class="stage-dock stage-commandbar" id="designDock" hidden>
             <div class="stage-tool-row">
-              <button type="button" class="hud-drag-grip" id="commandHudGrip" aria-label="拖动命令栏" title="拖到任意位置 · 双击复位"></button>
+              <button type="button" class="hud-drag-grip commandbar-drag-cap" id="commandHudGrip" aria-label="拖动命令栏" title="按住此处拖动 · 连点两次复位">
+                <span class="commandbar-drag-label">命令</span>
+              </button>
               <div class="canvas-toolbar" id="layerTools">
-                <div class="command-row">
-                  <div class="tool-group">
-                    <button type="button" class="tool-btn" data-command="undo" title="撤销 Ctrl+Z"><span class="tool-glyph">↩</span><kbd>Ctrl+Z</kbd></button>
-                    <button type="button" class="tool-btn" data-command="redo" title="重做 Ctrl+Y"><span class="tool-glyph">↪</span><kbd>Ctrl+Y</kbd></button>
-                  </div>
-                  <span class="tool-sep"></span>
-                  <div class="tool-group">
-                    <button type="button" class="tool-btn" data-command="bottom" title="到底层 A"><span class="tool-glyph">⇊</span><kbd>A</kbd></button>
-                    <button type="button" class="tool-btn" data-command="down" title="下移一层 S"><span class="tool-glyph">↓</span><kbd>S</kbd></button>
-                    <button type="button" class="tool-btn" data-command="up" title="上移一层 W"><span class="tool-glyph">↑</span><kbd>W</kbd></button>
-                    <button type="button" class="tool-btn" data-command="top" title="到顶层 D"><span class="tool-glyph">⇈</span><kbd>D</kbd></button>
+                <div class="command-row command-row-primary">
+                  <div class="facing-control" id="facingControl" title="朝向 Q / E">
+                    <span class="facing-cap">朝向</span>
+                    <button type="button" class="tool-btn" id="btnFacingPrev" title="上一朝向 Q"><span class="tool-glyph">◀</span><kbd>Q</kbd></button>
+                    <strong id="facingLabel">1/4</strong>
+                    <button type="button" class="tool-btn" id="btnFacingNext" title="下一朝向 E"><span class="tool-glyph">▶</span><kbd>E</kbd></button>
                   </div>
                   <span class="tool-sep"></span>
                   <div class="facing-control" id="layerOrderControl" title="图层循环 Z / X · 四层 A/S/W/D">
@@ -91,19 +93,24 @@
                     <button type="button" class="tool-btn" id="btnLayerFront" title="图层向前循环 X"><span class="tool-glyph">▶</span><kbd>X</kbd></button>
                   </div>
                   <span class="tool-sep"></span>
-                  <div class="facing-control" id="facingControl" title="朝向 Q / E">
-                    <span class="facing-cap">朝向</span>
-                    <button type="button" class="tool-btn" id="btnFacingPrev" title="上一朝向 Q"><span class="tool-glyph">◀</span><kbd>Q</kbd></button>
-                    <strong id="facingLabel">1/4</strong>
-                    <button type="button" class="tool-btn" id="btnFacingNext" title="下一朝向 E"><span class="tool-glyph">▶</span><kbd>E</kbd></button>
+                  <div class="tool-group tool-group-history">
+                    <button type="button" class="tool-btn" data-command="undo" title="撤销 Ctrl+Z"><span class="tool-glyph">↩</span><kbd>Ctrl+Z</kbd></button>
+                    <button type="button" class="tool-btn" data-command="redo" title="重做 Ctrl+Y"><span class="tool-glyph">↪</span><kbd>Ctrl+Y</kbd></button>
+                  </div>
+                  <span class="tool-sep"></span>
+                  <div class="tool-group tool-group-z">
+                    <button type="button" class="tool-btn" data-command="bottom" title="到底层 A"><span class="tool-glyph">⇊</span><kbd>A</kbd></button>
+                    <button type="button" class="tool-btn" data-command="down" title="下移一层 S"><span class="tool-glyph">↓</span><kbd>S</kbd></button>
+                    <button type="button" class="tool-btn" data-command="up" title="上移一层 W"><span class="tool-glyph">↑</span><kbd>W</kbd></button>
+                    <button type="button" class="tool-btn" data-command="top" title="到顶层 D"><span class="tool-glyph">⇈</span><kbd>D</kbd></button>
                   </div>
                 </div>
-                <div class="command-row">
-                  <div class="tool-group">
+                <div class="command-row command-row-actions">
+                  <div class="tool-group tool-group-edit">
                     <button type="button" class="tool-btn" data-command="flip" title="转向 R"><span class="tool-glyph">↻</span><kbd>R</kbd></button>
                     <button type="button" class="tool-btn" data-command="lock" title="锁定/解锁 Ctrl+L"><span class="tool-glyph">🔒</span><kbd>Ctrl+L</kbd></button>
                     <button type="button" class="tool-btn" data-command="duplicate" title="复制 Ctrl+D"><span class="tool-glyph">⧉</span><kbd>Ctrl+D</kbd></button>
-                    <button type="button" class="tool-btn" data-command="group" title="成组 Ctrl+G"><span class="tool-glyph">▢</span><kbd>Ctrl+G</kbd></button>
+                    <button type="button" class="tool-btn" data-command="group" title="成组 C"><span class="tool-glyph">▢</span><kbd>C</kbd></button>
                     <button type="button" class="tool-btn" data-command="ungroup" title="拆组 Ctrl+Shift+G"><span class="tool-glyph">⬚</span><kbd>Ctrl+Shift+G</kbd></button>
                     <button type="button" class="tool-btn" data-command="savePreset" title="存为组件 P"><span class="tool-glyph">★</span><kbd>P</kbd></button>
                     <button type="button" class="tool-btn tool-danger" data-command="delete" title="删除 Delete"><span class="tool-glyph">✕</span><kbd>Del</kbd></button>
@@ -147,7 +154,9 @@
               <button type="button" class="icon-x" id="btnBuildingToolsClose" aria-label="关闭工具"></button>
             </div>
             <div class="canvas-toolrail" id="canvasToolrail" aria-label="画布工具">
-              <button type="button" class="hud-drag-grip" id="toolHudGrip" aria-label="拖动画布工具" title="拖到任意位置 · 双击复位"></button>
+              <button type="button" class="hud-drag-grip" id="toolHudGrip" aria-label="拖动画布工具" title="按住此处拖动 · 连点两次复位">
+                <span class="toolrail-drag-label">工具</span>
+              </button>
               <div class="mobile-tool-tabs mobile-workspace-only" role="tablist" aria-label="工具类别">
                 <button type="button" class="on" data-mobile-tool-family="select" aria-selected="true">选择</button>
                 <button type="button" data-mobile-tool-family="brush" aria-selected="false">绘制</button>
@@ -210,11 +219,6 @@
                     <span class="tool-name">三角</span>
                     <kbd>I</kbd>
                   </button>
-                  <button type="button" class="tool-item" data-tool="diamond" aria-pressed="false">
-                    <svg class="tool-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.6 17.4 10 10 17.4 2.6 10z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
-                    <span class="tool-name">菱形</span>
-                    <kbd>C</kbd>
-                  </button>
                   <button type="button" class="tool-item" data-tool="ring" aria-pressed="false">
                     <svg class="tool-ico" viewBox="0 0 20 20" aria-hidden="true"><rect x="3.2" y="3.2" width="13.6" height="13.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="6.4" y="6.4" width="7.2" height="7.2" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
                     <span class="tool-name">描边</span>
@@ -240,13 +244,36 @@
               <button type="button" class="zoom-label" id="btnZoomReset" title="重置 100% Ctrl+0">100%</button>
               <button type="button" class="tool-btn" id="btnZoomIn" title="放大 Ctrl++">+</button>
             </div>
+            <div class="nudge-pad" id="nudgePad" aria-label="方向微调">
+              <button type="button" class="nudge-btn nudge-up" data-nudge data-nudge-x="0" data-nudge-y="-1" aria-label="上移"></button>
+              <button type="button" class="nudge-btn nudge-left" data-nudge data-nudge-x="-1" data-nudge-y="0" aria-label="左移"></button>
+              <button type="button" class="nudge-btn nudge-step" id="btnNudgeStep" aria-label="步长 1 像素，点按设置" aria-haspopup="dialog" aria-expanded="false" title="点按设置步长"><span class="nudge-step-kicker">步长</span><span class="nudge-step-value">1px</span></button>
+              <button type="button" class="nudge-btn nudge-right" data-nudge data-nudge-x="1" data-nudge-y="0" aria-label="右移"></button>
+              <button type="button" class="nudge-btn nudge-down" data-nudge data-nudge-x="0" data-nudge-y="1" aria-label="下移"></button>
+            </div>
           </div>
           <div class="mobile-selection-bar mobile-workspace-only" id="mobileSelectionBar" hidden aria-label="选中对象操作">
-            <button type="button" data-command="down" aria-label="下移一层">下移</button>
-            <button type="button" data-command="up" aria-label="上移一层">上移</button>
-            <button type="button" data-command="flip" aria-label="转向">转向</button>
-            <button type="button" data-command="duplicate" aria-label="复制">复制</button>
-            <button type="button" class="danger" data-command="delete" aria-label="删除">删除</button>
+            <button type="button" data-command="facingPrev" aria-label="上一朝向">◀</button>
+            <span class="mobile-bar-chip" id="mobileFacingLabel">1/4</span>
+            <button type="button" data-command="facingNext" aria-label="下一朝向">▶</button>
+            <span class="mobile-bar-sep" aria-hidden="true"></span>
+            <button type="button" data-command="down" aria-label="下移一层">↓</button>
+            <button type="button" data-command="up" aria-label="上移一层">↑</button>
+            <button type="button" data-command="flip" aria-label="转向">↻</button>
+            <button type="button" data-command="duplicate" aria-label="复制">⧉</button>
+            <button type="button" class="danger" data-command="delete" aria-label="删除">✕</button>
+          </div>
+          <div class="materials-dock" id="materialsDock" hidden aria-label="材料清单">
+            <div class="materials-dock-row materials-dock-piece">
+              <span class="materials-dock-label">此件</span>
+              <button type="button" class="current-materials materials-dock-strip" id="currentMaterials" title="点此查看此件材料明细"></button>
+            </div>
+            <div class="materials-dock-row materials-dock-all">
+              <span class="materials-dock-label">全部</span>
+              <div class="all-material-strip materials-dock-strip" id="allMaterials"></div>
+              <span class="material-meta" id="allMaterialsMeta"></span>
+              <button type="button" class="btn btn-compact materials-dock-detail" id="btnAllMaterials" title="整栋材料清单">明细</button>
+            </div>
           </div>
         </div>
 
@@ -255,20 +282,14 @@
             <div class="selection-line">
               <span class="selection-label">当前</span>
               <strong id="selectedComponent">无</strong>
-              <span class="current-materials" id="currentMaterials"></span>
               <button type="button" class="btn btn-compact btn-clear-pick" id="btnClearPick" hidden title="取消选用与选中 · Esc">取消</button>
             </div>
             <div class="selection-actions" id="selectionActions" hidden>
-              <button type="button" class="btn btn-compact" id="btnGroupSel" title="成组只为图层里一次点选；圈选后已可一起移动">分组</button>
+              <button type="button" class="btn btn-compact" id="btnGroupSel" title="点组标题一次选中整组；点组内素材仍可选中单件。圈选后已可一起移动">分组</button>
               <button type="button" class="btn btn-compact" id="btnUngroupSel" title="取消分组">拆组</button>
               <button type="button" class="btn btn-compact" id="btnLockSel" title="锁定选中，防止误拖误删 Ctrl+L">锁定</button>
               <button type="button" class="btn btn-compact" id="btnUnlockSel" title="解锁选中">解锁</button>
             </div>
-          </div>
-          <div class="material-line">
-            <span class="selection-label">材料</span>
-            <div class="all-material-strip" id="allMaterials"></div>
-            <button type="button" class="btn btn-compact" id="btnAllMaterials" title="所有材料" aria-expanded="false">明细</button>
           </div>
         </div>
       </main>
@@ -277,7 +298,22 @@
         <div class="mobile-sheet-handle" aria-hidden="true"></div>
         <div class="drawer-cap mobile-workspace-only">
           <span id="buildingSheetTitle">素材</span>
-          <button type="button" class="icon-x" id="btnBuildingSheetClose" aria-label="关闭"></button>
+          <div class="drawer-cap-actions">
+            <button type="button" class="sheet-pin" id="btnBuildingSheetPin" aria-pressed="false" aria-label="固定面板" title="固定后选素材不会收起">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 3.2 20.8 9.5a1 1 0 0 1 0 1.4l-1.1 1.1-3.2-.6-4.1 4.1V20l-1.7-3.4L6 21.2 2.8 18l4.6-4.7L4 11.6l4.7-4.1-.6-3.2 1.1-1.1a1 1 0 0 1 1.4 0z"/></svg>
+            </button>
+            <button type="button" class="icon-x" id="btnBuildingSheetClose" aria-label="关闭"></button>
+          </div>
+        </div>
+        <div class="sheet-resize-handles" aria-hidden="true">
+          <span class="sheet-resize" data-resize="n"></span>
+          <span class="sheet-resize" data-resize="s"></span>
+          <span class="sheet-resize" data-resize="e"></span>
+          <span class="sheet-resize" data-resize="w"></span>
+          <span class="sheet-resize" data-resize="ne"></span>
+          <span class="sheet-resize" data-resize="nw"></span>
+          <span class="sheet-resize" data-resize="se"></span>
+          <span class="sheet-resize" data-resize="sw"></span>
         </div>
         <button type="button" class="rail-resizer" id="railResizer" aria-label="调整侧栏宽度"></button>
         <div class="rail-panel" id="baseSelectSide">
@@ -312,6 +348,7 @@
           <div class="rail-tabs" role="tablist">
             <button type="button" class="rail-tab on" data-tab="assets">素材</button>
             <button type="button" class="rail-tab" data-tab="layers">图层</button>
+            <button type="button" class="rail-tab" data-tab="materials">材料</button>
           </div>
 
           <div class="tab-pane" id="tabAssets">
@@ -357,6 +394,17 @@
             </div>
           </div>
 
+          <div class="tab-pane" id="tabMaterials" hidden>
+            <div class="design-materials" id="designMaterialsBox">
+              <div class="design-materials-head">
+                <strong id="designMaterialsTitle">整栋材料</strong>
+                <button type="button" class="btn btn-compact" id="btnPieceMaterials" hidden>此件</button>
+                <button type="button" class="btn btn-compact" id="btnDesignMaterials">明细</button>
+              </div>
+              <div class="design-materials-list" id="designMaterialsList"></div>
+            </div>
+          </div>
+
           <div class="tab-pane" id="tabLayers" hidden>
             <div class="layer-filter-row">
               <input class="input layer-filter" id="layerFilter" type="search" placeholder="搜索图层…" autocomplete="off" />
@@ -370,7 +418,7 @@
               <button type="button" class="layer-foot-btn" id="btnClearSel" title="取消选择 Ctrl+Shift+A">清除</button>
               <button type="button" class="layer-foot-btn" id="btnHideSel" title="隐藏选中图层">隐藏</button>
               <button type="button" class="layer-foot-btn" id="btnUnlockLayers" title="解锁选中图层">解锁</button>
-              <button type="button" class="layer-foot-btn" id="btnLayerGroup" title="将选中图层分组 Ctrl+G">分组</button>
+              <button type="button" class="layer-foot-btn" id="btnLayerGroup" title="将选中图层分组 C">分组</button>
               <button type="button" class="layer-foot-btn" id="btnLayerUngroup" title="拆组 Ctrl+Shift+G">拆组</button>
               <button type="button" class="layer-foot-btn danger" id="btnLayerDelete" title="删除选中 Del">删除</button>
             </div>
@@ -382,6 +430,11 @@
             <span>当前户型</span>
             <strong id="projectCurrentBase">无</strong>
             <button type="button" class="btn btn-compact" id="btnProjectChooseBase">更换</button>
+          </div>
+          <div class="project-materials-actions" id="projectMaterialsActions">
+            <span class="material-meta" id="projectMaterialsMeta"></span>
+            <button type="button" class="btn btn-compact" id="btnProjectMaterialsTab">材料清单</button>
+            <button type="button" class="btn btn-compact" id="btnProjectMaterials">明细</button>
           </div>
           <p class="project-mobile-copy mobile-workspace-only">生成、导入和管理当前建筑图纸。</p>
           <div class="rail-foot">
@@ -395,29 +448,52 @@
               <button type="button" class="btn btn-wide" id="btnPlaceOnTerrain" title="把当前建筑和户型一起放到地形设计桌预览">放到地形桌</button>
               <button type="button" class="btn" id="btnImportDesign" title="清空当前内容后导入图纸">覆盖导入</button>
               <button type="button" class="btn" id="btnMergeDesign" title="保留当前内容，将另一张图纸合并进来">合并导入</button>
-              <button type="button" class="btn btn-wide" id="btnBatchPreview" title="打开常驻图纸库；第一次会选择本地文件夹">图纸库</button>
+              <button type="button" class="btn btn-wide" id="btnBatchPreview" title="打开图纸库">图纸库</button>
             </div>
           </div>
         </div>
       </aside>
 
-      <section class="paper-library" id="paperLibrary" hidden aria-label="本地图纸库">
+      <section class="paper-library" id="paperLibrary" hidden aria-label="图纸库">
         <header class="paper-library-bar">
           <div class="paper-library-title">
-            <strong id="paperLibraryTitle">本地图纸库</strong>
-            <div class="paper-batch-status" id="paperBatchStatus">还没有载入图纸。上传过的图纸保存在服务器，打开图纸库会自动载入。</div>
+            <strong id="paperLibraryTitle">图纸库</strong>
+            <div class="paper-batch-status" id="paperBatchStatus">还没有图纸。</div>
           </div>
-          <div class="paper-library-tools">
-            <input class="input" id="paperBatchSearch" type="search" placeholder="搜索文件名…" autocomplete="off" />
-            <button type="button" class="btn" id="btnPaperLibraryFolder" title="重新选择文件夹并解析（会替换服务器上的存档）">更换文件夹</button>
-            <button type="button" class="btn" id="btnPaperLibraryClear" title="删除服务器上保存的全部图纸">清空图纸库</button>
-            <button type="button" class="btn btn-primary" id="btnPaperLibraryClose">返回设计桌</button>
+          <div class="paper-library-toolbar">
+            <div class="paper-library-tools">
+              <input class="input" id="paperBatchSearch" type="search" placeholder="搜索文件名…" autocomplete="off" />
+              <label class="paper-library-sort">
+                <span class="paper-library-sort-cap">排序</span>
+                <select class="input" id="paperLibrarySort" aria-label="图纸排序">
+                  <option value="savedAt:desc">日期 · 新→旧</option>
+                  <option value="savedAt:asc">日期 · 旧→新</option>
+                  <option value="name:asc">名称 · A→Z</option>
+                  <option value="name:desc">名称 · Z→A</option>
+                </select>
+              </label>
+              <div class="paper-library-tool-actions">
+                <button type="button" class="btn btn-primary" id="btnPaperLibraryFolder" title="导入文件夹或更多图纸，按内容去重">导入</button>
+                <button type="button" class="btn" id="btnPaperLibraryFiles" title="选择若干 txt 图纸导入"><span class="btn-label-full">导入文件</span><span class="btn-label-short">文件</span></button>
+                <button type="button" class="btn" id="btnPaperLibraryClear" title="清空图纸库">清空</button>
+              </div>
+            </div>
+            <button type="button" class="btn" id="btnPaperLibraryClose">返回</button>
+            <div class="paper-library-filters" role="toolbar" aria-label="图纸筛选">
+              <div class="paper-kind-tabs" role="tablist" aria-label="图纸类型">
+                <button type="button" class="on" data-paper-kind="all" aria-selected="true">全部</button>
+                <button type="button" data-paper-kind="desk" aria-selected="false">建筑</button>
+                <button type="button" data-paper-kind="terrain" aria-selected="false">地形</button>
+              </div>
+              <div class="paper-group-tabs" id="paperGroupTabs" role="tablist" aria-label="图纸分组"></div>
+              <button type="button" class="btn btn-compact" id="btnPaperLibraryNewGroup"><span class="btn-label-full">新建分组</span><span class="btn-label-short">+分组</span></button>
+            </div>
           </div>
         </header>
         <div class="paper-library-empty" id="paperLibraryEmpty">
-          <strong>图纸会存到服务器</strong>
-          <p>选择一个包含建筑图纸的文件夹。解析后自动保存到服务器，下次打开图纸库直接载入，不用重新上传。</p>
-          <button type="button" class="btn btn-primary" id="btnPaperLibraryPick">选择文件夹</button>
+          <strong>还没有图纸</strong>
+          <p>导入文件夹或文件。建筑桌只收入建筑图纸；已有图纸会按内容去重后叠加。</p>
+          <button type="button" class="btn btn-primary" id="btnPaperLibraryPick">导入图纸</button>
         </div>
         <div class="paper-preview-grid" id="paperPreviewGrid" hidden></div>
       </section>
@@ -425,32 +501,45 @@
       <div class="paper-inspect" id="paperInspect" hidden role="dialog" aria-modal="true" aria-labelledby="paperInspectName">
         <div class="paper-inspect-main">
           <div class="paper-inspect-toolbar">
-            <button type="button" class="btn" id="btnPaperInspectBack">返回图纸库</button>
+            <button type="button" class="btn" id="btnPaperInspectBack">返回</button>
             <div class="paper-inspect-zoombar" role="group" aria-label="预览缩放">
               <button type="button" class="btn" id="btnPaperInspectZoomOut" title="缩小">−</button>
               <span id="paperInspectZoomLabel">100%</span>
               <button type="button" class="btn" id="btnPaperInspectZoomIn" title="放大">+</button>
-              <button type="button" class="btn" id="btnPaperInspectFit">适应</button>
-              <button type="button" class="btn" id="btnPaperInspect100">1:1</button>
+              <button type="button" class="btn paper-inspect-zoom-extra" id="btnPaperInspectFit">适应</button>
+              <button type="button" class="btn paper-inspect-zoom-extra" id="btnPaperInspect100">1:1</button>
             </div>
             <button type="button" class="icon-x" id="btnPaperInspectClose" aria-label="关闭明细"></button>
           </div>
           <div class="paper-inspect-viewport" id="paperInspectViewport" tabindex="0" aria-label="图纸预览，滚轮缩放，拖动平移">
             <canvas id="paperInspectCanvas" width="570" height="550"></canvas>
           </div>
-          <p class="paper-inspect-hint">滚轮缩放 · 拖动平移 · 双击复位到适应窗口</p>
+          <p class="paper-inspect-hint">
+            <span class="desktop-workspace-only">滚轮缩放 · 拖动平移 · 双击复位到适应窗口</span>
+            <span class="mobile-workspace-only">双指缩放 · 拖动平移 · 双击复位</span>
+          </p>
         </div>
         <aside class="paper-inspect-side">
-          <h2 id="paperInspectName">图纸明细</h2>
-          <div class="paper-preview-summary" id="paperInspectSummary"></div>
-          <section class="paper-preview-materials">
-            <strong>所需材料</strong>
-            <div id="paperInspectMaterials"></div>
+          <header class="paper-inspect-side-head">
+            <h2 id="paperInspectName">图纸明细</h2>
+            <p class="paper-inspect-meta" id="paperInspectSummary"></p>
+          </header>
+          <section class="paper-inspect-materials">
+            <div class="paper-inspect-materials-cap">
+              <strong id="paperInspectMaterialsHeading">所需材料</strong>
+            </div>
+            <div class="paper-inspect-materials-scroll" id="paperInspectMaterials"></div>
           </section>
-          <div class="paper-inspect-actions">
-            <button type="button" class="btn" id="btnPaperInspectReplace">覆盖打开</button>
-            <button type="button" class="btn btn-primary" id="btnPaperInspectMerge">合并到当前</button>
-          </div>
+          <footer class="paper-inspect-side-foot">
+            <label class="field paper-inspect-group" id="paperInspectGroupField">
+              <span>分组</span>
+              <select class="input" id="paperInspectGroup"></select>
+            </label>
+            <div class="paper-inspect-actions">
+              <button type="button" class="btn" id="btnPaperInspectReplace">覆盖打开</button>
+              <button type="button" class="btn btn-primary" id="btnPaperInspectMerge">合并到当前</button>
+            </div>
+          </footer>
         </aside>
       </div>
     </div>
@@ -560,11 +649,14 @@
 
   <input type="file" id="buildingFile" accept=".txt,text/plain" hidden />
   <input type="file" id="buildingFolder" accept=".txt,text/plain" multiple webkitdirectory directory hidden />
+  <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
   <script src="/web/codec.js?v=43"></script>
+  <script src="/web/paper-library-core.js?v=4"></script>
   <script src="/web/app-dialog.js?v=1"></script>
-  <script src="/web/mobile-workspace.js?v=9"></script>
-  <script src="/web/building-interactions.js?v=11"></script>
-  <script src="/web/building-preview.js?v=3"></script>
-  <script src="/web/building.js?v=171"></script>
+  <script src="/web/mobile-workspace.js?v=14"></script>
+  <script src="/web/building-interactions.js?v=12"></script>
+  <script src="/web/building-preview.js?v=6"></script>
+  <script src="/web/material-ledger.js?v=3"></script>
+  <script src="/web/building.js?v=209"></script>
 </body>
 </html>

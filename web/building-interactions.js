@@ -577,6 +577,16 @@
     const cy = (rect.top + rect.bottom) / 2;
     const rx = Math.max(px / 2, rect.width / 2);
     const ry = Math.max(py / 2, rect.height / 2);
+    const accept = (x, y) => {
+      if (kind === "circle") {
+        const nx = (x - cx) / rx;
+        const ny = (y - cy) / ry;
+        return nx * nx + ny * ny <= 1.04;
+      }
+      if (kind === "triangle") return pointInTriangle({ x, y }, v0, v1, v2);
+      if (kind === "diamond") return Math.abs(x - cx) / rx + Math.abs(y - cy) / ry <= 1.04;
+      return true;
+    };
 
     if (kind === "ring") {
       if (aligned) {
@@ -588,10 +598,45 @@
         }
         return pts;
       }
-      walkLine({ x: rect.left, y: rect.top }, { x: rect.right, y: rect.top });
-      walkLine({ x: rect.right, y: rect.top }, { x: rect.right, y: rect.bottom });
-      walkLine({ x: rect.right, y: rect.bottom }, { x: rect.left, y: rect.bottom });
-      walkLine({ x: rect.left, y: rect.bottom }, { x: rect.left, y: rect.top });
+      const edgeStep = options.lineStep || Math.min(px, py);
+      walkLine({ x: rect.left, y: rect.top }, { x: rect.right, y: rect.top }, edgeStep);
+      walkLine({ x: rect.right, y: rect.top }, { x: rect.right, y: rect.bottom }, edgeStep);
+      walkLine({ x: rect.right, y: rect.bottom }, { x: rect.left, y: rect.bottom }, edgeStep);
+      walkLine({ x: rect.left, y: rect.bottom }, { x: rect.left, y: rect.top }, edgeStep);
+      return pts;
+    }
+
+    if (options.lattice === "iso") {
+      const step = Math.max(1, px / 4);
+      const origin = sceneToIso(a.x, a.y);
+      const corners = [
+        sceneToIso(rect.left, rect.top),
+        sceneToIso(rect.right, rect.top),
+        sceneToIso(rect.left, rect.bottom),
+        sceneToIso(rect.right, rect.bottom),
+      ];
+      const uMin = Math.min(...corners.map((p) => p.u));
+      const uMax = Math.max(...corners.map((p) => p.u));
+      const vMin = Math.min(...corners.map((p) => p.v));
+      const vMax = Math.max(...corners.map((p) => p.v));
+      const u0 = origin.u + Math.floor((uMin - origin.u) / step) * step;
+      const v0 = origin.v + Math.floor((vMin - origin.v) / step) * step;
+      for (let u = u0; u <= uMax + step * 0.01 && pts.length < cap; u += step) {
+        for (let v = v0; v <= vMax + step * 0.01 && pts.length < cap; v += step) {
+          const p = isoToScene(u, v);
+          if (
+            p.x < rect.left - 0.51 ||
+            p.x > rect.right + 0.51 ||
+            p.y < rect.top - 0.51 ||
+            p.y > rect.bottom + 0.51
+          ) {
+            continue;
+          }
+          if (!accept(p.x, p.y)) continue;
+          push(p.x, p.y);
+        }
+      }
+      if (!pts.length) push(a.x, a.y);
       return pts;
     }
 
@@ -599,15 +644,7 @@
     for (let y = rect.top, row = 0; y <= rect.bottom + 0.01 && pts.length < cap; y += py, row++) {
       const ox = stagger && row % 2 ? px / 2 : 0;
       for (let x = rect.left + ox; x <= rect.right + 0.01 && pts.length < cap; x += px) {
-        if (kind === "circle") {
-          const nx = (x - cx) / rx;
-          const ny = (y - cy) / ry;
-          if (nx * nx + ny * ny > 1.04) continue;
-        } else if (kind === "triangle") {
-          if (!pointInTriangle({ x, y }, v0, v1, v2)) continue;
-        } else if (kind === "diamond") {
-          if (Math.abs(x - cx) / rx + Math.abs(y - cy) / ry > 1.04) continue;
-        }
+        if (!accept(x, y)) continue;
         push(x, y);
       }
     }

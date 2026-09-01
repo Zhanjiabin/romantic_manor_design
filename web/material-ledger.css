@@ -1,0 +1,206 @@
+.material-ledger-modal {
+  z-index: var(--mobile-modal-z, 80);
+}
+.material-ledger {
+  width: min(560px, 100%);
+  max-height: min(88vh, 760px);
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.material-ledger .modal-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+.material-ledger-summary {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+.material-ledger-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(56vh, 520px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 2px;
+  -webkit-overflow-scrolling: touch;
+}
+.ledger-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ledger-group-title {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+.ledger-mat-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 12px 4px 6px;
+  border: 1px solid rgba(183, 200, 178, 0.7);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, transparent 70%),
+    var(--panel-sunken, #f3f7f1);
+}
+.ledger-mat-row .mat-icon,
+.ledger-mat-row .mat-icon-slot {
+  width: 32px;
+  height: 32px;
+}
+.ledger-mat-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ledger-mat-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--ink);
+}
+.ledger-mat-source {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.ledger-mat-count {
+  font-style: normal;
+  color: var(--accent);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+}
+.material-ledger-empty {
+  margin: 18px 8px;
+  text-align: center;
+  color: var(--ink-soft);
+}
+.material-ledger-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 16px 16px;
+  border-top: 1px solid rgba(183, 200, 178, 0.75);
+}
+.material-ledger-foot .btn {
+  min-height: 44px;
+}
+.design-materials {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid rgba(183, 200, 178, 0.75);
+  border-radius: 12px;
+  background: var(--panel-sunken, #f3f7f1);
+}
+.design-materials-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.design-materials-head strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+.design-materials-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 168px;
+  overflow: auto;
+}
+.design-materials-list .ledger-mat-row {
+  min-height: 40px;
+  padding: 2px 10px 2px 4px;
+}
+.design-materials-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.material-meta {
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mat-count-inline .mat-chip {
+  gap: 4px;
+  padding: 3px 8px 3px 4px;
+}
+.mat-count-inline .mat-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: rgba(232, 238, 230, 0.9);
+}
+.mat-count-inline .mat-name {
+  max-width: 7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.terrain-materials-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+}
+.terrain-materials-actions .btn {
+  flex: 1;
+  min-height: 44px;
+}
+.preview-inspector-materials {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.preview-inspector-materials strong {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.preview-inspector-materials-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+html.is-mobile-workspace .material-ledger,
+html.mobile-landscape .material-ledger {
+  width: 100%;
+  max-height: min(92dvh, 900px);
+}
+html.is-mobile-workspace .ledger-mat-name {
+  font-size: 16px;
+}
+html.is-mobile-workspace .design-materials-list {
+  max-height: 220px;
+}
+html.is-mobile-workspace .current-materials .mat-name {
+  display: inline;
+}

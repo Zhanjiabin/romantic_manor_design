@@ -108,6 +108,7 @@ const state = {
   previewBuildings: [],
   previewRuntime: new Map(),
   selectedPreviewId: null,
+  itemIcons: {},
   cam: { x: 0, y: 0, k: 1 },
   uiScale: 1,
   images: new Map(),
@@ -153,7 +154,7 @@ const state = {
 };
 
 let view = document.getElementById("view");
-let ctx = view.getContext("2d");
+let ctx = view.getContext("2d", { alpha: false });
 let imageTerrainDraft = null;
 let planOverlayDraft = null;
 
@@ -161,11 +162,20 @@ async function boot() {
   document.documentElement.classList.add("boot-pending");
   window.MobileWorkspace?.init();
   window.MobileWorkspace?.onModeChange(() => {
+    syncTerrainTopIoPlacement();
+    syncTerrainViewTogglesPlacement();
     closeDrawers();
+    syncPreviewNudgePad();
     resize();
   });
-  const kinds = await (await fetch("/api/kinds")).json();
+  const [kinds, itemIcons] = await Promise.all([
+    fetch("/api/kinds").then((response) => response.json()),
+    fetch("/api/item-icons")
+      .then((response) => (response.ok ? response.json() : { icons: {} }))
+      .catch(() => ({ icons: {} })),
+  ]);
   state.kinds = kinds;
+  state.itemIcons = itemIcons.icons || {};
   fillListKind(kinds.brushes || []);
   fillBases(kinds.bases || []);
   fillSizes(visibleMapSizes(kinds.mapSizes || []));
@@ -198,15 +208,19 @@ async function boot() {
   preload(PORTAL_SRC);
   initPortalPos();
   bind();
+  syncTerrainTopIoPlacement();
+  syncTerrainViewTogglesPlacement();
+  window.MaterialLedger?.bind();
   updatePlanOverlayMeta();
   updatePreviewBuildingUi();
-  const restored = /[?&]sample=1/.test(location.search) ? false : await restoreDraft();
+  const sample = /[?&]sample=1/.test(location.search);
+  const restored = sample ? false : await restoreDraftLocal();
   requestAnimationFrame(() => {
     resize();
     playCam();
     draw();
   });
-  if (/[?&]sample=1/.test(location.search)) {
+  if (sample) {
     try {
       const doc = await (await fetch("/api/sample-terrain")).json();
       applyTerrain(doc, true);
@@ -219,7 +233,9 @@ async function boot() {
     fitTerrainContent();
     draw();
   }
+  if (!sample) reconcileTerrainRemote(restored).catch((err) => console.warn(err));
   await consumePendingBuildingImport();
+  await consumePendingTerrainImport();
   await consumePendingPreviewBuilding();
   const finishBoot = () => {
     document.documentElement.classList.remove("boot-pending");
@@ -227,8 +243,10 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
+  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=209"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
+    if (terrainInteractionBusy()) return;
     state.waterFrame ^= 1;
     draw();
   }, WATER_ANIM_MS);
@@ -251,6 +269,26 @@ async function consumePendingBuildingImport() {
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const file = new File([bytes], payload.name || "建筑.txt", { type: "text/plain" });
     await importFile(file, "build");
+  } catch (err) {
+    await appAlert(err.message || String(err), { title: "导入失败" });
+  }
+}
+
+async function consumePendingTerrainImport() {
+  if (!/[?&]importTerrain=1/.test(location.search)) return;
+  let payload = null;
+  try {
+    payload = JSON.parse(sessionStorage.getItem("manor-pending-terrain-import") || "null");
+  } catch {
+    payload = null;
+  }
+  sessionStorage.removeItem("manor-pending-terrain-import");
+  history.replaceState({}, "", location.pathname);
+  if (!payload?.base64) return;
+  try {
+    const bytes = PaperLibraryCore.base64ToBytes(payload.base64);
+    const file = new File([bytes], payload.name || "地形.txt", { type: "text/plain" });
+    await importFile(file, "terrain");
   } catch (err) {
     await appAlert(err.message || String(err), { title: "导入失败" });
   }
@@ -579,7 +617,6 @@ function fillBases(bases) {
       btn.classList.add("on");
       document.getElementById("itemId").value = b.no;
       state.selectedBase = b;
-      setLayer("build");
     };
     box.appendChild(btn);
     if (preview) preload(preview);
@@ -970,10 +1007,11 @@ function rebuildStampIndex() {
   state.terrainRev = (state.terrainRev || 0) + 1;
 }
 
-function pruneSynthCache(limit = 3600) {
+function pruneSynthCache(limit) {
   // Evict the oldest half instead of wiping: a full clear forced every visible
   // seam tile through synthesizeTerrainTile again on the next frame (a visible
   // hitch on big maps). Map preserves insertion order, so the front is oldest.
+  if (limit == null) limit = constrainedTerrain() ? 1800 : 3600;
   const cache = state.synthCache;
   if (cache.size <= limit) return;
   const drop = cache.size - (limit >> 1);
@@ -1150,9 +1188,10 @@ const gridScreenCache = document.createElement("canvas");
 const miniStampCache = document.createElement("canvas");
 const miniSrcCanvas = document.createElement("canvas");
 // World-anchored caches: pan only re-blits; a re-render happens when zoom,
-// terrain revision, water frame, or viewport size changes, or when the camera
-// leaves the padded margin. Continuous zooming renders unpadded (same cost as
-// an uncached frame); the first stable-k miss afterwards restores the margin.
+// terrain revision, or viewport size changes, or when the camera leaves the
+// padded margin. Pinch/wheel zoom scale-blits the last cache and rebuilds
+// once the gesture settles (with pad). Water stamps composite as a live
+// overlay so the grass plane is not rebuilt every animation tick.
 const TERRAIN_CACHE_PAD = 256;
 let terrainCacheMeta = null;
 let gridCacheMeta = null;
@@ -1160,14 +1199,68 @@ let lastTerrainRenderK = null;
 let miniStampKey = "";
 let gridPixels = null;
 let lastStatsAt = 0;
+let liveZoom = false;
+let zoomSettleTimer = 0;
+let pendingPaddedRebuild = false;
+
+function constrainedTerrain() {
+  const mode = window.MobileWorkspace?.modeForViewport?.();
+  if (mode) return !!(mode.mobile || mode.coarse || mode.tablet);
+  return !!window.matchMedia?.("(pointer: coarse)")?.matches;
+}
+
+function terrainInteractionBusy() {
+  return !!(
+    liveZoom ||
+    state.panning ||
+    state.dragging ||
+    state.strokeNeedsRebuild ||
+    state.touching ||
+    state.pointerGesture?.type === "pinch" ||
+    state.pointerGesture?.type === "pinch-tail"
+  );
+}
+
+function cameraScaleLive() {
+  return !!(liveZoom || state.pointerGesture?.type === "pinch");
+}
+
+function markLiveZoom() {
+  liveZoom = true;
+  if (zoomSettleTimer) clearTimeout(zoomSettleTimer);
+  zoomSettleTimer = setTimeout(() => {
+    zoomSettleTimer = 0;
+    liveZoom = false;
+    pendingPaddedRebuild = true;
+    draw();
+  }, 90);
+}
+
+function settlePinchZoom() {
+  liveZoom = false;
+  if (zoomSettleTimer) {
+    clearTimeout(zoomSettleTimer);
+    zoomSettleTimer = 0;
+  }
+  pendingPaddedRebuild = true;
+  draw();
+}
+
+function tileShowsWater(tile) {
+  return !!(tile && tile.corners && tile.corners.some(isWaterTerrain));
+}
+
+function waterUsesLiveOverlay() {
+  return !!state.hasWaterTiles && !isWaterTerrain(baseChar());
+}
 
 function terrainStaticKey() {
+  const waterLock = isWaterTerrain(baseChar()) ? "|wf" + (state.waterFrame & 1) : "";
   return (
     (state.terrainRev || 0) +
     "|" +
     (state.mapflag || 0) +
-    "|wf" +
-    (state.waterFrame & 1) +
+    waterLock +
     "|" +
     view.width +
     "x" +
@@ -1197,8 +1290,25 @@ function blitWorldCache(cache, meta) {
   ctx.imageSmoothingEnabled = prevSmoothing;
 }
 
+function blitScaledWorldCache(cache, meta) {
+  const srcK = meta.k || state.cam.k;
+  const scale = state.cam.k / srcK;
+  if (!Number.isFinite(scale) || scale < 0.04 || scale > 24) return false;
+  const dx = state.cam.x - (meta.camX + meta.pad) * scale;
+  const dy = state.cam.y - (meta.camY + meta.pad) * scale;
+  const prevSmoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = Math.abs(scale - 1) > 0.001;
+  ctx.drawImage(cache, dx, dy, cache.width * scale, cache.height * scale);
+  ctx.imageSmoothingEnabled = prevSmoothing;
+  return true;
+}
+
 function renderTerrainWorldCache(key) {
-  const pad = lastTerrainRenderK === state.cam.k ? TERRAIN_CACHE_PAD : 0;
+  const pad =
+    pendingPaddedRebuild || lastTerrainRenderK === null || lastTerrainRenderK === state.cam.k
+      ? TERRAIN_CACHE_PAD
+      : 0;
+  pendingPaddedRebuild = false;
   lastTerrainRenderK = state.cam.k;
   ensureBuf(terrainScreenCache, view.width + pad * 2, view.height + pad * 2);
   const camX = state.cam.x;
@@ -1213,11 +1323,11 @@ function renderTerrainWorldCache(key) {
       clipMap();
       ctx.fillStyle = planeBackdrop();
       ctx.fillRect(0, 0, view.width, view.height);
-      drawTerrainCells();
+      drawTerrainCells({ skipWater: waterUsesLiveOverlay() });
       ctx.restore();
     }
   );
-  terrainCacheMeta = { key, camX, camY, pad };
+  terrainCacheMeta = { key, camX, camY, pad, k: state.cam.k };
 }
 
 function gridStaticKey() {
@@ -1279,6 +1389,7 @@ function paintFrame() {
   const fillSrc = terrainTexturePath(baseChar());
   const fillIm = fillSrc ? state.images.get(fillSrc) : null;
   const terrainReady = !!(fillIm && fillIm.complete && fillIm.naturalWidth);
+  const scaleLive = cameraScaleLive();
   if (!terrainReady) {
     // Textures still loading: draw direct, nothing worth caching yet.
     invalidateScreenCaches();
@@ -1293,17 +1404,27 @@ function paintFrame() {
     ctx.restore();
   } else {
     const tKey = terrainStaticKey();
-    if (!worldCacheHit(terrainCacheMeta, tKey)) renderTerrainWorldCache(tKey);
     ctx.fillStyle = deskChrome();
     ctx.fillRect(0, 0, view.width, view.height);
-    blitWorldCache(terrainScreenCache, terrainCacheMeta);
+    if (
+      scaleLive &&
+      terrainCacheMeta &&
+      Math.abs((terrainCacheMeta.k || 0) - state.cam.k) > 1e-6 &&
+      blitScaledWorldCache(terrainScreenCache, terrainCacheMeta)
+    ) {
+      // Approximate zoom from the last stable cache; rebuild after settle.
+    } else {
+      if (!worldCacheHit(terrainCacheMeta, tKey)) renderTerrainWorldCache(tKey);
+      blitWorldCache(terrainScreenCache, terrainCacheMeta);
+    }
   }
+  drawLiveWaterTiles();
   drawPaintPreview();
   ctx.save();
   clipMap();
   drawPortal();
   ctx.restore();
-  if (document.getElementById("showGrid")?.checked) {
+  if (!scaleLive && document.getElementById("showGrid")?.checked) {
     const gKey = gridStaticKey();
     if (!worldCacheHit(gridCacheMeta, gKey)) renderGridWorldCache(gKey);
     ctx.save();
@@ -1313,14 +1434,14 @@ function paintFrame() {
   }
   drawSceneObjects();
   drawShapePreview();
-  const stroking = !!state.strokeNeedsRebuild;
-  if (!stroking) {
+  const chromeBusy = terrainInteractionBusy();
+  if (!chromeBusy) {
     const now = performance.now();
     if (now - lastStatsAt > 120) {
       lastStatsAt = now;
       updateStats();
     }
-    drawMini();
+    if (miniShouldPaint()) drawMini();
   }
 }
 
@@ -1380,9 +1501,11 @@ function imageSalt(im) {
 
 function variantHasYellow(sprite) {
   const g = sprite.getContext("2d", { willReadFrequently: true });
-  const d = g.getImageData(0, 0, sprite.width, sprite.height).data;
+  const sampleW = Math.max(1, sprite.width - 32);
+  const sampleH = Math.max(1, sprite.height - 16);
+  const d = g.getImageData(16, 8, sampleW, sampleH).data;
   let yellow = 0;
-  for (let i = 0; i < d.length; i += 4) {
+  for (let i = 0; i < d.length; i += 16) {
     const r = d[i];
     const green = d[i + 1];
     const b = d[i + 2];
@@ -1413,7 +1536,9 @@ function terrainAtlas(im) {
   if (!all.length) all.push({ sx: 0, sy: 0, sprite: isoTileSprite(im, 0, 0), col: 0, row: 0 });
   const plain = [];
   const decorated = [];
-  for (const v of all) (variantHasYellow(v.sprite) ? decorated : plain).push(v);
+  if (!constrainedTerrain()) {
+    for (const v of all) (variantHasYellow(v.sprite) ? decorated : plain).push(v);
+  }
   const atlas = {
     all,
     plain: plain.length ? plain : all,
@@ -1556,19 +1681,8 @@ function acquireTerrainLayer(w, h) {
   return terrainLayerCanvas;
 }
 
-function drawTerrainCells() {
+function drawTerrainStampJobs(predicate) {
   const fill = baseChar();
-  const fillSrc = terrainTexturePath(fill);
-  if (fillSrc) preload(fillSrc);
-  if (state.fillDefault) {
-    const fillIm = fillSrc ? state.images.get(fillSrc) : null;
-    if (!drawTerrainPlane(fillIm, fill === grassChar())) {
-      const r = mapRect();
-      ctx.fillStyle = isSandBase() ? GROUP_COLOR.dirt : GROUP_COLOR.grass;
-      ctx.fillRect(r.x, r.y, r.w, r.h);
-    }
-  }
-
   const tiles = state.drawTiles && state.drawTiles.length ? state.drawTiles : state.cornerTiles.values();
   const k = state.cam.k;
   const pad = TILE_DW + TILE_DH;
@@ -1586,22 +1700,46 @@ function drawTerrainCells() {
     ) {
       continue;
     }
+    if (predicate && !predicate(tile)) continue;
     const pos = nativeTilePosition(tile);
     if (pos.x + TILE_DW < vx0 || pos.y + TILE_DH < vy0 || pos.x > vx1 || pos.y > vy1) continue;
     const blit = nativeTerrainBlit(tile);
     if (!blit) continue;
     jobs.push(blit);
   }
-  if (jobs.length) {
-    ctx.imageSmoothingEnabled = false;
-    const tw = TILE_DW * k;
-    const th = TILE_DH * k;
-    for (const job of jobs) {
-      ctx.drawImage(job.sprite, state.cam.x + job.x * k, state.cam.y + job.y * k, tw, th);
+  if (!jobs.length) return;
+  ctx.imageSmoothingEnabled = false;
+  const tw = TILE_DW * k;
+  const th = TILE_DH * k;
+  for (const job of jobs) {
+    ctx.drawImage(job.sprite, state.cam.x + job.x * k, state.cam.y + job.y * k, tw, th);
+  }
+}
+
+function drawTerrainCells(opts = {}) {
+  const fill = baseChar();
+  const fillSrc = terrainTexturePath(fill);
+  if (fillSrc) preload(fillSrc);
+  if (state.fillDefault) {
+    const fillIm = fillSrc ? state.images.get(fillSrc) : null;
+    if (!drawTerrainPlane(fillIm, fill === grassChar() && !constrainedTerrain())) {
+      const r = mapRect();
+      ctx.fillStyle = isSandBase() ? GROUP_COLOR.dirt : GROUP_COLOR.grass;
+      ctx.fillRect(r.x, r.y, r.w, r.h);
     }
   }
 
+  const skipWater = !!(opts.skipWater && waterUsesLiveOverlay());
+  drawTerrainStampJobs(skipWater ? (tile) => !tileShowsWater(tile) : null);
   drawTerrainLight();
+}
+
+function drawLiveWaterTiles() {
+  if (!waterUsesLiveOverlay()) return;
+  ctx.save();
+  clipMap();
+  drawTerrainStampJobs((tile) => tileShowsWater(tile));
+  ctx.restore();
 }
 
 function terrainTexturePath(kind) {
@@ -3246,7 +3384,7 @@ async function ensurePreviewRuntime(entity) {
   if (!entity) return null;
   const old = state.previewRuntime.get(entity.id);
   const cacheKey = entity.sourceType === "paper"
-    ? `terrain-v2|${entity.baseNo}|${entity.coordinateSpace || "paper"}|${entity.paperHash || ""}`
+    ? `terrain-v4|${entity.baseNo}|${entity.coordinateSpace || "paper"}|${entity.paperHash || ""}|f${entity.keepFoundation ? 1 : 0}`
     : `native-v2|${entity.assetId || ""}`;
   if (old?.cacheKey === cacheKey && (old.bitmap || old.image || old.error)) return old;
   state.previewRuntime.set(entity.id, { cacheKey, loading: true });
@@ -3259,10 +3397,13 @@ async function ensurePreviewRuntime(entity) {
         localPackKey: entity.localPackKey || "",
         coordinateSpace: entity.coordinateSpace || "paper",
         purpose: "terrain",
+        includeMaskGrass: false,
+        includeFloor: !!entity.keepFoundation,
       });
       runtime = { ...result, cacheKey, loading: false };
       entity.footprint = [...result.footprint];
       entity.groundAnchor = { ...result.groundAnchor };
+      entity.floorQuad = copyFloorQuad(result.floorQuad);
       entity.unresolved = [...result.unresolved];
     } else {
       const blob = await loadPreviewAsset(entity.assetId);
@@ -3304,15 +3445,122 @@ async function ensurePreviewRuntime(entity) {
   }
 }
 
+function previewTileHalf(entity) {
+  const footprint = entity?.footprint || [1, 1];
+  return {
+    halfWidth: Math.max(1, Number(footprint[0]) || 1) * TILE_W / 2,
+    halfHeight: Math.max(1, Number(footprint[1]) || 1) * TILE_H / 2,
+  };
+}
+
+function isoOccupancyQuad(entity) {
+  /* SetPut(fw,fh) is u×v tiles. Native GTile steps are 32×16, so edges stay 2:1
+     even when fw≠fh. A symmetric rhombus (fw*64 by fh*32) is wrong for 3×5 / 5×3. */
+  const fw = Math.max(1, Number(entity?.footprint?.[0]) || 1);
+  const fh = Math.max(1, Number(entity?.footprint?.[1]) || 1);
+  return {
+    top: { x: (fw - fh) * (TILE_W / 2), y: -(fw + fh) * (TILE_H / 2) },
+    right: { x: fw * (TILE_W / 2), y: -fw * (TILE_H / 2) },
+    bottom: { x: 0, y: 0 },
+    left: { x: -fh * (TILE_W / 2), y: -fh * (TILE_H / 2) },
+  };
+}
+
+function tileFootprintQuad(entity) {
+  return isoOccupancyQuad(entity);
+}
+
+function previewFloorQuad(entity) {
+  return isoOccupancyQuad(entity);
+}
+
+function snapIsoSouth(wx, wy) {
+  /* GTile MakeTileImport 0x521050: tile centers at (i*32, j*16) with i,j same
+     parity; south vertex is center+(0,16), so i and j have opposite parity. */
+  const stepX = TILE_W / 2;
+  const stepY = TILE_H / 2;
+  let i = Math.round(wx / stepX);
+  let j = Math.round(wy / stepY);
+  if (((i + j) & 1) === 0) j += wy >= j * stepY ? 1 : -1;
+  return { x: i * stepX, y: j * stepY };
+}
+
+function snapStampSouth(wx, wy) {
+  return snapIsoSouth(wx, wy);
+}
+
+function snapPreviewCenter(x, y, entity) {
+  const { halfHeight } = previewTileHalf(entity);
+  const front = snapIsoSouth(x, y + halfHeight);
+  return {
+    x: Math.max(0, Math.min(worldExtent(), front.x)),
+    y: Math.max(0, Math.min(worldExtent(), front.y - halfHeight)),
+  };
+}
+
+function linearFromTwoRays(srcA, srcB, dstA, dstB) {
+  const det = srcA.x * srcB.y - srcB.x * srcA.y;
+  if (!Number.isFinite(det) || Math.abs(det) < 1) return null;
+  const a = (dstA.x * srcB.y - dstB.x * srcA.y) / det;
+  const c = (dstB.x * srcA.x - dstA.x * srcB.x) / det;
+  const b = (dstA.y * srcB.y - dstB.y * srcA.y) / det;
+  const d = (dstB.y * srcA.x - dstA.y * srcB.x) / det;
+  if (![a, b, c, d].every(Number.isFinite)) return null;
+  return { a, b, c, d };
+}
+
+function invertAffine(t) {
+  const det = t.a * t.d - t.c * t.b;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-8) return null;
+  const ia = t.d / det;
+  const ic = -t.c / det;
+  const ib = -t.b / det;
+  const id = t.a / det;
+  return {
+    a: ia,
+    b: ib,
+    c: ic,
+    d: id,
+    e: -(ia * t.e + ic * t.f),
+    f: -(ib * t.e + id * t.f),
+  };
+}
+
+function floorFitLinear(entity) {
+  if (entity?.sourceType !== "paper") return null;
+  const src = entity.floorQuad;
+  const dst = isoOccupancyQuad(entity);
+  if (!src?.left || !src?.right || !dst?.left || !dst?.right) return null;
+  const map = linearFromTwoRays(src.left, src.right, dst.left, dst.right);
+  if (!map) return null;
+  const mapped = (point) => ({
+    x: map.a * point.x + map.c * point.y,
+    y: map.b * point.x + map.d * point.y,
+  });
+  const drift = Math.max(
+    Math.hypot(mapped(src.left).x - dst.left.x, mapped(src.left).y - dst.left.y),
+    Math.hypot(mapped(src.right).x - dst.right.x, mapped(src.right).y - dst.right.y)
+  );
+  if (drift > 2) return null;
+  const need =
+    Math.hypot(src.left.x - dst.left.x, src.left.y - dst.left.y) > 1.5 ||
+    Math.hypot(src.right.x - dst.right.x, src.right.y - dst.right.y) > 1.5;
+  if (!need && Math.abs(map.a - 1) < 0.004 && Math.abs(map.d - 1) < 0.004 && Math.abs(map.b) < 0.004 && Math.abs(map.c) < 0.004) {
+    return null;
+  }
+  return map;
+}
+
 function previewEntityLayout(entity) {
   const bitmap = previewBitmap(entity);
   if (!entity || !bitmap?.width) return null;
   const k = state.cam.k;
   const center = worldToScreen(entity.x, entity.y);
-  const footprint = entity.footprint || [1, 1];
-  const halfWidth = Math.max(1, Number(footprint[0]) || 1) * TILE_W * k / 2;
-  const halfHeight = Math.max(1, Number(footprint[1]) || 1) * TILE_H * k / 2;
-  const ground = { x: center.x, y: center.y + halfHeight };
+  const { halfWidth, halfHeight } = previewTileHalf(entity);
+  const ground = {
+    x: Math.round(center.x),
+    y: Math.round(center.y + halfHeight * k),
+  };
   let width;
   let height;
   let anchor;
@@ -3328,13 +3576,69 @@ function previewEntityLayout(entity) {
       y: Math.max(0, Math.min(1, Number(entity.anchorY ?? 1))) * (height / k),
     };
   }
-  const image = {
+  const fit = floorFitLinear(entity);
+  let transform = null;
+  let inverse = null;
+  let image = {
     x: ground.x - anchor.x * k,
     y: ground.y - anchor.y * k,
     width,
     height,
   };
-  return { entity, bitmap, center, ground, halfWidth, halfHeight, image };
+  if (fit) {
+    const a = fit.a * k;
+    const b = fit.b * k;
+    const c = fit.c * k;
+    const d = fit.d * k;
+    transform = {
+      a,
+      b,
+      c,
+      d,
+      e: ground.x - (fit.a * anchor.x + fit.c * anchor.y) * k,
+      f: ground.y - (fit.b * anchor.x + fit.d * anchor.y) * k,
+    };
+    inverse = invertAffine(transform);
+    const corners = [
+      { x: 0, y: 0 },
+      { x: bitmap.width, y: 0 },
+      { x: bitmap.width, y: bitmap.height },
+      { x: 0, y: bitmap.height },
+    ].map((point) => ({
+      x: transform.a * point.x + transform.c * point.y + transform.e,
+      y: transform.b * point.x + transform.d * point.y + transform.f,
+    }));
+    const xs = corners.map((point) => point.x);
+    const ys = corners.map((point) => point.y);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    image = {
+      x: left,
+      y: top,
+      width: Math.max(...xs) - left,
+      height: Math.max(...ys) - top,
+    };
+  }
+  const rel = previewFloorQuad(entity);
+  const quad = {
+    top: { x: ground.x + rel.top.x * k, y: ground.y + rel.top.y * k },
+    right: { x: ground.x + rel.right.x * k, y: ground.y + rel.right.y * k },
+    bottom: { x: ground.x + rel.bottom.x * k, y: ground.y + rel.bottom.y * k },
+    left: { x: ground.x + rel.left.x * k, y: ground.y + rel.left.y * k },
+  };
+  return {
+    entity,
+    bitmap,
+    center,
+    ground,
+    halfWidth: halfWidth * k,
+    halfHeight: halfHeight * k,
+    image,
+    quad,
+    transform,
+    inverse,
+    warped: !!fit,
+  };
 }
 
 function previewResizeHandles(layout) {
@@ -3352,8 +3656,71 @@ function previewTouchRadius() {
   return window.MobileWorkspace?.modeForViewport().coarse ? 24 : 11;
 }
 
+function pointInTriangle(ax, ay, bx, by, cx, cy, px, py, pad = 0) {
+  const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+  if (!d) return false;
+  const w1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / d;
+  const w2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / d;
+  const w3 = 1 - w1 - w2;
+  const slack = pad ? 0.08 : 0;
+  return w1 >= -slack && w2 >= -slack && w3 >= -slack;
+}
+
+function previewPointInFootprint(layout, x, y, pad = 0) {
+  if (!layout) return false;
+  const quad = layout.quad;
+  if (quad?.left && quad?.right && quad?.top && quad?.bottom) {
+    return (
+      pointInTriangle(quad.bottom.x, quad.bottom.y, quad.right.x, quad.right.y, quad.top.x, quad.top.y, x, y, pad) ||
+      pointInTriangle(quad.bottom.x, quad.bottom.y, quad.top.x, quad.top.y, quad.left.x, quad.left.y, x, y, pad)
+    );
+  }
+  const hw = Math.max(8, layout.halfWidth + pad);
+  const hh = Math.max(8, layout.halfHeight + pad);
+  return Math.abs(x - layout.center.x) / hw + Math.abs(y - layout.center.y) / hh <= 1;
+}
+
+function previewAlphaMask(entity, bitmap) {
+  const runtime = state.previewRuntime.get(entity?.id);
+  if (!runtime || !bitmap?.width) return null;
+  if (runtime.alphaMask && runtime.alphaMask.srcW === bitmap.width) return runtime.alphaMask;
+  const maxDim = 160;
+  const scale = Math.min(1, maxDim / bitmap.width, maxDim / bitmap.height);
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const probe = document.createElement("canvas");
+  probe.width = w;
+  probe.height = h;
+  const pctx = probe.getContext("2d", { willReadFrequently: true });
+  pctx.drawImage(bitmap, 0, 0, w, h);
+  runtime.alphaMask = { srcW: bitmap.width, w, h, data: pctx.getImageData(0, 0, w, h).data };
+  return runtime.alphaMask;
+}
+
+function previewOpaqueAt(entity, layout, x, y) {
+  const bitmap = layout?.bitmap;
+  if (!bitmap?.width) return false;
+  let bx;
+  let by;
+  if (layout.inverse) {
+    bx = layout.inverse.a * x + layout.inverse.c * y + layout.inverse.e;
+    by = layout.inverse.b * x + layout.inverse.d * y + layout.inverse.f;
+  } else {
+    const r = layout.image;
+    if (!r) return false;
+    bx = ((x - r.x) / r.width) * bitmap.width;
+    by = ((y - r.y) / r.height) * bitmap.height;
+  }
+  if (bx < 0 || by < 0 || bx > bitmap.width || by > bitmap.height) return false;
+  const mask = previewAlphaMask(entity, bitmap);
+  if (!mask) return true;
+  const px = Math.min(mask.w - 1, Math.max(0, Math.floor((bx / bitmap.width) * mask.w)));
+  const py = Math.min(mask.h - 1, Math.max(0, Math.floor((by / bitmap.height) * mask.h)));
+  return mask.data[(py * mask.w + px) * 4 + 3] > 24;
+}
+
 function previewHitTest(x, y) {
-  if (!document.getElementById("showPlanOverlay")?.checked) return null;
+  if (!buildingsVisibleOnMap()) return null;
   const selected = previewEntityById(state.selectedPreviewId);
   const selectedLayout = previewEntityLayout(selected);
   if (selected?.sourceType === "image" && !selected.locked && selectedLayout) {
@@ -3366,14 +3733,14 @@ function previewHitTest(x, y) {
       return { entity: selected, part: "anchor", layout: selectedLayout };
     }
   }
+  const pad = previewTouchRadius();
   const ordered = [...state.previewBuildings].sort((a, b) => (a.x + a.y) - (b.x + b.y));
   for (let i = ordered.length - 1; i >= 0; i -= 1) {
     const entity = ordered[i];
     if (entity.visible === false) continue;
     const layout = previewEntityLayout(entity);
     if (!layout) continue;
-    const r = layout.image;
-    if (x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) {
+    if (previewOpaqueAt(entity, layout, x, y) || previewPointInFootprint(layout, x, y, pad)) {
       return { entity, part: "body", layout };
     }
   }
@@ -3385,43 +3752,80 @@ function planOverlayHitScreen(x, y) {
 }
 
 function drawPreviewEntity(entity) {
-  if (entity.visible === false || !document.getElementById("showPlanOverlay")?.checked) return;
+  if (entity.visible === false || !buildingsVisibleOnMap()) return;
   const layout = previewEntityLayout(entity);
   if (!layout) return;
-  const { image, bitmap } = layout;
+  const { image, bitmap, transform } = layout;
   ctx.save();
   ctx.globalAlpha = Math.max(0.1, Math.min(1, Number(entity.opacity ?? 1)));
-  ctx.imageSmoothingEnabled = Math.abs(state.cam.k - 1) > 0.001;
-  ctx.drawImage(bitmap, image.x, image.y, image.width, image.height);
+  ctx.imageSmoothingEnabled = !!layout.warped || Math.abs(state.cam.k - 1) > 0.001;
+  if (transform) {
+    ctx.transform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
+    ctx.drawImage(bitmap, 0, 0);
+  } else {
+    ctx.drawImage(bitmap, image.x, image.y, image.width, image.height);
+  }
   ctx.restore();
+}
+
+function drawPreviewFootprint(layout, fill) {
+  const quad = layout.quad;
+  ctx.beginPath();
+  if (quad) {
+    ctx.moveTo(quad.top.x, quad.top.y);
+    ctx.lineTo(quad.right.x, quad.right.y);
+    ctx.lineTo(quad.bottom.x, quad.bottom.y);
+    ctx.lineTo(quad.left.x, quad.left.y);
+  } else {
+    const { center, halfWidth, halfHeight } = layout;
+    ctx.moveTo(center.x, center.y - halfHeight);
+    ctx.lineTo(center.x + halfWidth, center.y);
+    ctx.lineTo(center.x, center.y + halfHeight);
+    ctx.lineTo(center.x - halfWidth, center.y);
+  }
+  ctx.closePath();
+  if (fill) ctx.fill();
+  ctx.stroke();
 }
 
 function drawPreviewSelection() {
   const entity = previewEntityById(state.selectedPreviewId);
   if (!entity || entity.visible === false) return;
+  if (!buildingsVisibleOnMap()) return;
   const layout = previewEntityLayout(entity);
   if (!layout) return;
   const { ground } = layout;
-  if (entity.sourceType !== "image" || entity.locked) return;
   ctx.save();
-  const handleSize = window.MobileWorkspace?.modeForViewport().coarse ? 16 : 10;
-  ctx.fillStyle = "rgba(255,255,255,.94)";
+  ctx.fillStyle = "rgba(47, 125, 91, 0.16)";
   ctx.strokeStyle = "#2f7d5b";
-  ctx.lineWidth = 2;
-  for (const handle of previewResizeHandles(layout)) {
-    ctx.fillRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
-    ctx.strokeRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
-  }
+  ctx.lineWidth = window.MobileWorkspace?.modeForViewport().coarse ? 3 : 2;
+  drawPreviewFootprint(layout, true);
   ctx.fillStyle = "#2f7d5b";
   ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(ground.x, ground.y, window.MobileWorkspace?.modeForViewport().coarse ? 7 : 5, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
+  if (entity.sourceType === "image" && !entity.locked) {
+    const handleSize = window.MobileWorkspace?.modeForViewport().coarse ? 16 : 10;
+    ctx.fillStyle = "rgba(255,255,255,.94)";
+    ctx.strokeStyle = "#2f7d5b";
+    ctx.lineWidth = 2;
+    for (const handle of previewResizeHandles(layout)) {
+      ctx.fillRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+      ctx.strokeRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+    }
+  }
   ctx.restore();
 }
 
+function buildingsVisibleOnMap() {
+  return document.getElementById("showBuild")?.checked !== false;
+}
+
 function drawPlanOverlay() {
+  if (!buildingsVisibleOnMap()) return;
   state.previewBuildings.forEach((entity) => {
     if (!state.previewRuntime.has(entity.id)) ensurePreviewRuntime(entity);
     drawPreviewEntity(entity);
@@ -3430,18 +3834,16 @@ function drawPlanOverlay() {
 }
 
 function drawSceneObjects() {
-  if (state.strokeNeedsRebuild) return;
+  // Keep buildings painted during terrain strokes. Skipping them while
+  // strokeNeedsRebuild was set made preview/manor buildings flicker off.
+  if (!buildingsVisibleOnMap()) return;
   const scene = [];
-  if (document.getElementById("showBuild")?.checked) {
-    state.buildings.forEach((building, index) => {
-      scene.push({ type: "manor", depth: building.x + building.y, building, index });
-    });
-  }
-  if (document.getElementById("showPlanOverlay")?.checked) {
-    state.previewBuildings.forEach((entity) => {
-      if (entity.visible !== false) scene.push({ type: "preview", depth: entity.x + entity.y, entity });
-    });
-  }
+  state.buildings.forEach((building, index) => {
+    scene.push({ type: "manor", depth: building.x + building.y, building, index });
+  });
+  state.previewBuildings.forEach((entity) => {
+    if (entity.visible !== false) scene.push({ type: "preview", depth: entity.x + entity.y, entity });
+  });
   scene.sort((a, b) => a.depth - b.depth);
   scene.forEach((row) => {
     if (row.type === "manor") drawBuilding(row.building, row.index === state.selectedBld);
@@ -3715,26 +4117,280 @@ function updateStats() {
   refreshMatCount();
 }
 
+function appendMatChip(host, item) {
+  const chip = document.createElement("span");
+  chip.className = "mat-chip";
+  chip.title = `${item.name} ×${item.count}`;
+  if (item.iconUrl) {
+    const icon = document.createElement("img");
+    icon.className = "mat-icon";
+    icon.src = item.iconUrl;
+    icon.alt = "";
+    icon.draggable = false;
+    icon.addEventListener("error", () => icon.remove());
+    chip.appendChild(icon);
+  }
+  const label = document.createElement("span");
+  label.className = "mat-name";
+  label.textContent = item.name;
+  const em = document.createElement("em");
+  em.textContent = `×${item.count}`;
+  chip.append(label, em);
+  host.appendChild(chip);
+}
+
 function refreshMatCount() {
   const box = document.getElementById("matCount");
   if (!box || !state.kinds) return;
-  const names = new Map();
-  for (const b of state.kinds.brushes || []) {
-    if (b.char && b.stampSize === 1) names.set(b.char, brushDisplayName(b));
+  const rows = terrainStampRows();
+  const buildingCount = (state.previewBuildings || []).filter((entity) => entity.visible !== false).length;
+  const manorCount = state.buildings.length;
+  box.hidden = !rows.length && !buildingCount && !manorCount;
+  box.replaceChildren();
+  rows.slice(0, 16).forEach((item) => appendMatChip(box, item));
+  if (buildingCount) {
+    const preview = (state.previewBuildings || []).find((entity) => entity.visible !== false);
+    appendMatChip(box, {
+      name: "画布建筑",
+      count: buildingCount,
+      iconUrl: preview ? previewThumbnail(preview) || "" : "",
+    });
   }
-  const cnt = new Map();
-  for (const s of state.stamps) cnt.set(s.kind, (cnt.get(s.kind) || 0) + 1);
-  const lines = [];
-  for (const [ch, n] of cnt) lines.push((names.get(ch) || ch) + " × " + n);
-  if (state.buildings.length) lines.push("建筑 " + state.buildings.length);
-  box.hidden = !lines.length;
-  box.textContent = lines.join("\n");
+  if (manorCount) {
+    const manor = state.buildings[0];
+    const resolved = manor ? resolveManorBase(manor.item) : {};
+    appendMatChip(box, {
+      name: "庄园建筑",
+      count: manorCount,
+      iconUrl: resolved.base ? baseImageSrc(resolved.base) : "",
+    });
+  }
+}
+
+function materialIconUrl(name) {
+  const row = state.itemIcons?.[name];
+  if (!row?.file) return "";
+  const file = String(row.file).replace(/\\/g, "/").replace(/^\/+/, "");
+  const frame = Number(row.frame) || 0;
+  const path = file.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  return `/item-ale/${path}.png?f=${frame}`;
+}
+
+function sortMaterialRows(rows) {
+  return [...(rows || [])].sort(
+    (a, b) =>
+      (Number(b.count) || 0) - (Number(a.count) || 0) ||
+      String(a.name || "").localeCompare(String(b.name || ""), "zh")
+  );
+}
+
+function sizeOneBrush(brush) {
+  if (!brush) return null;
+  if ((brush.stampSize || 1) === 1) return brush;
+  const code = brush.code || "";
+  return (
+    (state.kinds?.brushes || []).find((row) => row.code === code && (row.stampSize || 1) === 1) ||
+    brush
+  );
+}
+
+function resolveStampMaterial(kind) {
+  if (!kind) return null;
+  const paper = brushByPaperChar(kind);
+  if (paper) return sizeOneBrush(paper);
+  const brushes = state.kinds?.brushes || [];
+  return sizeOneBrush(
+    brushes.find((row) => row.char === kind && (row.stampSize || 1) === 1) ||
+      brushes.find((row) => row.char === kind) ||
+      null
+  );
+}
+
+function terrainLabel(kind, brush) {
+  if (brush) return brushDisplayName(brush);
+  const tile = tileByChar(kind);
+  const code = String(tile?.code || "");
+  if (code.includes("/")) return code.split("/").pop();
+  return code || kind;
+}
+
+function terrainIconUrl(kind, brush) {
+  if (brush?.icon) return iconSrc(brush.icon);
+  const tile = tileByChar(brush?.char || kind);
+  const texture = brush?.texture || tile?.texture;
+  return texture ? `/tiles/${texture}` : "";
+}
+
+function terrainStampRows() {
+  const counts = new Map();
+  for (const stamp of state.stamps) {
+    const kind = stamp.kind;
+    const brush = resolveStampMaterial(kind);
+    const name = terrainLabel(kind, brush);
+    const iconUrl = terrainIconUrl(kind, brush);
+    const key = `${name}\0${iconUrl}`;
+    const row = counts.get(key);
+    if (row) row.count += 1;
+    else counts.set(key, { name, count: 1, iconUrl, source: "地形地块" });
+  }
+  return sortMaterialRows([...counts.values()]);
+}
+
+function addMaterialItems(map, items) {
+  (items || []).forEach((item) => {
+    const name = String(item?.name || "");
+    if (!name) return;
+    map.set(name, (map.get(name) || 0) + (Number(item.count) || 0));
+  });
+}
+
+function rowsFromCountMap(map, source) {
+  return sortMaterialRows(
+    [...map].map(([name, count]) => ({
+      name,
+      count,
+      iconUrl: materialIconUrl(name),
+      source,
+    }))
+  );
+}
+
+function manorBuildingRows() {
+  const counts = new Map();
+  for (const building of state.buildings) {
+    const key = String(building.item ?? building.mat ?? "");
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const rows = [];
+  for (const [key, count] of counts) {
+    const resolved = resolveManorBase(key);
+    rows.push({
+      name: resolved.base?.name || `建筑 #${key}`,
+      count,
+      iconUrl: resolved.base ? baseImageSrc(resolved.base) : "",
+      source: "庄园建筑",
+    });
+  }
+  return sortMaterialRows(rows);
+}
+
+function previewBuildingMaterialData(entity, catalog) {
+  if (!entity) return { rows: [], unresolved: 0 };
+  if (entity.sourceType !== "paper") {
+    return {
+      rows: [
+        {
+          name: entity.name || "图片建筑",
+          count: 1,
+          iconUrl: previewThumbnail(entity) || "",
+          source: "场景图片",
+        },
+      ],
+      unresolved: 0,
+    };
+  }
+  const map = new Map();
+  let unresolved = 0;
+  const base = window.BuildingPreview?.baseByNo(catalog, entity.baseNo);
+  addMaterialItems(map, base?.baseMaterials);
+  (entity.records || []).forEach((record) => {
+    if (record.hidden || Number(record.mat) === 0) return;
+    const resolved = window.BuildingPreview?.resolveComponent(record.mat, catalog, entity.localPackKey);
+    if (!resolved?.component) {
+      unresolved += 1;
+      return;
+    }
+    addMaterialItems(map, resolved.component.materials);
+  });
+  return {
+    rows: rowsFromCountMap(map, entity.name || `建筑 ${entity.baseNo}`),
+    unresolved,
+  };
+}
+
+async function terrainMaterialLedgerPayload() {
+  const catalog = await window.BuildingPreview.loadCatalog();
+  const stampRows = terrainStampRows();
+  const manorRows = manorBuildingRows();
+  const craft = new Map();
+  const buildingGroups = [];
+  let unresolved = 0;
+  for (const entity of state.previewBuildings) {
+    if (entity.visible === false) continue;
+    const data = previewBuildingMaterialData(entity, catalog);
+    unresolved += data.unresolved;
+    if (!data.rows.length) continue;
+    buildingGroups.push({ name: entity.name || "导入建筑", rows: data.rows });
+    if (entity.sourceType === "paper") addMaterialItems(craft, data.rows);
+  }
+  const groups = [];
+  const total = new Map();
+  stampRows.forEach((row) => total.set(row.name, (total.get(row.name) || 0) + row.count));
+  craft.forEach((count, name) => total.set(name, (total.get(name) || 0) + count));
+  manorRows.forEach((row) => total.set(row.name, (total.get(row.name) || 0) + row.count));
+  const totalRows = [...total].map(([name, count]) => {
+    const stamp = stampRows.find((row) => row.name === name);
+    const manor = manorRows.find((row) => row.name === name);
+    return {
+      name,
+      count,
+      iconUrl: stamp?.iconUrl || manor?.iconUrl || materialIconUrl(name),
+      source: stamp ? "地形地块" : manor ? "庄园建筑" : "导入建筑",
+    };
+  });
+  if (totalRows.length) groups.push({ id: "total", name: "合计", rows: sortMaterialRows(totalRows) });
+  if (stampRows.length) groups.push({ name: "地形地块", rows: stampRows });
+  if (craft.size) groups.push({ name: "导入建筑材料", rows: rowsFromCountMap(craft, "导入建筑") });
+  buildingGroups.forEach((group) => groups.push(group));
+  if (manorRows.length) groups.push({ name: "庄园建筑", rows: manorRows });
+  const desc = (document.getElementById("desc")?.value || "").trim() || "地形";
+  return {
+    title: `${desc} 材料清单`,
+    filename: `${desc}-材料清单`,
+    groups,
+  };
+}
+
+async function openTerrainMaterialLedger() {
+  const payload = await terrainMaterialLedgerPayload();
+  window.MaterialLedger?.open(payload);
+}
+
+let previewPiecePayload = null;
+let inspectorMatKey = "";
+
+async function updatePreviewInspectorMaterials() {
+  const btn = document.getElementById("btnPreviewBuildingMaterials");
+  const selected = previewEntityById(state.selectedPreviewId);
+  if (!btn) return;
+  if (!selected) {
+    btn.hidden = true;
+    previewPiecePayload = null;
+    inspectorMatKey = "";
+    return;
+  }
+  const key = `${selected.id}|${selected.paperHash || selected.assetId || ""}`;
+  if (key === inspectorMatKey && previewPiecePayload) {
+    btn.hidden = false;
+    return;
+  }
+  inspectorMatKey = key;
+  const catalog = await window.BuildingPreview.loadCatalog();
+  if (previewEntityById(state.selectedPreviewId) !== selected) return;
+  const data = previewBuildingMaterialData(selected, catalog);
+  previewPiecePayload = {
+    title: `${selected.name || "此栋"} 材料`,
+    filename: `${selected.name || "建筑"}-材料清单`,
+    groups: [{ name: selected.name || "此栋", rows: data.rows }],
+  };
+  btn.hidden = !(data.rows && data.rows.length);
 }
 
 function syncMiniCanvas() {
   const mini = document.getElementById("mini");
   if (!mini) return;
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const dpr = constrainedTerrain() ? 1 : Math.min(2, window.devicePixelRatio || 1);
   const cssW = Math.max(1, Math.round(mini.clientWidth || 280));
   const cssH = Math.max(1, Math.round(mini.clientHeight || 236));
   const bw = Math.max(1, Math.round(cssW * dpr));
@@ -3783,7 +4439,7 @@ function miniWorldToCanvas(wx, wy, layout) {
 }
 
 function miniSourceScale(n) {
-  const maxSide = 960;
+  const maxSide = constrainedTerrain() ? 512 : 960;
   const raw = Math.min(1, maxSide / Math.max(1, n));
   return Math.max(1 / 32, Math.round(raw * 32) / 32);
 }
@@ -3817,6 +4473,16 @@ function drawMiniTerrain(layout) {
   sctx.strokeStyle = "rgba(201,234,236,0.85)";
   sctx.lineWidth = 1;
   sctx.strokeRect(ox + 0.5, oy + 0.5, mw - 1, mh - 1);
+}
+
+function miniShouldPaint() {
+  const mini = document.getElementById("mini");
+  if (!mini) return false;
+  const sheet = document.getElementById("terrainProjectSheet");
+  const tab = sheet?.dataset?.mobileProjectTab;
+  if (tab && tab !== "overview") return false;
+  if (mini.offsetWidth < 8 || mini.offsetHeight < 8) return false;
+  return true;
 }
 
 function drawMini() {
@@ -3856,24 +4522,40 @@ function drawMini() {
   mctx.restore();
 }
 
+function copyFloorQuad(quad) {
+  if (!quad?.top || !quad?.right || !quad?.left) return null;
+  return {
+    top: { x: quad.top.x, y: quad.top.y },
+    right: { x: quad.right.x, y: quad.right.y },
+    bottom: { x: quad.bottom?.x || 0, y: quad.bottom?.y || 0 },
+    left: { x: quad.left.x, y: quad.left.y },
+  };
+}
+
 function serializePreviewEntity(entity) {
   return {
     ...entity,
     records: entity.records?.map((record) => ({ ...record })),
     footprint: [...(entity.footprint || [1, 1])],
     groundAnchor: entity.groundAnchor ? { ...entity.groundAnchor } : undefined,
+    floorQuad: copyFloorQuad(entity.floorQuad),
     crop: entity.crop ? [...entity.crop] : undefined,
   };
 }
 
 function deserializePreviewEntity(entity) {
-  return {
+  const row = {
     ...serializePreviewEntity(entity),
     id: entity.id || `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     visible: entity.visible !== false,
     locked: !!entity.locked,
     opacity: Math.max(0.1, Math.min(1, Number(entity.opacity ?? 1))),
+    keepFoundation: !!entity.keepFoundation,
   };
+  const pos = snapPreviewCenter(Number(row.x) || 0, Number(row.y) || 0, row);
+  row.x = pos.x;
+  row.y = pos.y;
+  return row;
 }
 
 function refreshPreviewRuntimes() {
@@ -4269,37 +4951,15 @@ function floodFillAt(wx, wy) {
 
 function paintAt(wx, wy, erase) {
   if (state.layer === "build") {
-    const x = snap(wx);
-    const y = snap(wy);
-    if (x < 0 || y < 0 || x > worldExtent() || y > worldExtent()) return;
+    if (!erase) return;
     const hit = hitBuilding(wx, wy);
-    if (erase) {
-      if (hit >= 0) {
-        if (!state.strokeSaved) pushHist();
-        state.strokeSaved = true;
-        state.buildings.splice(hit, 1);
-        state.selectedBld = -1;
-        draw();
-      }
-      return;
-    }
     if (hit >= 0) {
-      state.selectedBld = hit;
-      const b = state.buildings[hit];
-      document.getElementById("itemId").value = b.item || 0;
-      document.getElementById("itemDir").value = b.dir || 0;
+      if (!state.strokeSaved) pushHist();
+      state.strokeSaved = true;
+      state.buildings.splice(hit, 1);
+      state.selectedBld = -1;
       draw();
-      return;
     }
-    if (!state.strokeSaved) pushHist();
-    state.strokeSaved = true;
-    const item = +document.getElementById("itemId").value || 0;
-    const dir = +document.getElementById("itemDir").value || 0;
-    const fp = state.selectedBase ? state.selectedBase.footprint : [3, 3];
-    state.buildings.push({ mode: "manor", x, y, item, dir, footprint: fp });
-    rememberItem(item);
-    markDirty();
-    draw();
     return;
   }
   const brush = state.brush;
@@ -4549,6 +5209,16 @@ function draftHasWork(snap) {
   );
 }
 
+function snapSavedAt(snap) {
+  return Number(snap && snap.savedAt) || 0;
+}
+
+function pickNewerSnap(a, b) {
+  if (!draftHasWork(a)) return draftHasWork(b) ? b : null;
+  if (!draftHasWork(b)) return a;
+  return snapSavedAt(b) > snapSavedAt(a) ? b : a;
+}
+
 function saveDraftLocal(snap) {
   try {
     localStorage.setItem(TERRAIN_DRAFT_LS, JSON.stringify(snap || projectSnapshot("自动保存")));
@@ -4634,11 +5304,38 @@ async function saveDraft() {
   }
 }
 
+async function saveDraftForSwitch() {
+  const snap = projectSnapshot("自动保存");
+  saveDraftLocal(snap);
+  try {
+    await idbPut("kv", snap, "draft");
+  } catch (err) {
+    console.warn(err);
+  }
+  state.dirty = false;
+  setSaveStatus("已保存 " + formatSaveTime(snap.savedAt));
+  putTerrainDraft(snap).catch((err) => console.warn(err));
+}
+
+function warmOtherDesk(htmlHref, extraUrls = []) {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 700));
+  idle(() => {
+    [htmlHref, ...extraUrls].filter(Boolean).forEach((url) => {
+      fetch(url, { credentials: "same-origin" }).catch(() => {});
+    });
+  });
+}
+
 function wireDeskSwitchSave(saveFn) {
   document.querySelectorAll(".desk-switch-inline a[href]").forEach((link) => {
     if (link.classList.contains("on") || link.getAttribute("aria-current") === "page") return;
     link.addEventListener("click", (event) => {
+      if (link.dataset.switching === "1") {
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
+      link.dataset.switching = "1";
       const href = link.getAttribute("href");
       Promise.resolve(saveFn())
         .catch(() => {})
@@ -4720,31 +5417,52 @@ async function startNewTerrain() {
   draw();
 }
 
+async function restoreDraftLocal() {
+  let idbSnap = null;
+  try {
+    idbSnap = await idbGet("kv", "draft");
+  } catch (err) {
+    console.warn(err);
+  }
+  const snap = pickNewerSnap(loadDraftLocal(), idbSnap);
+  if (!draftHasWork(snap)) return null;
+  applyProject(snap, { quiet: true });
+  state.dirty = false;
+  setSaveStatus("已恢复 " + formatSaveTime(snap.savedAt));
+  return snap;
+}
+
+async function reconcileTerrainRemote(localSnap) {
+  try {
+    const remote = await fetchTerrainSaves();
+    const remoteDraft = remote && remote.draft;
+    const newest = pickNewerSnap(localSnap, remoteDraft);
+    if (!draftHasWork(newest)) return null;
+    if (newest !== localSnap) {
+      applyProject(newest, { quiet: true });
+      state.dirty = false;
+      setSaveStatus("已恢复 " + formatSaveTime(newest.savedAt));
+      saveDraftLocal(newest);
+      fitTerrainContent();
+      draw();
+    }
+    if (snapSavedAt(newest) > snapSavedAt(remoteDraft)) {
+      putTerrainDraft(newest).catch(() => {});
+    }
+    return newest;
+  } catch (err) {
+    console.warn(err);
+    return localSnap || null;
+  }
+}
+
 async function restoreDraft() {
   try {
-    let snap = null;
-    const remote = await fetchTerrainSaves();
-    if (draftHasWork(remote && remote.draft)) snap = remote.draft;
-    if (!draftHasWork(snap)) {
-      try {
-        snap = await idbGet("kv", "draft");
-      } catch (err) {
-        console.warn(err);
-      }
-    }
-    if (!draftHasWork(snap)) {
-      const local = loadDraftLocal();
-      if (draftHasWork(local)) snap = local;
-    }
+    const localSnap = await restoreDraftLocal();
+    const snap = await reconcileTerrainRemote(localSnap);
     if (!draftHasWork(snap)) {
       setSaveStatus("新图");
       return false;
-    }
-    applyProject(snap, { quiet: true });
-    state.dirty = false;
-    setSaveStatus("已恢复 " + formatSaveTime(snap.savedAt));
-    if (remote && !draftHasWork(remote.draft) && draftHasWork(snap)) {
-      putTerrainDraft(snap).catch(() => {});
     }
     return true;
   } catch (err) {
@@ -4829,7 +5547,8 @@ function setTerrainMobilePane(pane) {
 }
 
 function setTerrainProjectTab(tab) {
-  state.mobileProjectTab = ["files", "scene", "overview"].includes(tab) ? tab : "files";
+  if (tab === "scene") tab = "files";
+  state.mobileProjectTab = ["files", "overview"].includes(tab) ? tab : "files";
   const sheet = document.getElementById("terrainProjectSheet");
   if (sheet) sheet.dataset.mobileProjectTab = state.mobileProjectTab;
   document.querySelectorAll("[data-project-tab]").forEach((button) => {
@@ -4837,20 +5556,26 @@ function setTerrainProjectTab(tab) {
     button.classList.toggle("on", active);
     button.setAttribute("aria-selected", String(active));
   });
+  if (state.mobileProjectTab === "overview") draw();
+}
+
+function terrainPhoneChrome() {
+  const mode = window.MobileWorkspace?.modeForViewport?.() || { mobile: false, tablet: false };
+  return !!(mode.mobile && !mode.tablet);
 }
 
 function syncDrawerAccessibility(openRail = null) {
-  const mobile = window.MobileWorkspace?.modeForViewport().mobile;
+  const phone = terrainPhoneChrome();
   const left = document.querySelector(".rail-left");
   const right = document.querySelector(".rail-right");
   const map = document.getElementById("mapHost");
   [left, right].forEach((rail) => {
-    const open = mobile && rail === openRail;
-    window.MobileWorkspace?.setInert(rail, mobile && !open);
-    rail?.setAttribute("aria-hidden", String(mobile && !open));
+    const open = phone && rail === openRail;
+    window.MobileWorkspace?.setInert(rail, phone && !open);
+    rail?.setAttribute("aria-hidden", String(phone && !open));
   });
-  window.MobileWorkspace?.setInert(map, mobile && !!openRail);
-  window.MobileWorkspace?.setInert(document.querySelector("#desk .topbar"), mobile && !!openRail);
+  window.MobileWorkspace?.setInert(map, phone && !!openRail);
+  window.MobileWorkspace?.setInert(document.querySelector("#desk .topbar"), phone && !!openRail);
   const leftOpen = openRail === left;
   const paletteOpen = leftOpen && state.mobileTerrainPane === "palette";
   const toolsOpen = leftOpen && state.mobileTerrainPane === "tools";
@@ -4881,9 +5606,11 @@ function closeDrawers({ restoreFocus = false } = {}) {
   syncDrawerAccessibility(null);
   if (restoreFocus && drawerReturnFocus?.isConnected) drawerReturnFocus.focus({ preventScroll: true });
   drawerReturnFocus = null;
+  syncPreviewNudgePad();
 }
 
 function toggleDrawer(side, pane = null, trigger = null) {
+  if (!terrainPhoneChrome()) return;
   if (document.querySelector(".modal:not([hidden])") || (typeof isAppDialogOpen === "function" && isAppDialogOpen())) return;
   const left = document.querySelector(".rail-left");
   const right = document.querySelector(".rail-right");
@@ -4912,8 +5639,9 @@ function toggleDrawer(side, pane = null, trigger = null) {
   if (willOpen) {
     drawerReturnFocus = trigger || document.activeElement;
     target.scrollTop = 0;
-    target.querySelector("[data-drawer-close]")?.focus({ preventScroll: true });
+    target.querySelector("[data-drawer-close], [data-mobile-initial-focus], .mobile-pane-tabs button.on")?.focus({ preventScroll: true });
   }
+  syncPreviewNudgePad();
 }
 
 function wireClick(id, fn) {
@@ -4929,10 +5657,14 @@ function stampTerrainChar(stamp) {
 }
 
 function syncChgTerrButton() {
-  const btn = document.getElementById("btnChgTerr");
-  if (!btn) return;
-  btn.classList.toggle("on", isSandBase());
-  btn.title = isSandBase() ? "当前底板：沙地（再点切回草地）" : "当前底板：草地（再点换成沙地）";
+  const sand = isSandBase();
+  const title = sand ? "当前底板：沙地（再点切回草地）" : "当前底板：草地（再点换成沙地）";
+  ["btnChgTerr", "btnMobileChangeTerrain"].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.classList.toggle("on", sand);
+    btn.title = title;
+  });
 }
 
 function paperCharForTile(tileChar, stampSize) {
@@ -5013,7 +5745,7 @@ function bind() {
     root: "#terrainLeftSheet",
     backdrop: "#drawerMask",
     inert: ["#mapHost", "#desk .topbar"],
-    initialFocus: "[data-drawer-close]",
+    initialFocus: ".mobile-pane-tabs button.on",
     mutex: "terrain-workspace",
   });
   window.MobileWorkspace?.registerSheet({
@@ -5065,7 +5797,7 @@ function bind() {
     button.addEventListener("click", () => setTerrainProjectTab(button.dataset.projectTab));
   });
   document.getElementById("mapmult")?.addEventListener("click", (event) => {
-    if (!event.target.closest(".row") || !window.MobileWorkspace?.modeForViewport().mobile) return;
+    if (!event.target.closest(".row") || !terrainPhoneChrome()) return;
     closeDrawers({ restoreFocus: true });
   });
   document.getElementById("btnMobileFit")?.addEventListener("click", () => document.getElementById("btnFit")?.click());
@@ -5085,7 +5817,33 @@ function bind() {
   const openBld = () => document.getElementById("fileBld").click();
   wireClick("btnOpenTerr", openTerr);
   wireClick("btnOpenBld", openBld);
-  wireClick("btnOpenDeskPaper", () => document.getElementById("fileDeskPaper").click());
+  // Desk/reference preview import is via 图纸库; top-level buttons removed.
+  document.getElementById("matCount")?.addEventListener("click", () => {
+    openTerrainMaterialLedger().catch((error) => {
+      appAlert(error.message || String(error), { title: "材料清单" });
+    });
+  });
+  document.getElementById("matCount")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openTerrainMaterialLedger().catch((error) => {
+      appAlert(error.message || String(error), { title: "材料清单" });
+    });
+  });
+  wireClick("btnTerrainMaterials", () => {
+    openTerrainMaterialLedger().catch((error) => {
+      appAlert(error.message || String(error), { title: "材料清单" });
+    });
+  });
+  wireClick("btnPreviewBuildingMaterials", () => {
+    if (previewPiecePayload) window.MaterialLedger?.open(previewPiecePayload);
+    else {
+      openTerrainMaterialLedger().catch((error) => {
+        appAlert(error.message || String(error), { title: "材料清单" });
+      });
+    }
+  });
+  bindTerrainPaperLibrary();
   document.getElementById("fileTerr").onchange = (e) => {
     if (e.target.files[0]) importFile(e.target.files[0], "terrain");
     e.target.value = "";
@@ -5100,7 +5858,7 @@ function bind() {
   };
   wireClick("btnSaveTerr", exportTerrain);
   wireClick("btnSavePng", exportTerrainPng);
-  wireClick("btnSaveBld", exportBuild);
+  // Building export removed from UI; exportBuild remains for programmatic use.
   wireClick("btnImageTerrain", () => document.getElementById("fileImageTerrain").click());
   document.getElementById("fileImageTerrain").onchange = async (event) => {
     if (event.target.files[0]) {
@@ -5112,13 +5870,13 @@ function bind() {
     }
     event.target.value = "";
   };
-  document.getElementById("imageTerrainWidth").onchange = renderImageTerrainMapping;
-  document.getElementById("imageTerrainHeight").onchange = renderImageTerrainMapping;
+  document.getElementById("imageTerrainProjection").onchange = renderImageTerrainMapping;
   document.getElementById("imageTerrainColors").onchange = renderImageTerrainMapping;
   document.getElementById("imageTerrainFit").onchange = renderImageTerrainMapping;
   document.getElementById("imageTerrainAlpha").onchange = renderImageTerrainMapping;
+  document.getElementById("imageTerrainSkipBg").onchange = renderImageTerrainMapping;
   wireClick("btnApplyImageTerrain", applyImageTerrain);
-  wireClick("btnPlanOverlay", () => document.getElementById("filePlanOverlay").click());
+  // Reference image button removed; filePlanOverlay kept for future entry points.
   document.getElementById("filePlanOverlay").onchange = async (event) => {
     if (event.target.files[0]) {
       try {
@@ -5135,17 +5893,6 @@ function bind() {
   document.getElementById("planOverlayOpacity").oninput = (event) => {
     document.getElementById("planOverlayOpacityLabel").textContent = `${event.target.value}%`;
   };
-  wireClick("btnPreviewDuplicate", duplicateSelectedPreview);
-  wireClick("btnPreviewDelete", deleteSelectedPreview);
-  wireClick("btnPreviewLock", () => {
-    const entity = previewEntityById(state.selectedPreviewId);
-    if (!entity) return;
-    pushHist();
-    entity.locked = !entity.locked;
-    markDirty();
-    updatePreviewBuildingUi();
-    draw();
-  });
   document.getElementById("previewAspectLocked").onchange = (event) => {
     const entity = previewEntityById(state.selectedPreviewId);
     if (!entity || entity.sourceType !== "image") return;
@@ -5161,6 +5908,19 @@ function bind() {
     markDirty();
     draw();
   };
+  document.getElementById("previewKeepFoundation")?.addEventListener("change", (event) => {
+    const entity = previewEntityById(state.selectedPreviewId);
+    if (!entity || entity.sourceType !== "paper") return;
+    pushHist();
+    entity.keepFoundation = event.target.checked;
+    state.previewRuntime.delete(entity.id);
+    ensurePreviewRuntime(entity).catch((error) => console.warn(error));
+    markDirty();
+    draw();
+  });
+  document.getElementById("planOverlayKeepFoundation")?.addEventListener("change", () => {
+    renderPlacementPaperDraft().catch((error) => console.warn(error));
+  });
   const applyPreviewSize = (axis) => {
     const entity = previewEntityById(state.selectedPreviewId);
     if (!entity || entity.sourceType !== "image") return;
@@ -5202,18 +5962,17 @@ function bind() {
   });
   document.getElementById("showGrid").onchange = draw;
   document.getElementById("showBuild").onchange = draw;
-  document.getElementById("showPlanOverlay").onchange = draw;
   document.getElementById("showPlanFoundation")?.addEventListener("change", draw);
   document.querySelectorAll("#modeRow .tool").forEach((btn) => {
     btn.onclick = () => {
       setPaintMode(btn.dataset.mode || "brush");
-      if (window.MobileWorkspace?.modeForViewport().mobile) closeDrawers({ restoreFocus: true });
+      if (terrainPhoneChrome()) closeDrawers({ restoreFocus: true });
     };
   });
   document.querySelectorAll("#toolRow .tool").forEach((btn) => {
     btn.onclick = () => {
       setTool(btn.dataset.tool || "free");
-      if (window.MobileWorkspace?.modeForViewport().mobile) closeDrawers({ restoreFocus: true });
+      if (terrainPhoneChrome()) closeDrawers({ restoreFocus: true });
     };
   });
   document.querySelectorAll('input[name="shapeMode"]').forEach((el) => {
@@ -5270,6 +6029,7 @@ function bind() {
   window.addEventListener("pointercancel", (event) => onTerrainPointerUp(event, true), { passive: false });
   view.addEventListener("wheel", onWheel, { passive: false });
   window.addEventListener("keydown", onKey);
+  bindPreviewNudgePad();
   if (window.visualViewport) {
     visualViewport.addEventListener("resize", requestResize);
   }
@@ -5286,10 +6046,7 @@ function bind() {
     saveDraftLocal();
     if (state.dirty) saveDraft();
   });
-  wireDeskSwitchSave(async () => {
-    saveDraftLocal();
-    await saveDraft();
-  });
+  wireDeskSwitchSave(saveDraftForSwitch);
 
   const stage = mapHost || view.parentElement;
   stage.addEventListener("dragover", (e) => e.preventDefault());
@@ -5462,6 +6219,7 @@ function onTerrainPointerMove(event) {
     const anchor = worldToScreen(state.pointerGesture.worldX, state.pointerGesture.worldY);
     state.cam.x += screen.x - anchor.x;
     state.cam.y += screen.y - anchor.y;
+    liveZoom = true;
     draw();
     return;
   }
@@ -5490,8 +6248,10 @@ function onTerrainPointerUp(event, cancelled = false) {
   state.activePointers.delete(event.pointerId);
   if (state.pointerGesture?.type === "pinch") {
     state.pointerGesture = state.activePointers.size ? { type: "pinch-tail" } : null;
+    if (!state.activePointers.size) settlePinchZoom();
   } else if (state.pointerGesture?.type === "pinch-tail" && !state.activePointers.size) {
     state.pointerGesture = null;
+    settlePinchZoom();
   }
   if (!state.activePointers.size) {
     state.touching = false;
@@ -5520,38 +6280,22 @@ function onDown(e) {
   }
   if (e.button === 0) {
     if (state.portal.held) return;
-    if (state.layer === "build") {
+    if (state.paintMode !== "pan") {
       const previewHit = previewHitTest(x, y);
       if (previewHit) {
-        selectPreviewBuilding(previewHit.entity.id);
-        if (wantsErase(e)) {
+        selectPreviewBuilding(previewHit.entity.id, { reveal: false });
+        if (wantsErase(e) && previewHit.entity.id === state.selectedPreviewId) {
           deleteSelectedPreview();
           return;
         }
         if (previewHit.entity.locked) return;
-        pushHist();
-        const layout = previewHit.layout || previewEntityLayout(previewHit.entity);
-        state.previewInteraction = {
-          id: previewHit.entity.id,
-          mode: previewHit.part,
-          handle: previewHit.handle,
-          grabX: w.x - previewHit.entity.x,
-          grabY: w.y - previewHit.entity.y,
-          startX: x,
-          startY: y,
-          startWidth: Number(previewHit.entity.width) || layout?.image.width / state.cam.k || 1,
-          startHeight: Number(previewHit.entity.height) || layout?.image.height / state.cam.k || 1,
-          startAnchorX: Number(previewHit.entity.anchorX ?? 0.5),
-          startAnchorY: Number(previewHit.entity.anchorY ?? 1),
-          startRect: layout ? { ...layout.image } : null,
-          startDistance: layout ? Math.max(1, Math.hypot(x - layout.ground.x, y - layout.ground.y)) : 1,
-          changed: false,
-        };
+        beginPreviewInteraction(previewHit, x, y, w);
         return;
       }
       if (state.selectedPreviewId) {
         state.selectedPreviewId = null;
         updatePreviewBuildingUi();
+        draw();
       }
     }
     if (state.paintMode === "pan") {
@@ -5559,7 +6303,7 @@ function onDown(e) {
       state.panFrom = { x: e.clientX, y: e.clientY, cx: state.cam.x, cy: state.cam.y };
       return;
     }
-    if (state.layer === "build" && !wantsErase(e)) {
+    if (!wantsErase(e)) {
       const hit = hitBuilding(w.x, w.y);
       if (hit >= 0) {
         const building = state.buildings[hit];
@@ -5571,8 +6315,6 @@ function onDown(e) {
           grabY: w.y - building.y,
           saved: false,
         };
-        document.getElementById("itemId").value = building.item || 0;
-        document.getElementById("itemDir").value = building.dir || 0;
         draw();
         return;
       }
@@ -5616,6 +6358,9 @@ function onMove(e) {
   const w = screenToWorld(x, y);
   const coord = document.getElementById("coord");
   if (coord) coord.textContent = Math.round(w.x) + ", " + Math.round(w.y);
+  if (!state.previewInteraction && !state.dragging && !state.panning && !state.buildingDrag && !state.portal.held) {
+    syncTerrainCursor(x, y);
+  }
   if (state.previewInteraction) {
     const interaction = state.previewInteraction;
     const entity = previewEntityById(interaction.id);
@@ -5624,8 +6369,9 @@ function onMove(e) {
       return;
     }
     if (interaction.mode === "body") {
-      entity.x = Math.max(0, Math.min(worldExtent(), snap(w.x - interaction.grabX)));
-      entity.y = Math.max(0, Math.min(worldExtent(), snap(w.y - interaction.grabY)));
+      const pos = snapPreviewCenter(w.x - interaction.grabX, w.y - interaction.grabY, entity);
+      entity.x = pos.x;
+      entity.y = pos.y;
     } else if (interaction.mode === "resize") {
       const layout = previewEntityLayout(entity);
       if (entity.aspectLocked !== false && layout) {
@@ -5701,6 +6447,7 @@ function onUp(e) {
   state.buildingDrag = null;
   if (state.previewInteraction?.changed) markDirty();
   state.previewInteraction = null;
+  if (view) view.style.cursor = state.paintMode === "pan" ? "grab" : "";
   if (state.dragging && state.layer === "terrain" && isShapeTool(state.tool) && state.shapeDrag) {
     const d = state.shapeDrag;
     const cells = collectShapeCells(state.tool, d.u0, d.v0, d.u1, d.v1, {
@@ -5735,11 +6482,13 @@ function onWheel(e) {
   const after = worldToScreen(before.x, before.y);
   state.cam.x += x - after.x;
   state.cam.y += y - after.y;
+  markLiveZoom();
   draw();
 }
 
 function onKey(e) {
   if (typeof isAppDialogOpen === "function" && isAppDialogOpen()) return;
+  const typing = e.target && ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName);
   if (e.key === "Escape") {
     const modal = [...document.querySelectorAll(".modal:not([hidden])")].pop();
     if (modal) {
@@ -5749,13 +6498,26 @@ function onKey(e) {
       else showDlg(modal.id, false);
       return;
     }
-    if (document.querySelector(".rail.open")) {
+    if (!typing) {
+      if (state.previewInteraction) {
+        e.preventDefault();
+        state.previewInteraction = null;
+        draw();
+        return;
+      }
+      if (state.selectedPreviewId || state.selectedBld >= 0) {
+        e.preventDefault();
+        clearPreviewSelection();
+        return;
+      }
+    }
+    if (document.querySelector(".rail.open") || window.MobileWorkspace?.activeSheet?.()) {
       e.preventDefault();
       closeDrawers({ restoreFocus: true });
       return;
     }
   }
-  if (e.target && ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+  if (typing) return;
   if ((e.key === "z" || e.key === "Z") && (e.ctrlKey || e.metaKey) && e.shiftKey) {
     e.preventDefault();
     redo();
@@ -5772,11 +6534,6 @@ function onKey(e) {
     return;
   }
   if (e.key === "Escape") {
-    if (state.previewInteraction) {
-      state.previewInteraction = null;
-      draw();
-      return;
-    }
     if (state.shapeDrag) {
       state.shapeDrag = null;
       state.dragging = false;
@@ -5799,13 +6556,14 @@ function onKey(e) {
     if (entity && !entity.locked) {
       e.preventDefault();
       pushHist();
-      const step = e.shiftKey ? SNAP * 5 : SNAP;
-      if (e.key === "ArrowLeft") entity.x -= step;
-      if (e.key === "ArrowRight") entity.x += step;
-      if (e.key === "ArrowUp") entity.y -= step;
-      if (e.key === "ArrowDown") entity.y += step;
-      entity.x = Math.max(0, Math.min(worldExtent(), entity.x));
-      entity.y = Math.max(0, Math.min(worldExtent(), entity.y));
+      const cells = e.shiftKey ? 5 : 1;
+      const pos = snapPreviewCenter(
+        entity.x + (e.key === "ArrowLeft" ? -TILE_W * cells : e.key === "ArrowRight" ? TILE_W * cells : 0),
+        entity.y + (e.key === "ArrowUp" ? -SNAP * cells : e.key === "ArrowDown" ? SNAP * cells : 0),
+        entity
+      );
+      entity.x = pos.x;
+      entity.y = pos.y;
       markDirty();
       draw();
       return;
@@ -5958,6 +6716,8 @@ async function renderPlacementPaperDraft() {
       localPackKey: planOverlayDraft.localPackKey || "",
       coordinateSpace: planOverlayDraft.coordinateSpace || "paper",
       purpose: "terrain",
+      includeMaskGrass: false,
+      includeFloor: document.getElementById("planOverlayKeepFoundation")?.checked === true,
     });
     planOverlayDraft.baseNo = baseNo;
     planOverlayDraft.rendered = result;
@@ -5996,11 +6756,588 @@ async function openDeskBuildingCode(doc, fileName, options = {}) {
   document.getElementById("planOverlayWidth").disabled = true;
   document.getElementById("planOverlayHeight").disabled = true;
   document.getElementById("planOverlayAspectField").hidden = true;
+  document.getElementById("planOverlayFoundationField").hidden = false;
   document.getElementById("planOverlayOpacityField").hidden = true;
+  const keepFoundation = document.getElementById("planOverlayKeepFoundation");
+  if (keepFoundation) keepFoundation.checked = true;
   const title = document.querySelector("#dlgPlanOverlay .modal-cap span");
-  if (title) title.textContent = "放置设计建筑";
+  if (title) title.textContent = "导入设计桌图纸";
   showDlg("dlgPlanOverlay", true);
   await renderPlacementPaperDraft();
+}
+
+const terrainPaperLibrary = {
+  generation: 0,
+  loading: false,
+  query: "",
+  kindFilter: "all",
+  groupFilter: "all",
+  groups: [],
+  entries: [],
+  failed: 0,
+  skippedDup: 0,
+};
+
+function isTerrainPaperLibraryOpen() {
+  const panel = document.getElementById("paperLibrary");
+  return Boolean(panel && !panel.hidden);
+}
+
+function terrainLibraryAcceptsKind(kind) {
+  return kind === "desk" || kind === "terrain" || kind === "manor";
+}
+
+function paintTerrainLibraryThumb(canvas, entry) {
+  const width = 240;
+  const height = 150;
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = entry.kind === "terrain" ? "#2a4a6a" : "#315f39";
+  ctx.fillRect(0, 0, width, height);
+  if (entry.kind === "terrain") {
+    const stamps = entry.documentData?.stamps || [];
+    const size = Math.max(1, Number(entry.documentData?.size) || 1);
+    ctx.fillStyle = "rgba(238, 245, 234, 0.9)";
+    stamps.slice(0, 400).forEach((stamp) => {
+      const x = 10 + (Number(stamp.x) || 0) / size * (width - 20);
+      const y = 10 + (Number(stamp.y) || 0) / size * (height - 20);
+      ctx.fillRect(x, y, 3, 3);
+    });
+  }
+  ctx.fillStyle = "#eef5ea";
+  ctx.font = "13px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(PaperLibraryCore.kindLabel(entry.kind), width / 2, height / 2);
+}
+
+function terrainPaperMeta(documentData) {
+  if (documentData.kind === "terrain") {
+    return `${documentData.size || "?"} 格 · ${(documentData.stamps || []).length} 个地块`;
+  }
+  if (documentData.kind === "desk") {
+    return `${(documentData.records || []).filter((record) => Number(record.mat)).length} 件装修素材`;
+  }
+  return `${(documentData.records || []).length} 个庄园建筑点`;
+}
+
+function updateTerrainPaperLibraryStatus(message = "") {
+  const status = document.getElementById("paperBatchStatus");
+  if (!status) return;
+  if (message) {
+    status.textContent = message;
+    return;
+  }
+  const total = terrainPaperLibrary.entries.length;
+  const shown = [...(document.getElementById("paperPreviewGrid")?.children || [])].filter((card) => !card.hidden).length;
+  const notes = [];
+  if (terrainPaperLibrary.skippedDup) notes.push(`跳过 ${terrainPaperLibrary.skippedDup} 张重复`);
+  if (terrainPaperLibrary.failed) notes.push(`${terrainPaperLibrary.failed} 张无法读取`);
+  const skip = notes.length ? ` · ${notes.join(" · ")}` : "";
+  if (terrainPaperLibrary.loading) {
+    status.textContent = `正在载入… 已载入 ${total} 张${skip}`;
+    return;
+  }
+  if (!total) {
+    status.textContent = skip.replace(/^ · /, "") || "还没有图纸。导入文件夹或文件即可叠加。";
+    return;
+  }
+  const filtered = terrainPaperLibrary.query || terrainPaperLibrary.kindFilter !== "all" || terrainPaperLibrary.groupFilter !== "all";
+  status.textContent = `${total} 张图纸${filtered && shown !== total ? ` · 显示 ${shown} 张` : ""}${skip}`;
+}
+
+function applyTerrainPaperLibraryFilter() {
+  const query = (document.getElementById("paperBatchSearch")?.value || "").trim().toLowerCase();
+  terrainPaperLibrary.query = query;
+  const grid = document.getElementById("paperPreviewGrid");
+  if (!grid) return;
+  grid.querySelectorAll(".paper-preview-item").forEach((card) => {
+    const queryOk = !query || String(card.dataset.search || "").includes(query);
+    const meta = card.querySelector(".paper-preview-copy small")?.textContent || "";
+    const kind = PaperLibraryCore.resolvePaperKind({ kind: card.dataset.kind, meta });
+    const kindOk = PaperLibraryCore.kindMatchesFilter(kind, terrainPaperLibrary.kindFilter);
+    const groupOk = terrainPaperLibrary.groupFilter === "all" || String(card.dataset.group || "") === terrainPaperLibrary.groupFilter;
+    card.hidden = !(queryOk && kindOk && groupOk);
+  });
+  PaperLibraryCore.reorderPaperCards(
+    grid,
+    terrainPaperLibrary.entries,
+    PaperLibraryCore.loadPaperSort()
+  );
+  updateTerrainPaperLibraryStatus();
+}
+
+function fillTerrainPaperGroupSelect(select, value) {
+  if (!select) return;
+  const current = value == null ? select.value : value;
+  select.replaceChildren(new Option("未分组", ""));
+  terrainPaperLibrary.groups.forEach((group) => {
+    select.appendChild(new Option(group.name, group.id));
+  });
+  select.value = current || "";
+}
+
+function renderTerrainPaperGroupTabs() {
+  const host = document.getElementById("paperGroupTabs");
+  if (!host) return;
+  host.replaceChildren();
+  [{ id: "all", name: "全部分组" }, ...terrainPaperLibrary.groups].forEach((tab) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = tab.name;
+    const on = terrainPaperLibrary.groupFilter === tab.id;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", on ? "true" : "false");
+    button.onclick = () => {
+      terrainPaperLibrary.groupFilter = tab.id;
+      renderTerrainPaperGroupTabs();
+      applyTerrainPaperLibraryFilter();
+    };
+    host.appendChild(button);
+  });
+}
+
+function syncTerrainPaperLibraryEmpty() {
+  const empty = document.getElementById("paperLibraryEmpty");
+  const grid = document.getElementById("paperPreviewGrid");
+  const hasCards = terrainPaperLibrary.entries.length > 0 || terrainPaperLibrary.loading;
+  if (empty) empty.hidden = hasCards;
+  if (grid) grid.hidden = !terrainPaperLibrary.entries.length && !terrainPaperLibrary.loading;
+}
+
+function setTerrainPaperLibraryOpen(open) {
+  const panel = document.getElementById("paperLibrary");
+  if (!panel) return;
+  panel.hidden = !open;
+  document.getElementById("desk")?.classList.toggle("library-open", open);
+  window.MobileWorkspace?.setInert(document.querySelector(".workspace"), open);
+  window.MobileWorkspace?.setInert(document.querySelector(".topbar"), open);
+  window.MobileWorkspace?.setInert(document.getElementById("terrainMobileDock"), open);
+  syncPreviewNudgePad();
+  if (open) {
+    syncTerrainPaperLibraryEmpty();
+    applyTerrainPaperLibraryFilter();
+    updateTerrainPaperLibraryStatus();
+  }
+}
+
+async function persistTerrainPaperLibrary(uploads, replace) {
+  return PaperLibraryCore.persist(uploads, { replace: !!replace, groups: terrainPaperLibrary.groups });
+}
+
+function terrainSummaryPayload(entry) {
+  return {
+    id: entry.contentId,
+    name: entry.name,
+    kind: entry.kind,
+    group: entry.groupId || "",
+    count: entry.count || 0,
+    meta: entry.meta || "",
+  };
+}
+
+async function hydrateTerrainPaperEntry(entry) {
+  if (!entry) return entry;
+  if (entry.file && entry.documentData && !entry._stub) return entry;
+  if (entry._hydrate) return entry._hydrate;
+  const contentId = entry.contentId || entry.id;
+  entry._hydrate = (async () => {
+    const paper = await PaperLibraryCore.fetchPaper(contentId);
+    const { file, bytes } = PaperLibraryCore.fileFromPaper(paper);
+    const documentData = await PaperLibraryCore.parseFile(bytes.buffer);
+    entry.file = file;
+    entry.documentData = documentData;
+    entry._stub = false;
+    entry.kind = documentData.kind;
+    entry.meta = terrainPaperMeta(documentData);
+    const card = entry.card;
+    if (card) {
+      card.dataset.kind = entry.kind || "";
+      const meta = card.querySelector(".paper-preview-copy small");
+      if (meta) meta.textContent = entry.meta;
+      const apply = card.querySelector(".paper-preview-item-actions .btn");
+      if (apply) apply.textContent = applyLabelForPaperKind(entry.kind);
+    }
+    persistTerrainPaperLibrary([terrainSummaryPayload(entry)], false).catch((error) => console.warn(error));
+    return entry;
+  })();
+  try {
+    return await entry._hydrate;
+  } catch (error) {
+    entry._hydrate = null;
+    throw error;
+  }
+}
+
+async function uploadTerrainPaperThumb(entry, canvas) {
+  if (!entry?.contentId) return;
+  try {
+    const blob = canvas ? await PaperLibraryCore.canvasToJpegBlob(canvas) : null;
+    if (!blob) return;
+    if (await PaperLibraryCore.putThumb(entry.contentId, blob)) {
+      entry.hasThumb = true;
+      entry.thumbAt = Date.now();
+    }
+  } catch (error) {
+    console.warn("图纸缩略图同步失败", error);
+  }
+}
+
+async function fillMissingTerrainPaperThumb(entry) {
+  if (!entry?.thumbImg || entry.thumbReady) return;
+  if (entry.hasThumb) {
+    entry.thumbImg.src = PaperLibraryCore.thumbUrl(entry.contentId, entry.thumbAt || entry.savedAt);
+    entry.thumbReady = true;
+    return;
+  }
+  await hydrateTerrainPaperEntry(entry);
+  const canvas = document.createElement("canvas");
+  paintTerrainLibraryThumb(canvas, entry);
+  entry.thumbImg.src = canvas.toDataURL("image/jpeg", 0.72);
+  entry.thumbReady = true;
+  uploadTerrainPaperThumb(entry, canvas);
+}
+
+function bindTerrainPaperCardThumb(entry, loader) {
+  const img = entry?.thumbImg;
+  if (!img) return;
+  if (entry.hasThumb) {
+    img.src = PaperLibraryCore.thumbUrl(entry.contentId, entry.thumbAt || entry.savedAt);
+    img.addEventListener("error", () => {
+      if (entry.thumbReady) return;
+      entry.hasThumb = false;
+      loader?.watch(img, () => fillMissingTerrainPaperThumb(entry));
+    }, { once: true });
+    return;
+  }
+  loader?.watch(img, () => fillMissingTerrainPaperThumb(entry));
+}
+
+function showTerrainPaperLibraryIndex(papers) {
+  const grid = document.getElementById("paperPreviewGrid");
+  if (!grid) return;
+  terrainPaperLibrary.thumbLoader?.disconnect();
+  terrainPaperLibrary.generation += 1;
+  terrainPaperLibrary.loading = false;
+  terrainPaperLibrary.failed = 0;
+  terrainPaperLibrary.skippedDup = 0;
+  terrainPaperLibrary.entries = PaperLibraryCore.sortedPaperEntries(
+    papers.map((paper) => PaperLibraryCore.entryFromIndex(paper)),
+    PaperLibraryCore.loadPaperSort()
+  );
+  grid.replaceChildren();
+  const loader = PaperLibraryCore.createLazyLoader({ root: grid, concurrency: 2 });
+  terrainPaperLibrary.thumbLoader = loader;
+  terrainPaperLibrary.entries.forEach((entry) => {
+    grid.appendChild(renderTerrainPaperLibraryCard(entry, { paint: false }));
+    bindTerrainPaperCardThumb(entry, loader);
+  });
+  syncTerrainPaperLibraryEmpty();
+  applyTerrainPaperLibraryFilter();
+  updateTerrainPaperLibraryStatus();
+}
+
+async function assignTerrainPaperGroup(entry, groupId) {
+  entry.groupId = String(groupId || "");
+  const card = document.querySelector(`.paper-preview-item[data-id="${CSS.escape(String(entry.id))}"]`);
+  if (card) card.dataset.group = entry.groupId;
+  applyTerrainPaperLibraryFilter();
+  if (!entry.contentId) return;
+  try {
+    await persistTerrainPaperLibrary([{
+      id: entry.contentId,
+      name: entry.name,
+      kind: entry.kind,
+      group: entry.groupId,
+    }], false);
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function applyLabelForPaperKind(kind) {
+  if (kind === "terrain") return "导入地形";
+  if (kind === "desk") return "导入设计桌图纸";
+  return "导入建筑图纸";
+}
+
+function renderTerrainPaperLibraryCard(entry, { paint = true } = {}) {
+  const card = document.createElement("article");
+  card.className = "paper-preview-item";
+  card.dataset.search = entry.search;
+  card.dataset.id = String(entry.id);
+  card.dataset.kind = entry.kind || "";
+  card.dataset.group = entry.groupId || "";
+  const visual = document.createElement("button");
+  visual.type = "button";
+  visual.className = "paper-preview-visual";
+  visual.title = "应用到当前地形桌";
+  const img = document.createElement("img");
+  img.className = "paper-preview-thumb";
+  img.alt = "";
+  img.decoding = "async";
+  img.draggable = false;
+  const kindBadge = document.createElement("span");
+  kindBadge.className = "paper-kind-badge" + (entry.kind === "terrain" ? " is-terrain" : entry.kind === "manor" ? " is-manor" : "");
+  kindBadge.textContent = PaperLibraryCore.kindLabel(entry.kind);
+  const badge = document.createElement("span");
+  badge.className = "paper-preview-badge";
+  badge.textContent = PaperLibraryCore.kindLabel(entry.kind);
+  visual.append(img, kindBadge, badge);
+  visual.onclick = () => applyTerrainLibraryPaper(entry);
+  const copy = document.createElement("div");
+  copy.className = "paper-preview-copy";
+  const name = document.createElement("strong");
+  name.textContent = entry.name;
+  name.title = entry.name;
+  const meta = document.createElement("small");
+  meta.textContent = entry.meta;
+  const group = document.createElement("select");
+  group.className = "input paper-card-group";
+  fillTerrainPaperGroupSelect(group, entry.groupId || "");
+  group.addEventListener("click", (event) => event.stopPropagation());
+  group.addEventListener("change", () => {
+    assignTerrainPaperGroup(entry, group.value).catch((error) => console.warn(error));
+  });
+  copy.append(name, meta, group);
+  const actions = document.createElement("div");
+  actions.className = "paper-preview-item-actions";
+  const apply = document.createElement("button");
+  apply.type = "button";
+  apply.className = "btn btn-primary";
+  apply.textContent = applyLabelForPaperKind(entry.kind);
+  apply.onclick = () => applyTerrainLibraryPaper(entry);
+  actions.appendChild(apply);
+  card.append(visual, copy, actions);
+  entry.card = card;
+  entry.thumbImg = img;
+  if (paint && entry.documentData) {
+    const canvas = document.createElement("canvas");
+    paintTerrainLibraryThumb(canvas, entry);
+    img.src = canvas.toDataURL("image/jpeg", 0.72);
+    entry.thumbReady = true;
+    uploadTerrainPaperThumb(entry, canvas);
+  }
+  return card;
+}
+
+async function applyTerrainLibraryPaper(entry) {
+  try {
+    await hydrateTerrainPaperEntry(entry);
+  } catch (error) {
+    console.warn(error);
+    return;
+  }
+  if (!entry?.file) return;
+  setTerrainPaperLibraryOpen(false);
+  const expect = entry.kind === "terrain" ? "terrain" : entry.kind === "desk" ? "desk" : "build";
+  await importFile(entry.file, expect);
+}
+
+async function loadTerrainPaperLibraryFiles(candidates, { persist = false, append = true } = {}) {
+  const grid = document.getElementById("paperPreviewGrid");
+  if (!grid) return;
+  terrainPaperLibrary.generation += 1;
+  const gen = terrainPaperLibrary.generation;
+  terrainPaperLibrary.loading = true;
+  terrainPaperLibrary.failed = 0;
+  terrainPaperLibrary.skippedDup = 0;
+  if (!append) {
+    terrainPaperLibrary.thumbLoader?.disconnect();
+    terrainPaperLibrary.entries = [];
+    grid.replaceChildren();
+  }
+  setTerrainPaperLibraryOpen(true);
+  syncTerrainPaperLibraryEmpty();
+  if (!candidates.length) {
+    terrainPaperLibrary.loading = false;
+    updateTerrainPaperLibraryStatus("所选文件里没有 .txt 图纸。");
+    return;
+  }
+  const knownIds = new Set(terrainPaperLibrary.entries.map((entry) => entry.contentId).filter(Boolean));
+  const uploads = [];
+  for (const [index, file] of candidates.entries()) {
+    try {
+      const relative = String(file.webkitRelativePath || file.name).replace(/\\/g, "/");
+      const meta = file.paperMeta || {};
+      const buffer = meta.data ? PaperLibraryCore.base64ToBytes(meta.data).buffer : await file.arrayBuffer();
+      if (gen !== terrainPaperLibrary.generation) return;
+      const bytes = new Uint8Array(buffer);
+      const data = meta.data || PaperLibraryCore.bytesToBase64(bytes);
+      const contentId = meta.id || await PaperLibraryCore.contentIdFromBase64(data);
+      if (knownIds.has(contentId)) {
+        terrainPaperLibrary.skippedDup += 1;
+        continue;
+      }
+      let documentData;
+      if (!persist && (meta.kind === "desk" || meta.kind === "terrain" || meta.kind === "manor")) {
+        documentData = { kind: meta.kind, records: [], stamps: [], size: "" };
+      } else {
+        documentData = await PaperLibraryCore.parseFile(bytes.buffer);
+      }
+      if (persist && !terrainLibraryAcceptsKind(documentData.kind)) continue;
+      knownIds.add(contentId);
+      const entry = {
+        id: `${gen}-${index}`,
+        contentId,
+        file,
+        documentData,
+        name: relative,
+        search: relative.toLowerCase(),
+        kind: documentData.kind,
+        groupId: meta.group || "",
+        meta: terrainPaperMeta(documentData),
+        savedAt: Date.now(),
+      };
+      if (persist) {
+        uploads.push({
+          id: contentId,
+          name: relative,
+          data,
+          kind: entry.kind,
+          group: entry.groupId || "",
+          meta: entry.meta || "",
+        });
+      }
+      terrainPaperLibrary.entries.push(entry);
+      grid.appendChild(renderTerrainPaperLibraryCard(entry));
+      grid.hidden = false;
+      const empty = document.getElementById("paperLibraryEmpty");
+      if (empty) empty.hidden = true;
+    } catch (error) {
+      if (gen !== terrainPaperLibrary.generation) return;
+      terrainPaperLibrary.failed += 1;
+      console.warn(`图纸预览失败：${file.name}`, error);
+    }
+    applyTerrainPaperLibraryFilter();
+    updateTerrainPaperLibraryStatus(`正在载入 ${index + 1} / ${candidates.length} 张图纸`);
+  }
+  if (gen !== terrainPaperLibrary.generation) return;
+  terrainPaperLibrary.loading = false;
+  syncTerrainPaperLibraryEmpty();
+  updateTerrainPaperLibraryStatus();
+  if (persist && (uploads.length || terrainPaperLibrary.groups.length)) {
+    try {
+      await persistTerrainPaperLibrary(uploads, false);
+      if (gen === terrainPaperLibrary.generation) updateTerrainPaperLibraryStatus();
+    } catch (error) {
+      console.warn(error);
+      if (gen === terrainPaperLibrary.generation) {
+        updateTerrainPaperLibraryStatus("图纸已载入，但同步失败，可稍后再导入一次。");
+      }
+    }
+  }
+}
+
+async function openTerrainPaperLibrary() {
+  setTerrainPaperLibraryOpen(true);
+  updateTerrainPaperLibraryStatus("正在读取图纸库…");
+  let papers = [];
+  try {
+    const data = await PaperLibraryCore.fetchLibrary();
+    papers = data.papers;
+    terrainPaperLibrary.groups = data.groups || [];
+    renderTerrainPaperGroupTabs();
+  } catch (error) {
+    console.warn("读取图纸库失败", error);
+  }
+  if (terrainPaperLibrary.entries.length || terrainPaperLibrary.loading) return;
+  if (!papers.length) {
+    updateTerrainPaperLibraryStatus("还没有图纸。导入文件夹或文件即可叠加。");
+    return;
+  }
+  showTerrainPaperLibraryIndex(papers);
+}
+
+function toggleTerrainPaperLibrary() {
+  if (isTerrainPaperLibraryOpen()) {
+    setTerrainPaperLibraryOpen(false);
+    return;
+  }
+  if (terrainPaperLibrary.entries.length || terrainPaperLibrary.loading) {
+    setTerrainPaperLibraryOpen(true);
+    return;
+  }
+  openTerrainPaperLibrary().catch((error) => console.warn(error));
+}
+
+async function importTerrainPaperLibraryFiles(fileList) {
+  const candidates = [...fileList].filter((file) => /\.txt$/i.test(file.name));
+  await loadTerrainPaperLibraryFiles(candidates, { persist: true, append: true });
+}
+
+function bindTerrainPaperLibrary() {
+  document.getElementById("btnPaperLibrary")?.addEventListener("click", () => toggleTerrainPaperLibrary());
+  document.getElementById("btnPaperLibraryClose")?.addEventListener("click", () => setTerrainPaperLibraryOpen(false));
+  document.getElementById("btnPaperLibraryFolder")?.addEventListener("click", () => {
+    document.getElementById("paperLibraryFolder")?.click();
+  });
+  document.getElementById("btnPaperLibraryPick")?.addEventListener("click", () => {
+    document.getElementById("paperLibraryFolder")?.click();
+  });
+  document.getElementById("btnPaperLibraryFiles")?.addEventListener("click", () => {
+    document.getElementById("paperLibraryFilePick")?.click();
+  });
+  document.getElementById("paperLibraryFolder")?.addEventListener("change", async (event) => {
+    await importTerrainPaperLibraryFiles(event.target.files || []);
+    event.target.value = "";
+  });
+  document.getElementById("paperLibraryFilePick")?.addEventListener("change", async (event) => {
+    await importTerrainPaperLibraryFiles(event.target.files || []);
+    event.target.value = "";
+  });
+  document.getElementById("paperBatchSearch")?.addEventListener("input", () => applyTerrainPaperLibraryFilter());
+  PaperLibraryCore.bindPaperSortSelect(() => applyTerrainPaperLibraryFilter());
+  document.querySelectorAll("[data-paper-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      terrainPaperLibrary.kindFilter = button.dataset.paperKind || "all";
+      document.querySelectorAll("[data-paper-kind]").forEach((tab) => {
+        const on = tab.dataset.paperKind === terrainPaperLibrary.kindFilter;
+        tab.classList.toggle("on", on);
+        tab.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      applyTerrainPaperLibraryFilter();
+    });
+  });
+  document.getElementById("btnPaperLibraryNewGroup")?.addEventListener("click", async () => {
+    const name = await appPrompt("给这组图纸起个名字。", {
+      title: "新建分组",
+      fieldLabel: "分组名称",
+      placeholder: "例如 咖啡馆",
+    });
+    if (name == null) return;
+    const trimmed = String(name).trim().slice(0, 40);
+    if (!trimmed) return;
+    terrainPaperLibrary.groups = [...terrainPaperLibrary.groups, { id: `g${Date.now().toString(36)}`, name: trimmed }];
+    try {
+      await persistTerrainPaperLibrary([], false);
+    } catch (error) {
+      console.warn(error);
+    }
+    renderTerrainPaperGroupTabs();
+    document.querySelectorAll(".paper-card-group").forEach((select) => fillTerrainPaperGroupSelect(select));
+  });
+  document.getElementById("btnPaperLibraryClear")?.addEventListener("click", async () => {
+    const ok = await appConfirm("清空图纸库里的全部图纸？", {
+      title: "清空图纸库",
+      okLabel: "清空",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await PaperLibraryCore.clearLibrary();
+    } catch (error) {
+      console.warn(error);
+    }
+    terrainPaperLibrary.generation += 1;
+    terrainPaperLibrary.loading = false;
+    terrainPaperLibrary.entries = [];
+    terrainPaperLibrary.failed = 0;
+    terrainPaperLibrary.skippedDup = 0;
+    document.getElementById("paperPreviewGrid")?.replaceChildren();
+    syncTerrainPaperLibraryEmpty();
+    updateTerrainPaperLibraryStatus("已清空图纸库。");
+  });
 }
 
 async function importFile(file, expect) {
@@ -6048,32 +7385,113 @@ function pixelTerrainBrushes() {
   );
 }
 
-function sampleImageTerrain() {
-  if (!imageTerrainDraft?.image) return null;
-  const width = Math.max(1, Math.min(96, Number(document.getElementById("imageTerrainWidth")?.value) || 1));
-  const height = Math.max(1, Math.min(96, Number(document.getElementById("imageTerrainHeight")?.value) || 1));
+const TERRAIN_TYPE_RGB = {
+  草地: [82, 140, 58],
+  土地: [158, 114, 58],
+  砖地: [132, 132, 136],
+  水面: [58, 128, 172],
+  花丛: [188, 78, 108],
+  雪地: [234, 238, 242],
+  矿场: [178, 150, 72],
+};
+
+function listImageTerrainCells() {
+  const n = worldExtent();
+  const cells = [];
+  const maxRow = Math.floor(n / 16);
+  for (let row = 0; row <= maxRow; row++) {
+    const odd = row & 1;
+    const x0 = odd ? 32 : 0;
+    const maxCol = Math.floor((n - x0) / 64);
+    for (let col = 0; col <= maxCol; col++) {
+      const cx = 64 * col + x0;
+      const cy = 16 * row;
+      if (cx < 0 || cy < 0 || cx > n || cy > n) continue;
+      const logical = nativePointToLogical(cx, cy);
+      cells.push({ u: logical.u, v: logical.v, cx, cy });
+    }
+  }
+  return cells;
+}
+
+function imageTerrainUvBounds(cells) {
+  let minU = Infinity;
+  let maxU = -Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+  cells.forEach((cell) => {
+    minU = Math.min(minU, cell.u);
+    maxU = Math.max(maxU, cell.u);
+    minV = Math.min(minV, cell.v);
+    maxV = Math.max(maxV, cell.v);
+  });
+  return { minU, maxU, minV, maxV };
+}
+
+function imageTerrainFitRect(imageW, imageH, fit) {
+  if (fit !== "cover" && fit !== "contain") return { x: 0, y: 0, w: 1, h: 1 };
+  const scale =
+    fit === "cover"
+      ? Math.max(1 / Math.max(1, imageW), 1 / Math.max(1, imageH))
+      : Math.min(1 / Math.max(1, imageW), 1 / Math.max(1, imageH));
+  const w = imageW * scale;
+  const h = imageH * scale;
+  return { x: (1 - w) / 2, y: (1 - h) / 2, w, h };
+}
+
+function imageTerrainSourcePixels(image) {
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight, 1));
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
   const scratch = document.createElement("canvas");
   scratch.width = width;
   scratch.height = height;
   const g = scratch.getContext("2d", { willReadFrequently: true });
-  g.clearRect(0, 0, width, height);
   g.imageSmoothingEnabled = true;
   if (g.imageSmoothingQuality) g.imageSmoothingQuality = "high";
-  const image = imageTerrainDraft.image;
-  const fit = document.getElementById("imageTerrainFit")?.value || "contain";
-  if (fit === "stretch") {
-    g.drawImage(image, 0, 0, width, height);
-  } else {
-    const scale =
-      fit === "cover"
-        ? Math.max(width / image.naturalWidth, height / image.naturalHeight)
-        : Math.min(width / image.naturalWidth, height / image.naturalHeight);
-    const drawWidth = image.naturalWidth * scale;
-    const drawHeight = image.naturalHeight * scale;
-    g.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  g.drawImage(image, 0, 0, width, height);
+  return { width, height, pixels: g.getImageData(0, 0, width, height).data };
+}
+
+function sampleImageBox(src, x, y, radius, alphaThreshold) {
+  if (!src?.pixels) return null;
+  const x0 = Math.max(0, Math.floor(x - radius));
+  const y0 = Math.max(0, Math.floor(y - radius));
+  const x1 = Math.min(src.width - 1, Math.ceil(x + radius));
+  const y1 = Math.min(src.height - 1, Math.ceil(y + radius));
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  for (let py = y0; py <= y1; py++) {
+    for (let px = x0; px <= x1; px++) {
+      const offset = (py * src.width + px) * 4;
+      if (src.pixels[offset + 3] < alphaThreshold) continue;
+      r += src.pixels[offset];
+      g += src.pixels[offset + 1];
+      b += src.pixels[offset + 2];
+      count += 1;
+    }
   }
-  const pixels = g.getImageData(0, 0, width, height).data;
-  return { width, height, pixels, scratch };
+  if (!count) return null;
+  return [Math.round(r / count), Math.round(g / count), Math.round(b / count)];
+}
+
+function cellToImageXY(cell, projection, fit, src, mapN, uvBounds) {
+  const nx =
+    projection === "iso"
+      ? (cell.u - uvBounds.minU) / Math.max(1, uvBounds.maxU - uvBounds.minU)
+      : cell.cx / Math.max(1, mapN);
+  const ny =
+    projection === "iso"
+      ? (cell.v - uvBounds.minV) / Math.max(1, uvBounds.maxV - uvBounds.minV)
+      : cell.cy / Math.max(1, mapN);
+  const rect = imageTerrainFitRect(src.width, src.height, fit);
+  const lx = (nx - rect.x) / Math.max(1e-6, rect.w);
+  const ly = (ny - rect.y) / Math.max(1e-6, rect.h);
+  if (lx < 0 || ly < 0 || lx > 1 || ly > 1) return null;
+  return { x: lx * (src.width - 1), y: ly * (src.height - 1) };
 }
 
 function rgbToLab(r, g, b) {
@@ -6102,20 +7520,14 @@ function labDistance(a, b) {
   return dl * dl + da * da + db * db;
 }
 
-function clusteredImagePalette(pixels, requested, alphaThreshold) {
-  const buckets = new Map();
-  for (let i = 0; i < pixels.length; i += 4) {
-    if (pixels[i + 3] < alphaThreshold) continue;
-    const rgb = [pixels[i], pixels[i + 1], pixels[i + 2]];
-    const key = rgb.join(",");
-    let entry = buckets.get(key);
-    if (!entry) {
-      entry = { rgb, lab: rgbToLab(...rgb), count: 0 };
-      buckets.set(key, entry);
-    }
-    entry.count += 1;
-  }
-  const samples = [...buckets.values()];
+function rgbDistance(a, b) {
+  const dr = a[0] - b[0];
+  const dg = a[1] - b[1];
+  const db = a[2] - b[2];
+  return dr * dr + dg * dg + db * db;
+}
+
+function clusteredRgbPalette(samples, requested) {
   if (!samples.length) return [];
   const count = Math.max(1, Math.min(requested, samples.length));
   const centers = [samples.reduce((best, row) => (row.count > best.count ? row : best), samples[0])];
@@ -6130,6 +7542,7 @@ function clusteredImagePalette(pixels, requested, alphaThreshold) {
         pick = sample;
       }
     });
+    if (!pick) break;
     centers.push(pick);
   }
   let palette = centers.map((center) => ({ rgb: center.rgb.slice(), lab: center.lab.slice(), count: 0 }));
@@ -6161,71 +7574,238 @@ function clusteredImagePalette(pixels, requested, alphaThreshold) {
   return palette.sort((a, b) => b.count - a.count);
 }
 
-function imageTerrainLogicalPoint(px, py, width, height, center, projection) {
-  const imageX = px - Math.floor(width / 2);
-  const imageY = py - Math.floor(height / 2);
-  if (projection === "iso") {
-    return { u: center.u + imageX, v: center.v + imageY };
+function clusteredImagePalette(pixels, requested, alphaThreshold) {
+  const buckets = new Map();
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i + 3] < alphaThreshold) continue;
+    const rgb = [pixels[i] & ~3, pixels[i + 1] & ~3, pixels[i + 2] & ~3];
+    const key = rgb.join(",");
+    let entry = buckets.get(key);
+    if (!entry) {
+      entry = { rgb, lab: rgbToLab(...rgb), count: 0 };
+      buckets.set(key, entry);
+    }
+    entry.count += 1;
   }
-  const anchor = logicalToNative(center.u, center.v);
-  return uvFromColRow(anchor.col + imageX, anchor.row + imageY);
+  return clusteredRgbPalette([...buckets.values()], requested);
 }
 
-function suggestedPixelBrushIndex(rgb, brushes) {
+function imageTerrainBackgroundRgb(pixels, width, height, alphaThreshold) {
+  if (!pixels?.length || width < 1 || height < 1) return null;
+  const corners = [
+    [0, 0],
+    [width - 1, 0],
+    [0, height - 1],
+    [width - 1, height - 1],
+  ];
+  const samples = [];
+  corners.forEach(([x, y]) => {
+    const offset = (y * width + x) * 4;
+    if (pixels[offset + 3] < alphaThreshold) return;
+    samples.push([pixels[offset], pixels[offset + 1], pixels[offset + 2]]);
+  });
+  if (samples.length < 2) return null;
+  const mean = [0, 0, 0];
+  samples.forEach((rgb) => {
+    mean[0] += rgb[0];
+    mean[1] += rgb[1];
+    mean[2] += rgb[2];
+  });
+  mean[0] = Math.round(mean[0] / samples.length);
+  mean[1] = Math.round(mean[1] / samples.length);
+  mean[2] = Math.round(mean[2] / samples.length);
+  const spread = Math.max(...samples.map((rgb) => rgbDistance(rgb, mean)));
+  if (spread > 48 * 48) return null;
+  return mean;
+}
+
+function suggestedPixelBrushIndex(rgb, brushes, backgroundRgb = null) {
+  if (backgroundRgb && rgbDistance(rgb, backgroundRgb) <= 28 * 28) return -1;
   const [r, g, b] = rgb;
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
-  let type = "土地";
-  if (max - min < 34) type = max > 205 ? "雪地" : "砖地";
-  else if (b > r * 1.15 && b > g * 1.08) type = "水面";
-  else if (g > r * 1.08 && g > b * 1.06) type = "草地";
-  else if (r > 170 && b > 110 && g < r * 0.88) type = "花丛";
-  else if (r > 190 && g > 160 && b < 130) type = "土地";
-  const index = brushes.findIndex((brush) => brushPaletteType(brush) === type);
+  const sat = max - min;
+  let type = null;
+  if (sat < 28 && max > 222) type = "雪地";
+  else if (b > r * 1.18 && b > g * 1.1 && b > 90) type = "水面";
+  else {
+    const lab = rgbToLab(r, g, b);
+    let best = Infinity;
+    KIND_ORDER.forEach((name) => {
+      const canon = TERRAIN_TYPE_RGB[name];
+      if (!canon) return;
+      const distance = labDistance(lab, rgbToLab(...canon));
+      if (distance < best) {
+        best = distance;
+        type = name;
+      }
+    });
+  }
+  const index = brushes.findIndex((brush) => brushPaletteType(brush) === (type || "土地"));
   return Math.max(0, index);
 }
 
-function renderImageTerrainMapping() {
-  const sampled = sampleImageTerrain();
-  const preview = document.getElementById("imageTerrainPreview");
-  const mapping = document.getElementById("imageColorMap");
-  if (!sampled || !preview || !mapping) return;
+function smoothImageTerrainIndices(cells, indices) {
+  const lookup = new Map();
+  cells.forEach((cell, index) => lookup.set(cellKey(cell.u, cell.v), index));
+  const dirs = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+    [1, -1],
+    [-1, 1],
+  ];
+  let current = indices.slice();
+  for (let pass = 0; pass < 2; pass++) {
+    const next = current.slice();
+    cells.forEach((cell, index) => {
+      const counts = new Map();
+      const bump = (value, weight) => {
+        if (value == null || value < 0) return;
+        counts.set(value, (counts.get(value) || 0) + weight);
+      };
+      bump(current[index], 2);
+      dirs.forEach(([du, dv]) => {
+        const neighbor = lookup.get(cellKey(cell.u + du, cell.v + dv));
+        if (neighbor == null) return;
+        bump(current[neighbor], 1);
+      });
+      if (current[index] < 0) {
+        let best = -1;
+        let n = 2;
+        counts.forEach((weight, value) => {
+          if (weight > n) {
+            n = weight;
+            best = value;
+          }
+        });
+        if (best >= 0) next[index] = best;
+        return;
+      }
+      let best = current[index];
+      let n = -1;
+      counts.forEach((weight, value) => {
+        if (weight > n) {
+          n = weight;
+          best = value;
+        }
+      });
+      next[index] = best;
+    });
+    current = next;
+  }
+  return current;
+}
+
+function collectImageTerrainCells() {
+  if (!imageTerrainDraft?.image) return null;
+  if (!imageTerrainDraft.source) {
+    imageTerrainDraft.source = imageTerrainSourcePixels(imageTerrainDraft.image);
+  }
+  const src = imageTerrainDraft.source;
+  const cells = listImageTerrainCells();
+  if (!cells.length) return null;
+  const mapN = worldExtent();
+  const projection = document.getElementById("imageTerrainProjection")?.value || "front";
+  const fit = document.getElementById("imageTerrainFit")?.value || "stretch";
   const alphaThreshold = Math.max(
     0,
     Math.min(255, Number(document.getElementById("imageTerrainAlpha")?.value) || 0)
   );
+  const uvBounds = imageTerrainUvBounds(cells);
+  const radius = Math.max(
+    1,
+    Math.round(0.4 * Math.min(src.width, src.height) / Math.max(8, Math.sqrt(cells.length)))
+  );
+  const sampled = [];
+  cells.forEach((cell) => {
+    const point = cellToImageXY(cell, projection, fit, src, mapN, uvBounds);
+    if (!point) {
+      sampled.push({ ...cell, rgb: null });
+      return;
+    }
+    sampled.push({
+      ...cell,
+      rgb: sampleImageBox(src, point.x, point.y, radius, alphaThreshold),
+    });
+  });
+  return { cells: sampled, src, mapN, projection, fit, alphaThreshold, uvBounds };
+}
+
+function renderImageTerrainMapping() {
+  const collected = collectImageTerrainCells();
+  const preview = document.getElementById("imageTerrainPreview");
+  const mapping = document.getElementById("imageColorMap");
+  const status = document.getElementById("imageTerrainStatus");
+  if (!collected || !preview || !mapping) return;
   const colorCount = Math.max(
     2,
-    Math.min(16, Number(document.getElementById("imageTerrainColors")?.value) || 8)
+    Math.min(16, Number(document.getElementById("imageTerrainColors")?.value) || 6)
   );
-  const palette = clusteredImagePalette(sampled.pixels, colorCount, alphaThreshold);
-  const previewPixels = new Uint8ClampedArray(sampled.pixels);
-  for (let i = 0; i < previewPixels.length; i += 4) {
-    if (previewPixels[i + 3] < alphaThreshold || !palette.length) continue;
-    const index = nearestImagePaletteIndex(
-      previewPixels[i],
-      previewPixels[i + 1],
-      previewPixels[i + 2],
-      palette
+  const skipBg = document.getElementById("imageTerrainSkipBg")?.checked === true;
+  const buckets = new Map();
+  collected.cells.forEach((cell) => {
+    if (!cell.rgb) return;
+    const rgb = [cell.rgb[0] & ~3, cell.rgb[1] & ~3, cell.rgb[2] & ~3];
+    const key = rgb.join(",");
+    let entry = buckets.get(key);
+    if (!entry) {
+      entry = { rgb, lab: rgbToLab(...rgb), count: 0 };
+      buckets.set(key, entry);
+    }
+    entry.count += 1;
+  });
+  const palette = clusteredRgbPalette([...buckets.values()], colorCount);
+  const src = collected.src;
+  const backgroundRgb = skipBg
+    ? imageTerrainBackgroundRgb(src.pixels, src.width, src.height, collected.alphaThreshold)
+    : null;
+  let indices = collected.cells.map((cell) => {
+    if (!cell.rgb || !palette.length) return -1;
+    if (backgroundRgb && rgbDistance(cell.rgb, backgroundRgb) <= 28 * 28) return -1;
+    return nearestImagePaletteIndex(cell.rgb[0], cell.rgb[1], cell.rgb[2], palette);
+  });
+  indices = smoothImageTerrainIndices(collected.cells, indices);
+  palette.forEach((entry) => {
+    entry.count = 0;
+  });
+  let writable = 0;
+  indices.forEach((index) => {
+    if (index < 0 || !palette[index]) return;
+    palette[index].count += 1;
+    writable += 1;
+  });
+  const size = 288;
+  preview.width = size;
+  preview.height = size;
+  const g = preview.getContext("2d");
+  g.clearRect(0, 0, size, size);
+  g.fillStyle = "#edf3ea";
+  g.fillRect(0, 0, size, size);
+  const mapN = collected.mapN;
+  const cellW = Math.max(2, Math.ceil(size / Math.max(1, mapN / 32)));
+  const cellH = Math.max(2, Math.round(cellW * 0.55));
+  collected.cells.forEach((cell, index) => {
+    const paletteIndex = indices[index];
+    if (paletteIndex < 0 || !palette[paletteIndex]) return;
+    g.fillStyle = `rgb(${palette[paletteIndex].rgb.join(",")})`;
+    g.fillRect(
+      Math.round((cell.cx / Math.max(1, mapN)) * size),
+      Math.round((cell.cy / Math.max(1, mapN)) * size),
+      cellW,
+      cellH
     );
-    previewPixels[i] = palette[index].rgb[0];
-    previewPixels[i + 1] = palette[index].rgb[1];
-    previewPixels[i + 2] = palette[index].rgb[2];
-  }
-  preview.width = sampled.width;
-  preview.height = sampled.height;
-  preview.getContext("2d").putImageData(
-    new ImageData(previewPixels, sampled.width, sampled.height),
-    0,
-    0
-  );
+  });
   const brushes = pixelTerrainBrushes();
-  imageTerrainDraft.sampled = sampled;
+  imageTerrainDraft.sampled = { cells: collected.cells, indices };
   imageTerrainDraft.palette = palette;
+  imageTerrainDraft.backgroundRgb = backgroundRgb;
   mapping.replaceChildren();
   palette.forEach((entry, paletteIndex) => {
     const row = document.createElement("label");
     row.className = "image-color-row";
+    row.setAttribute("role", "listitem");
     const swatch = document.createElement("span");
     swatch.className = "image-color-swatch";
     swatch.style.background = `rgb(${entry.rgb.join(",")})`;
@@ -6242,12 +7822,17 @@ function renderImageTerrainMapping() {
       option.textContent = `${brushPaletteType(brush)} · ${brushDisplayName(brush)}`;
       select.appendChild(option);
     });
-    select.value = String(suggestedPixelBrushIndex(entry.rgb, brushes));
+    select.value = String(suggestedPixelBrushIndex(entry.rgb, brushes, backgroundRgb));
     const count = document.createElement("small");
-    count.textContent = `${entry.count} 像素`;
+    count.textContent = `${entry.count} 格`;
     row.append(swatch, select, count);
     mapping.appendChild(row);
   });
+  if (status) {
+    status.textContent = writable
+      ? `铺满当前地图 ${mapN}×${mapN} · ${writable} / ${collected.cells.length} 格`
+      : "当前设置下没有可写入的格子，试试关掉跳过背景，或改用拉伸铺满。";
+  }
 }
 
 function nearestImagePaletteIndex(r, g, b, palette) {
@@ -6273,15 +7858,17 @@ async function openImageTerrain(file) {
       next.onerror = () => reject(new Error("图片读取失败"));
       next.src = url;
     });
-    imageTerrainDraft = { image, name: file.name, sampled: null, palette: [] };
-    const maxCells = Math.max(1, Math.min(96, Math.floor(state.mapSize / SNAP)));
-    const scale = Math.min(1, maxCells / Math.max(image.naturalWidth, image.naturalHeight));
-    document.getElementById("imageTerrainWidth").value = String(
-      Math.max(1, Math.round(image.naturalWidth * scale))
-    );
-    document.getElementById("imageTerrainHeight").value = String(
-      Math.max(1, Math.round(image.naturalHeight * scale))
-    );
+    imageTerrainDraft = { image, name: file.name, sampled: null, palette: [], backgroundRgb: null, source: null };
+    const fit = document.getElementById("imageTerrainFit");
+    if (fit) fit.value = "stretch";
+    const projection = document.getElementById("imageTerrainProjection");
+    if (projection) projection.value = "front";
+    const colors = document.getElementById("imageTerrainColors");
+    if (colors) colors.value = "6";
+    const replace = document.getElementById("imageTerrainReplace");
+    if (replace) replace.checked = true;
+    const skipBg = document.getElementById("imageTerrainSkipBg");
+    if (skipBg) skipBg.checked = false;
     renderImageTerrainMapping();
     showDlg("dlgImageTerrain", true);
   } finally {
@@ -6291,36 +7878,26 @@ async function openImageTerrain(file) {
 
 function applyImageTerrain() {
   const draft = imageTerrainDraft;
-  if (!draft?.sampled || !draft.palette.length) return;
+  if (!draft?.sampled?.cells || !draft.palette.length) return;
   const brushes = pixelTerrainBrushes();
-  const chosen = [...document.querySelectorAll("#imageColorMap select")].map(
-    (select) => brushes[Number(select.value) || 0]
-  );
-  const { width, height, pixels } = draft.sampled;
-  const center = nativePointToLogical(state.mapSize / 2, state.mapSize / 2);
-  const projection = document.getElementById("imageTerrainProjection")?.value || "front";
-  const alphaThreshold = Math.max(
-    0,
-    Math.min(255, Number(document.getElementById("imageTerrainAlpha")?.value) || 0)
-  );
+  const chosen = [...document.querySelectorAll("#imageColorMap select")].map((select) => {
+    const value = Number(select.value);
+    if (!Number.isFinite(value) || value < 0) return null;
+    return brushes[value] || null;
+  });
   const cells = [];
-  for (let py = 0; py < height; py++) {
-    for (let px = 0; px < width; px++) {
-      const offset = (py * width + px) * 4;
-      if (pixels[offset + 3] < alphaThreshold) continue;
-      const paletteIndex = nearestImagePaletteIndex(
-        pixels[offset],
-        pixels[offset + 1],
-        pixels[offset + 2],
-        draft.palette
-      );
-      const brush = chosen[paletteIndex];
-      const logical = imageTerrainLogicalPoint(px, py, width, height, center, projection);
-      if (!brush || !logical || !logicalInMap(logical.u, logical.v)) continue;
-      cells.push({ u: logical.u, v: logical.v, brush });
-    }
+  draft.sampled.cells.forEach((cell, index) => {
+    const paletteIndex = draft.sampled.indices[index];
+    if (paletteIndex == null || paletteIndex < 0) return;
+    const brush = chosen[paletteIndex];
+    if (!brush) return;
+    cells.push({ u: cell.u, v: cell.v, brush });
+  });
+  if (!cells.length) {
+    const status = document.getElementById("imageTerrainStatus");
+    if (status) status.textContent = "没有可写入的格子。检查颜色映射是否全是「跳过」，或关掉跳过背景。";
+    return;
   }
-  if (!cells.length) return;
   pushHist();
   if (document.getElementById("imageTerrainReplace")?.checked) {
     state.stamps = [];
@@ -6385,6 +7962,7 @@ async function openPlanOverlay(file) {
     document.getElementById("planOverlayWidth").value = "11";
     document.getElementById("planOverlayHeight").value = "11";
     document.getElementById("planOverlayAspectField").hidden = false;
+    document.getElementById("planOverlayFoundationField").hidden = true;
     document.getElementById("planOverlayOpacityField").hidden = false;
     document.getElementById("planOverlayAspect").checked = true;
     document.getElementById("planOverlayOpacity").value = "100";
@@ -6402,7 +7980,7 @@ function updatePlanOverlayMeta() {
   const label = document.getElementById("planOverlayFootprint");
   const count = state.previewBuildings.length;
   if (meta) meta.hidden = count === 0;
-  if (label) label.textContent = count ? `${count} 个场景建筑 · 不写入游戏图纸` : "";
+  if (label) label.textContent = count ? `${count} 个画布预览 · 不写入游戏图纸` : "";
 }
 
 async function applyPlanOverlay() {
@@ -6427,16 +8005,17 @@ async function applyPlanOverlay() {
       coordinateSpace: planOverlayDraft.coordinateSpace || "paper",
       footprint: [...result.footprint],
       groundAnchor: { ...result.groundAnchor },
+      floorQuad: copyFloorQuad(result.floorQuad),
       unresolved: [...result.unresolved],
+      keepFoundation: document.getElementById("planOverlayKeepFoundation")?.checked === true,
       visible: true,
       locked: false,
       opacity: 1,
-      x: snap(center.x),
-      y: snap(center.y),
+      ...snapPreviewCenter(center.x, center.y, { footprint: result.footprint }),
     };
     runtime = {
       ...result,
-      cacheKey: `terrain-v2|${entity.baseNo}|${entity.coordinateSpace}|${entity.paperHash}`,
+      cacheKey: `terrain-v4|${entity.baseNo}|${entity.coordinateSpace}|${entity.paperHash}|f${entity.keepFoundation ? 1 : 0}`,
       loading: false,
     };
   } else {
@@ -6460,8 +8039,7 @@ async function applyPlanOverlay() {
       visible: true,
       locked: false,
       opacity: Math.max(0.1, Number(document.getElementById("planOverlayOpacity")?.value || 100) / 100),
-    x: snap(center.x),
-    y: snap(center.y),
+      ...snapPreviewCenter(center.x, center.y, { footprint: [width, height] }),
     };
     runtime = {
       ...prepared,
@@ -6475,9 +8053,10 @@ async function applyPlanOverlay() {
   state.previewBuildings.push(entity);
   state.previewRuntime.set(entity.id, runtime);
   state.selectedPreviewId = entity.id;
-  const showOverlay = document.getElementById("showPlanOverlay");
-  if (showOverlay) showOverlay.checked = true;
-  setLayer("build");
+  const showBuild = document.getElementById("showBuild");
+  if (showBuild) showBuild.checked = true;
+  setLayer("terrain");
+  setTerrainProjectTab("files");
   showDlg("dlgPlanOverlay", false);
   updatePlanOverlayMeta();
   updatePreviewBuildingUi();
@@ -6501,11 +8080,198 @@ function removePlanOverlay() {
   draw();
 }
 
-function selectPreviewBuilding(id) {
-  state.selectedPreviewId = previewEntityById(id)?.id || null;
+function beginPreviewInteraction(previewHit, x, y, w) {
+  const layout = previewHit.layout || previewEntityLayout(previewHit.entity);
+  pushHist();
+  state.previewInteraction = {
+    id: previewHit.entity.id,
+    mode: previewHit.part,
+    handle: previewHit.handle,
+    grabX: w.x - previewHit.entity.x,
+    grabY: w.y - previewHit.entity.y,
+    startX: x,
+    startY: y,
+    startWidth: Number(previewHit.entity.width) || layout?.image.width / state.cam.k || 1,
+    startHeight: Number(previewHit.entity.height) || layout?.image.height / state.cam.k || 1,
+    startAnchorX: Number(previewHit.entity.anchorX ?? 0.5),
+    startAnchorY: Number(previewHit.entity.anchorY ?? 1),
+    startRect: layout ? { ...layout.image } : null,
+    startDistance: layout ? Math.max(1, Math.hypot(x - layout.ground.x, y - layout.ground.y)) : 1,
+    changed: false,
+  };
+  if (view) view.style.cursor = "grabbing";
+}
+
+function revealPreviewBuilding(entity) {
+  const layout = previewEntityLayout(entity);
+  if (!layout || !view) return;
+  const targetX = view.width / 2;
+  const targetY = view.height / 2;
+  const pad = 36;
+  const r = layout.image;
+  const onScreen =
+    r.x >= pad &&
+    r.y >= pad &&
+    r.x + r.width <= view.width - pad &&
+    r.y + r.height <= view.height - pad;
+  if (onScreen) return;
+  state.cam.x += targetX - layout.center.x;
+  state.cam.y += targetY - layout.center.y;
+}
+
+function syncTerrainCursor(x, y) {
+  if (!view) return;
+  if (state.paintMode === "pan") {
+    view.style.cursor = state.panning ? "grabbing" : "grab";
+    return;
+  }
+  const hit = previewHitTest(x, y);
+  if (hit) {
+    view.style.cursor = hit.entity.locked ? "default" : (state.previewInteraction ? "grabbing" : "grab");
+    return;
+  }
+  view.style.cursor = "";
+}
+
+function selectPreviewBuilding(id, options = {}) {
+  const entity = previewEntityById(id);
+  state.selectedPreviewId = entity?.id || null;
+  state.selectedBld = -1;
+  if (entity) {
+    setTerrainProjectTab("files");
+    if (options.reveal !== false) revealPreviewBuilding(entity);
+  }
+  updatePreviewBuildingUi();
+  draw();
+}
+
+function clearPreviewSelection() {
+  if (!state.selectedPreviewId && state.selectedBld < 0) {
+    syncPreviewNudgePad();
+    return;
+  }
+  state.selectedPreviewId = null;
   state.selectedBld = -1;
   updatePreviewBuildingUi();
   draw();
+}
+
+function nudgeSelectedPreview(dx, dy, { history = true } = {}) {
+  const entity = previewEntityById(state.selectedPreviewId);
+  if (!entity || entity.locked) return;
+  if (history) pushHist();
+  const pos = snapPreviewCenter(entity.x + dx, entity.y + dy, entity);
+  entity.x = pos.x;
+  entity.y = pos.y;
+  markDirty();
+  draw();
+}
+
+const PREVIEW_NUDGE_HOLD_DELAY = 320;
+const PREVIEW_NUDGE_HOLD_MS = 55;
+const PREVIEW_NUDGE_STEP_KEY = "manor-terrain-nudge-step";
+let previewNudgeRepeatTimer = 0;
+let previewNudgeRepeatInterval = 0;
+let previewNudgeCells = 1;
+
+function stopPreviewNudgeRepeat() {
+  if (previewNudgeRepeatTimer) {
+    clearTimeout(previewNudgeRepeatTimer);
+    previewNudgeRepeatTimer = 0;
+  }
+  if (previewNudgeRepeatInterval) {
+    clearInterval(previewNudgeRepeatInterval);
+    previewNudgeRepeatInterval = 0;
+  }
+}
+
+function syncPreviewNudgePad() {
+  const pad = document.getElementById("nudgePad");
+  if (!pad) return;
+  const mobile = !!window.MobileWorkspace?.modeForViewport?.().mobile;
+  const selected = !!previewEntityById(state.selectedPreviewId);
+  const blocked =
+    document.getElementById("desk")?.classList.contains("library-open") ||
+    document.body.classList.contains("drawer-open") ||
+    !!document.querySelector(".rail.open");
+  const show = mobile && selected && !blocked;
+  pad.hidden = !show;
+  if (!show) stopPreviewNudgeRepeat();
+}
+
+function bindPreviewNudgePad() {
+  const pad = document.getElementById("nudgePad");
+  if (!pad) return;
+  const stepBtn = document.getElementById("btnNudgeStep");
+  try {
+    const stored = Number(localStorage.getItem(PREVIEW_NUDGE_STEP_KEY));
+    if (Number.isFinite(stored) && stored >= 1) previewNudgeCells = Math.min(32, Math.max(1, Math.round(stored)));
+  } catch (error) {}
+  const updateStepLabel = () => {
+    if (!stepBtn) return;
+    const value = `${previewNudgeCells}格`;
+    let kicker = stepBtn.querySelector(".nudge-step-kicker");
+    let valueEl = stepBtn.querySelector(".nudge-step-value");
+    if (!kicker || !valueEl) {
+      stepBtn.replaceChildren();
+      kicker = document.createElement("span");
+      kicker.className = "nudge-step-kicker";
+      kicker.textContent = "步长";
+      valueEl = document.createElement("span");
+      valueEl.className = "nudge-step-value";
+      stepBtn.append(kicker, valueEl);
+    }
+    valueEl.textContent = value;
+    stepBtn.classList.toggle("is-coarse", previewNudgeCells >= 5);
+    stepBtn.setAttribute("aria-label", `步长 ${previewNudgeCells} 格，点按设置`);
+    stepBtn.title = `当前步长 ${previewNudgeCells} 格，点按设置`;
+  };
+  updateStepLabel();
+  window.MobileWorkspace?.bindNudgeStepControl?.({
+    pad,
+    button: stepBtn,
+    unit: "格",
+    min: 1,
+    max: 32,
+    presets: [1, 2, 4, 5, 8, 10],
+    fallback: 1,
+    getValue: () => previewNudgeCells,
+    setValue: (value) => {
+      previewNudgeCells = value;
+      try { localStorage.setItem(PREVIEW_NUDGE_STEP_KEY, String(previewNudgeCells)); } catch (error) {}
+      updateStepLabel();
+    },
+  });
+  document.getElementById("btnClearPreview")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    clearPreviewSelection();
+  });
+  pad.addEventListener("contextmenu", (event) => event.preventDefault());
+  pad.addEventListener("pointerdown", (event) => {
+    const btn = event.target.closest("[data-nudge]");
+    if (!btn || !pad.contains(btn)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = Number(btn.dataset.nudgeX) || 0;
+    const dy = Number(btn.dataset.nudgeY) || 0;
+    if (!dx && !dy) return;
+    btn.setPointerCapture?.(event.pointerId);
+    stopPreviewNudgeRepeat();
+    const stepX = TILE_W * previewNudgeCells;
+    const stepY = SNAP * previewNudgeCells;
+    nudgeSelectedPreview(dx * stepX, dy * stepY);
+    previewNudgeRepeatTimer = setTimeout(() => {
+      previewNudgeRepeatInterval = setInterval(() => {
+        nudgeSelectedPreview(dx * stepX, dy * stepY, { history: false });
+      }, PREVIEW_NUDGE_HOLD_MS);
+    }, PREVIEW_NUDGE_HOLD_DELAY);
+  });
+  const endHold = () => stopPreviewNudgeRepeat();
+  pad.addEventListener("pointerup", endHold);
+  pad.addEventListener("pointercancel", endHold);
+  pad.addEventListener("lostpointercapture", endHold);
+  syncPreviewNudgePad();
 }
 
 function duplicateSelectedPreview() {
@@ -6519,9 +8285,9 @@ function duplicateSelectedPreview() {
     records: source.records?.map((record) => ({ ...record })),
     footprint: [...(source.footprint || [1, 1])],
     groundAnchor: source.groundAnchor ? { ...source.groundAnchor } : undefined,
+    floorQuad: copyFloorQuad(source.floorQuad),
     crop: source.crop ? [...source.crop] : undefined,
-    x: Math.min(worldExtent(), source.x + SNAP * 2),
-    y: Math.min(worldExtent(), source.y + SNAP * 2),
+    ...snapPreviewCenter(source.x + SNAP * 2, source.y + SNAP * 2, source),
     locked: false,
   };
   const runtime = state.previewRuntime.get(source.id);
@@ -6549,18 +8315,57 @@ function deleteSelectedPreview() {
   draw();
 }
 
+function previewThumbCrop(bitmap) {
+  try {
+    const probe = document.createElement("canvas");
+    const maxDim = 240;
+    const scale = Math.min(1, maxDim / bitmap.width, maxDim / bitmap.height);
+    probe.width = Math.max(1, Math.round(bitmap.width * scale));
+    probe.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = probe.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(bitmap, 0, 0, probe.width, probe.height);
+    const { data } = ctx.getImageData(0, 0, probe.width, probe.height);
+    let minX = probe.width;
+    let minY = probe.height;
+    let maxX = 0;
+    let maxY = 0;
+    for (let y = 0; y < probe.height; y += 1) {
+      for (let x = 0; x < probe.width; x += 1) {
+        if (data[(y * probe.width + x) * 4 + 3] > 16) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX) return { x: 0, y: 0, w: bitmap.width, h: bitmap.height };
+    const pad = 3;
+    const x = Math.max(0, (minX - pad) / scale);
+    const y = Math.max(0, (minY - pad) / scale);
+    return {
+      x,
+      y,
+      w: Math.min(bitmap.width - x, (maxX - minX + 1 + pad * 2) / scale),
+      h: Math.min(bitmap.height - y, (maxY - minY + 1 + pad * 2) / scale),
+    };
+  } catch {
+    return { x: 0, y: 0, w: bitmap.width, h: bitmap.height };
+  }
+}
+
 function previewThumbnail(entity) {
   const runtime = state.previewRuntime.get(entity.id);
   if (!runtime) return "";
   if (runtime.thumb) return runtime.thumb;
-  if (runtime.url) return runtime.url;
   const bitmap = runtime.bitmap;
-  if (!bitmap?.width) return "";
+  if (!bitmap?.width) return runtime.url || "";
+  const box = previewThumbCrop(bitmap);
+  const scale = Math.min(1, 96 / box.w, 72 / box.h);
   const thumb = document.createElement("canvas");
-  const scale = Math.min(1, 84 / bitmap.width, 68 / bitmap.height);
-  thumb.width = Math.max(1, Math.round(bitmap.width * scale));
-  thumb.height = Math.max(1, Math.round(bitmap.height * scale));
-  thumb.getContext("2d").drawImage(bitmap, 0, 0, thumb.width, thumb.height);
+  thumb.width = Math.max(1, Math.round(box.w * scale));
+  thumb.height = Math.max(1, Math.round(box.h * scale));
+  thumb.getContext("2d").drawImage(bitmap, box.x, box.y, box.w, box.h, 0, 0, thumb.width, thumb.height);
   runtime.thumb = thumb.toDataURL("image/png");
   return runtime.thumb;
 }
@@ -6577,6 +8382,49 @@ function schedulePreviewBuildingUi() {
   }, 120);
 }
 
+function syncTerrainTopIoPlacement() {
+  const cluster = document.getElementById("terrainTopIo");
+  const topActions = document.querySelector("#desk .top-actions");
+  const slot = document.getElementById("terrainIoSlot");
+  if (!cluster || !topActions || !slot) return;
+  // Phone sheets only. iPad uses the desktop topbar IO cluster.
+  const useSheet = terrainPhoneChrome();
+  if (useSheet) {
+    if (cluster.parentElement !== slot) slot.appendChild(cluster);
+    slot.hidden = false;
+  } else {
+    if (cluster.parentElement !== topActions) {
+      topActions.insertBefore(cluster, topActions.firstChild);
+    }
+    slot.hidden = true;
+  }
+}
+
+function syncTerrainViewTogglesPlacement() {
+  const toggles = document.getElementById("terrainViewToggles");
+  const railSlot = document.getElementById("terrainViewSlot");
+  const mapHost = document.getElementById("mapHost");
+  if (!toggles || !railSlot || !mapHost) return;
+  if (terrainPhoneChrome()) {
+    // Keep view toggles on the canvas — not buried in project/overview sheets.
+    if (toggles.parentElement !== mapHost) mapHost.appendChild(toggles);
+    toggles.classList.add("is-map-floating");
+  } else {
+    if (toggles.parentElement !== railSlot) railSlot.appendChild(toggles);
+    toggles.classList.remove("is-map-floating");
+  }
+}
+
+function toggleSelectedPreviewLock() {
+  const entity = previewEntityById(state.selectedPreviewId);
+  if (!entity) return;
+  pushHist();
+  entity.locked = !entity.locked;
+  markDirty();
+  updatePreviewBuildingUi();
+  draw();
+}
+
 function updatePreviewBuildingUi() {
   const list = document.getElementById("previewBuildingList");
   const empty = document.getElementById("previewBuildingEmpty");
@@ -6586,8 +8434,9 @@ function updatePreviewBuildingUi() {
   if (list) {
     list.replaceChildren();
     state.previewBuildings.forEach((entity) => {
+      const selected = entity.id === state.selectedPreviewId;
       const row = document.createElement("div");
-      row.className = `preview-building-row${entity.id === state.selectedPreviewId ? " is-selected" : ""}`;
+      row.className = `preview-building-row${selected ? " is-selected" : ""}`;
       row.onclick = () => selectPreviewBuilding(entity.id);
       const image = document.createElement("img");
       image.className = "preview-building-thumb";
@@ -6597,7 +8446,9 @@ function updatePreviewBuildingUi() {
       const copy = document.createElement("div");
       copy.className = "preview-building-copy";
       const strong = document.createElement("strong");
-      strong.textContent = entity.name || "场景建筑";
+      const displayName = entity.name || "画布预览";
+      strong.textContent = displayName;
+      strong.title = displayName;
       const small = document.createElement("small");
       const runtime = state.previewRuntime.get(entity.id);
       small.textContent = runtime?.error
@@ -6606,36 +8457,29 @@ function updatePreviewBuildingUi() {
           ? `真实户型 ${entity.baseNo} · ${(entity.footprint || []).join("×")}`
           : `${Math.round(entity.width || 0)}×${Math.round(entity.height || 0)} 像素`;
       copy.append(strong, small);
-      const icons = document.createElement("div");
-      icons.className = "preview-building-icons";
-      const visible = document.createElement("button");
-      visible.type = "button";
-      visible.className = "preview-icon-button";
-      visible.title = entity.visible === false ? "显示" : "隐藏";
-      visible.textContent = entity.visible === false ? "○" : "●";
-      visible.onclick = (event) => {
-        event.stopPropagation();
-        pushHist();
-        entity.visible = entity.visible === false;
-        markDirty();
-        updatePreviewBuildingUi();
-        draw();
-      };
-      const locked = document.createElement("button");
-      locked.type = "button";
-      locked.className = "preview-icon-button";
-      locked.title = entity.locked ? "解锁" : "锁定";
-      locked.textContent = entity.locked ? "🔒" : "◇";
-      locked.onclick = (event) => {
-        event.stopPropagation();
-        pushHist();
-        entity.locked = !entity.locked;
-        markDirty();
-        updatePreviewBuildingUi();
-        draw();
-      };
-      icons.append(visible, locked);
-      row.append(image, copy, icons);
+      row.append(image, copy);
+      if (selected) {
+        const actions = document.createElement("div");
+        actions.className = "preview-row-actions";
+        actions.addEventListener("click", (event) => event.stopPropagation());
+        const mk = (label, className, run) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = className;
+          button.textContent = label;
+          button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            run();
+          });
+          return button;
+        };
+        actions.append(
+          mk("复制", "btn btn-compact", duplicateSelectedPreview),
+          mk(entity.locked ? "解锁" : "锁定", "btn btn-compact", toggleSelectedPreviewLock),
+          mk("删除", "btn btn-compact danger", deleteSelectedPreview),
+        );
+        row.append(actions);
+      }
       list.appendChild(row);
       if (!state.previewRuntime.has(entity.id)) ensurePreviewRuntime(entity);
     });
@@ -6643,12 +8487,20 @@ function updatePreviewBuildingUi() {
   const selected = previewEntityById(state.selectedPreviewId);
   const inspector = document.getElementById("previewBuildingInspector");
   if (inspector) inspector.hidden = !selected;
-  if (!selected) return;
-  document.getElementById("previewInspectorName").textContent = selected.name || "场景建筑";
+  updatePreviewInspectorMaterials().catch(() => {});
+  if (!selected) {
+    syncPreviewNudgePad();
+    return;
+  }
   const isImage = selected.sourceType === "image";
-  document.querySelector(".preview-size-row").hidden = !isImage;
+  const isPaper = selected.sourceType === "paper";
+  document.querySelectorAll(".preview-size-row").forEach((row) => {
+    row.hidden = !isImage;
+  });
   document.getElementById("previewImageOptions").hidden = !isImage;
   document.getElementById("previewAspectField").hidden = !isImage;
+  document.getElementById("previewFoundationField").hidden = !isPaper;
+  document.getElementById("previewKeepFoundation").checked = !!selected.keepFoundation;
   document.getElementById("previewWidth").value = String(Math.round(selected.width || 0));
   document.getElementById("previewHeight").value = String(Math.round(selected.height || 0));
   document.getElementById("previewFootprintWidth").value = String(selected.footprint?.[0] || 1);
@@ -6657,7 +8509,7 @@ function updatePreviewBuildingUi() {
   const opacity = Math.round(Number(selected.opacity ?? 1) * 100);
   document.getElementById("previewOpacity").value = String(opacity);
   document.getElementById("previewOpacityLabel").textContent = `${opacity}%`;
-  document.getElementById("btnPreviewLock").textContent = selected.locked ? "解锁" : "锁定";
+  syncPreviewNudgePad();
 }
 
 function ensureSize(n) {

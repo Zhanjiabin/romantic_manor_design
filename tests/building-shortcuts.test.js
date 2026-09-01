@@ -65,7 +65,10 @@ test("keydown routes every command-bar and align shortcut", () => {
 test("command bar and tool rail can be dragged to any position", () => {
   assert.match(html, /id="commandHudGrip"/);
   assert.match(html, /id="toolHudGrip"/);
-  assert.match(js, /function bindFloatingHuds\(/);
+  assert.match(js, /function hudDragEnabled\(/);
+  assert.match(js, /setPointerCapture/);
+  assert.match(js, /--hud-left/);
+  assert.match(js, /dataset\.hudTapAt/);
   assert.match(js, /manor-building-hud-layout-v1/);
   assert.match(js, /function clampHudPosition\(/);
   assert.match(css, /\.hud-drag-grip/);
@@ -136,6 +139,15 @@ test("category grid and theme picker both have an 全部 filter", () => {
   assert.match(css, /font-variant-numeric: tabular-nums/);
   assert.match(js, /badge\.className = "cat-count"/);
   assert.doesNotMatch(js, /if \(count > 0\) \{\s*const badge/);
+});
+
+test("C groups selected sprites and the diamond brush is gone", () => {
+  const group = commandIds().find((row) => row.id === "group");
+  assert.equal(group.shortcut, "C");
+  assert.doesNotMatch(html, /data-tool="diamond"/);
+  assert.doesNotMatch(js, /id: "diamondTool"/);
+  assert.match(js, /key === "c" && !event\.ctrlKey[\s\S]*executeCommand\("group"\)/);
+  assert.match(html, /data-command="group"[^>]*title="成组 C"/);
 });
 
 test("R flips, Q/E change facing, P saves preset", () => {
@@ -217,6 +229,11 @@ test("building desk uses in-app dialogs instead of window.alert", () => {
 test("arrow keys nudge selected sprites", () => {
   assert.match(js, /function nudgeSelected\(/);
   assert.match(js, /nudgeSelected\(dx, dy\)/);
+  assert.match(js, /function bindNudgePad\(/);
+  assert.match(html, /id="nudgePad"/);
+  const padStart = html.indexOf('id="nudgePad"');
+  const padHtml = html.slice(padStart, html.indexOf("</div>", padStart) + 6);
+  assert.doesNotMatch(padHtml, /[◀▶▲▼]/);
   assert.match(js, /function isTypingTarget\(/);
   assert.match(js, /function focusDesignCanvas\(/);
   assert.match(js, /focusDesignCanvas\(\);/);
@@ -236,4 +253,16 @@ test("favorite star is an outline overlay without a white plate", () => {
   assert.match(css, /\.component-tile \.favorite-toggle[\s\S]*background:\s*transparent/);
   assert.doesNotMatch(css, /\.favorite-toggle[\s\S]{0,180}background:\s*rgba\(255,\s*255,\s*255/);
   assert.match(css, /\.favorite-toggle\.on \.favorite-star[\s\S]*fill:\s*currentColor/);
+});
+
+test("building.js has no duplicate bindings in rail accessibility", () => {
+  const { execFileSync } = require("node:child_process");
+  execFileSync(process.execPath, ["--check", path.join(root, "web/building.js")]);
+  const block = js.slice(
+    js.indexOf("function syncBuildingRailAccessibility"),
+    js.indexOf("function syncMobileBuildingChrome")
+  );
+  assert.match(block, /const mode = workspaceMode\(\)/);
+  assert.match(block, /const sheetMode = state\.phase === "select"/);
+  assert.doesNotMatch(block, /const mode = state\.phase === "select"/);
 });

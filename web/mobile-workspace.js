@@ -10,6 +10,21 @@
   let lastModeKey = "";
   let orientationTimer = 0;
 
+  function navInfo() {
+    const nav = global.navigator || {};
+    return {
+      userAgent: String(nav.userAgent || ""),
+      platform: String(nav.platform || ""),
+      maxTouchPoints: Number(nav.maxTouchPoints) || 0,
+    };
+  }
+
+  function isIPadOS() {
+    const nav = navInfo();
+    // iPadOS 13+ reports as Macintosh + touch, even with a keyboard/trackpad.
+    return nav.maxTouchPoints > 1 && /iPad|Macintosh/i.test(`${nav.platform} ${nav.userAgent}`);
+  }
+
   function modeForViewport() {
     const innerW = Math.round(global.innerWidth || 1024);
     const innerH = Math.round(global.innerHeight || 768);
@@ -20,11 +35,16 @@
       width = innerW;
       height = innerH;
     }
-    const coarse = !!global.matchMedia?.("(hover: none), (pointer: coarse)")?.matches;
-    const mobile = width <= 1100 || (coarse && width <= 1100);
+    const pointerCoarse = !!global.matchMedia?.("(pointer: coarse)")?.matches;
+    const hoverNone = !!global.matchMedia?.("(hover: none)")?.matches;
+    const iPadOS = isIPadOS();
+    const coarse = pointerCoarse || hoverNone || iPadOS;
+    const shortSide = Math.min(width, height);
+    const longSide = Math.max(width, height);
+    const tablet = iPadOS || (shortSide >= 600 && longSide <= 1400 && (coarse || width <= 1024));
+    const mobile = width <= 900 || tablet || (coarse && width <= 1180);
     const orientation = width > height ? "landscape" : "portrait";
-    const tablet = mobile && Math.min(width, height) >= 600;
-    return { width, height, coarse, mobile, tablet, orientation };
+    return { width, height, coarse, mobile, tablet, orientation, iPadOS };
   }
 
   let lastViewportKey = "";
@@ -85,13 +105,18 @@
     trigger?.classList.toggle("on", !!expanded);
   }
 
+  function sheetCoversWorkspace() {
+    return modeForViewport().mobile && !modeForViewport().tablet;
+  }
+
   function setSheetInert(options, open) {
-    (options?.inert || []).forEach((target) => setInert(resolveNode(target), open));
+    const cover = open && sheetCoversWorkspace();
+    (options?.inert || []).forEach((target) => setInert(resolveNode(target), cover));
   }
 
   function syncBackdrop(options, open) {
     const backdrop = resolveNode(options?.backdrop);
-    if (backdrop) backdrop.hidden = !open;
+    if (backdrop) backdrop.hidden = !open || !sheetCoversWorkspace();
   }
 
   function registerSheet(options = {}) {
@@ -101,7 +126,7 @@
     const registered = { mutex: "workspace", resetScroll: true, ...options, id, root };
     sheets.set(id, registered);
     root.dataset.mobileSheetId = id;
-    root.setAttribute("aria-hidden", modeForViewport().mobile && !root.classList.contains("open") ? "true" : "false");
+    root.setAttribute("aria-hidden", sheetCoversWorkspace() && !root.classList.contains("open") ? "true" : "false");
     return registered;
   }
 
@@ -110,7 +135,7 @@
     if (!registered) return false;
     const wasOpen = activeSheetId === registered.id || registered.root.classList.contains("open");
     registered.root.classList.remove("open");
-    registered.root.setAttribute("aria-hidden", "true");
+    registered.root.setAttribute("aria-hidden", sheetCoversWorkspace() ? "true" : "false");
     setSheetExpanded(registered, false);
     setSheetInert(registered, false);
     syncBackdrop(registered, false);
@@ -259,8 +284,159 @@
     global.visualViewport?.addEventListener("scroll", sync, { passive: true });
     document.addEventListener("focusin", scrollFocusedInput);
     document.addEventListener("keydown", trapTab, true);
+    guardBrowserChrome();
     enhanceModals();
     return syncViewport(options.root);
+  }
+
+  function isEditableTarget(node) {
+    return !!node?.closest?.("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+  }
+
+  function guardBrowserChrome() {
+    if (guardBrowserChrome.done) return;
+    guardBrowserChrome.done = true;
+    const block = (event) => {
+      if (isEditableTarget(event.target)) return;
+      event.preventDefault();
+    };
+    document.addEventListener("contextmenu", block, true);
+    document.addEventListener("selectstart", block, true);
+  }
+
+  function clampInt(value, min, max, fallback) {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function bindNudgeStepControl(options) {
+    const button = options?.button;
+    const pad = options?.pad;
+    if (!button || !pad) return;
+    const unit = options.unit || "px";
+    const min = options.min ?? 1;
+    const max = options.max ?? 128;
+    const presets = options.presets || [1, 2, 4, 5, 8, 10, 16];
+    const fallback = clampInt(options.fallback ?? 1, min, max, 1);
+    const getValue = () => clampInt(options.getValue?.(), min, max, fallback);
+    const setValue = (value) => options.setValue?.(clampInt(value, min, max, fallback));
+    const mode = modeForViewport();
+    const blockSystemKeyboard = !!(mode.mobile || mode.coarse);
+
+    let pop = pad.querySelector(".nudge-step-pop");
+    if (!pop) {
+      pop = document.createElement("div");
+      pop.className = "nudge-step-pop";
+      pop.hidden = true;
+      pop.setAttribute("role", "dialog");
+      pop.setAttribute("aria-label", "设置步长");
+      const row = document.createElement("div");
+      row.className = "nudge-step-row";
+      const minus = document.createElement("button");
+      minus.type = "button";
+      minus.className = "nudge-step-adj";
+      minus.setAttribute("aria-label", "减小步长");
+      minus.textContent = "−";
+      const valueNode = document.createElement(blockSystemKeyboard ? "div" : "input");
+      valueNode.className = "nudge-step-input";
+      valueNode.setAttribute("aria-label", `步长（${unit}）`);
+      if (blockSystemKeyboard) {
+        valueNode.classList.add("nudge-step-input-display");
+        valueNode.setAttribute("aria-live", "polite");
+      } else {
+        valueNode.type = "number";
+        valueNode.min = String(min);
+        valueNode.max = String(max);
+        valueNode.step = "1";
+        valueNode.inputMode = "numeric";
+      }
+      const plus = document.createElement("button");
+      plus.type = "button";
+      plus.className = "nudge-step-adj";
+      plus.setAttribute("aria-label", "增大步长");
+      plus.textContent = "+";
+      row.append(minus, valueNode, plus);
+      const chips = document.createElement("div");
+      chips.className = "nudge-step-presets";
+      presets.forEach((preset) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "nudge-step-preset";
+        chip.dataset.step = String(preset);
+        chip.textContent = String(preset);
+        chips.append(chip);
+      });
+      pop.append(row, chips);
+      pad.append(pop);
+    }
+
+    const input = pop.querySelector(".nudge-step-input");
+    const syncDisplay = () => {
+      const next = String(getValue());
+      if (input instanceof HTMLInputElement) input.value = next;
+      else input.textContent = next;
+    };
+    const closePop = () => {
+      pop.hidden = true;
+      pad.classList.remove("is-editing-step");
+      button.setAttribute("aria-expanded", "false");
+    };
+    const openPop = () => {
+      syncDisplay();
+      pop.hidden = false;
+      pad.classList.add("is-editing-step");
+      button.setAttribute("aria-expanded", "true");
+      if (input instanceof HTMLInputElement) {
+        requestAnimationFrame(() => {
+          input.focus();
+          input.select();
+        });
+      }
+    };
+    const commit = (value) => {
+      setValue(value);
+      syncDisplay();
+    };
+
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (pop.hidden) openPop();
+      else closePop();
+    });
+    pop.addEventListener("pointerdown", (event) => event.stopPropagation());
+    pop.addEventListener("click", (event) => {
+      const adj = event.target.closest(".nudge-step-adj");
+      if (adj) {
+        const next = getValue() + (adj.textContent === "+" ? 1 : -1);
+        commit(next);
+        return;
+      }
+      const preset = event.target.closest(".nudge-step-preset");
+      if (preset) commit(preset.dataset.step);
+    });
+    if (input instanceof HTMLInputElement) {
+      input.addEventListener("change", () => commit(input.value));
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit(input.value);
+          closePop();
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closePop();
+        }
+      });
+    }
+    document.addEventListener("pointerdown", (event) => {
+      if (pop.hidden) return;
+      if (pad.contains(event.target)) return;
+      closePop();
+    });
   }
 
   function onModeChange(listener) {
@@ -284,5 +460,6 @@
     openLayer,
     closeLayer,
     enhanceModals,
+    bindNudgeStepControl,
   });
 })(window);

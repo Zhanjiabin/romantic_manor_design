@@ -9,9 +9,11 @@
   <meta name="theme-color" content="#2f6b4f" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>设计桌</title>
-  <link rel="stylesheet" href="/web/app.css?v=79" />
+  <link rel="stylesheet" href="/web/app.css?v=101" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=4" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=10" />
+  <link rel="stylesheet" href="/web/paper-library.css?v=11" />
+  <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=84" />
 </head>
 <body>
   <div class="app" id="desk">
@@ -28,6 +30,19 @@
         <div class="save-status" id="saveStatus">未保存</div>
       </div>
       <div class="top-actions">
+        <div class="top-io-cluster" id="terrainTopIo" aria-label="游戏图纸">
+          <div class="top-io-group">
+            <span class="top-io-cap">地形</span>
+            <button type="button" class="btn btn-compact" id="btnOpenTerr" title="导入地形图纸">导入</button>
+            <button type="button" class="btn btn-compact" id="btnSaveTerr" title="导出地形图纸">导出</button>
+            <button type="button" class="btn btn-compact" id="btnSavePng" title="导出当前画面为图片">PNG</button>
+            <button type="button" class="btn btn-compact" id="btnImageTerrain" title="按图片颜色在地图上生成地形">图→地</button>
+          </div>
+          <div class="top-io-group">
+            <span class="top-io-cap">建筑</span>
+            <button type="button" class="btn btn-compact" id="btnOpenBld" title="导入建筑：写入游戏的建筑物品图纸">导入</button>
+          </div>
+        </div>
         <button type="button" class="btn btn-compact mobile-only" id="btnDrawerLeft">工具</button>
         <button type="button" class="btn btn-compact mobile-only" id="btnSaveMobile" title="保存到服务器">保存</button>
         <button type="button" class="btn btn-compact mobile-only" id="btnDrawerRight">文件</button>
@@ -39,7 +54,6 @@
         <div class="mobile-sheet-handle" aria-hidden="true"></div>
         <div class="drawer-cap mobile-only">
           <span id="terrainSheetTitle">地形</span>
-          <button type="button" class="icon-x" data-drawer-close aria-label="关闭"></button>
         </div>
         <div class="mobile-pane-tabs mobile-workspace-only" role="tablist" aria-label="地形面板">
           <button type="button" class="on" data-terrain-pane="palette" aria-selected="true">地形素材</button>
@@ -106,8 +120,27 @@
           </div>
         </div>
         <div class="rail-block rail-block-terrain">
+          <div class="terrain-map-actions" aria-label="地图操作">
+            <button type="button" class="btn btn-compact" id="btnMobileMapSize" title="选择地图面积">面积</button>
+            <button type="button" class="btn btn-compact" id="btnMobileNewTerrain" title="先保存当前图，再开一张空白草地">新地形</button>
+            <button type="button" class="btn btn-compact btn-wide" id="btnMobileChangeTerrain" title="更换底板：草地 / 沙地（与游戏「更换地形」相同）">更换地形</button>
+          </div>
           <div class="rail-head">地形</div>
           <div class="brush-grid" id="mapmult"></div>
+          <div class="rail-block-view" id="terrainViewSlot" aria-label="显示选项">
+            <div class="terrain-view-toggles view-toggles view-toggles-inline" id="terrainViewToggles">
+              <label class="check" title="建筑模型">
+                <input type="checkbox" id="showBuild" checked />
+                <span class="toggle-label-full">建筑模型</span>
+                <span class="toggle-label-short">建筑</span>
+              </label>
+              <label class="check" title="地块网格">
+                <input type="checkbox" id="showGrid" checked />
+                <span class="toggle-label-full">地块网格</span>
+                <span class="toggle-label-short">网格</span>
+              </label>
+            </div>
+          </div>
         </div>
         <p class="rail-hint" id="kindNote">单指绘制 · 双指拖动缩放</p>
       </aside>
@@ -116,9 +149,16 @@
         <div class="map-stage">
           <canvas id="view" width="581" height="551"></canvas>
           <div class="map-overlay">
-            <div class="map-hint">单指绘制 · 双指拖动缩放</div>
             <div class="map-coord" id="coord">0, 0</div>
           </div>
+        </div>
+        <div class="nudge-pad" id="nudgePad" hidden aria-label="方向微调">
+          <button type="button" class="nudge-btn nudge-up" data-nudge data-nudge-x="0" data-nudge-y="-1" aria-label="上移"></button>
+          <button type="button" class="nudge-btn nudge-left" data-nudge data-nudge-x="-1" data-nudge-y="0" aria-label="左移"></button>
+          <button type="button" class="nudge-btn nudge-step" id="btnNudgeStep" aria-label="步长 1 格，点按设置" aria-haspopup="dialog" aria-expanded="false" title="点按设置步长"><span class="nudge-step-kicker">步长</span><span class="nudge-step-value">1格</span></button>
+          <button type="button" class="nudge-btn nudge-right" data-nudge data-nudge-x="1" data-nudge-y="0" aria-label="右移"></button>
+          <button type="button" class="nudge-btn nudge-down" data-nudge data-nudge-x="0" data-nudge-y="1" aria-label="下移"></button>
+          <button type="button" class="nudge-btn nudge-clear" id="btnClearPreview" aria-label="取消选择 · Esc">取消</button>
         </div>
         <div class="map-toolbar" id="mapToolbar">
           <div class="btn-group">
@@ -141,119 +181,109 @@
           <span>项目</span>
           <button type="button" class="icon-x" data-drawer-close aria-label="关闭"></button>
         </div>
-        <div class="mobile-pane-tabs mobile-project-tabs mobile-workspace-only" role="tablist" aria-label="项目分类">
+        <div class="project-pane-tabs" role="tablist" aria-label="项目分类">
           <button type="button" class="on" data-project-tab="files" aria-selected="true">文件</button>
-          <button type="button" data-project-tab="scene" aria-selected="false">场景</button>
           <button type="button" data-project-tab="overview" aria-selected="false">概览</button>
         </div>
-        <div class="rail-block" data-project-pane="overview">
-          <div class="rail-head">概览</div>
-          <canvas id="mini" class="mini-map" width="280" height="236"></canvas>
-          <div class="cost-card">
-            <div class="cost-row">
-              <span>基础费用</span>
-              <strong id="basemoney">0</strong>
+        <div class="rail-block terrain-overview-pane" data-project-pane="overview">
+          <div class="overview-hero">
+            <canvas id="mini" class="mini-map" width="280" height="236" aria-label="地形缩略图"></canvas>
+            <span class="overview-hero-label">缩略图 · 点击定位</span>
+          </div>
+          <div class="overview-stats" aria-label="费用统计">
+            <div class="overview-stat">
+              <span class="overview-stat-label">基础费用</span>
+              <strong class="overview-stat-value" id="basemoney">0</strong>
             </div>
-            <div class="cost-row">
-              <span>材料费用</span>
-              <strong id="matemoney">0</strong>
+            <div class="overview-stat">
+              <span class="overview-stat-label">材料费用</span>
+              <strong class="overview-stat-value" id="matemoney">0</strong>
             </div>
-            <div id="matCount" class="mat-count-inline" hidden></div>
+          </div>
+          <section class="overview-materials" aria-label="材料摘要">
+            <div class="overview-section-head">
+              <span>材料摘要</span>
+              <span class="overview-section-hint">点击查看明细</span>
+            </div>
+            <div
+              id="matCount"
+              class="mat-count-inline overview-mat-chips"
+              hidden
+              role="button"
+              tabindex="0"
+              title="点击查看材料明细"
+              aria-label="材料摘要，点击查看明细"
+            ></div>
+            <p class="overview-materials-empty">暂无地形与建筑材料</p>
             <ul id="unknown" class="unknown-inline" hidden></ul>
+          </section>
+          <div class="overview-actions">
+            <button type="button" class="btn btn-primary btn-block" id="btnTerrainMaterials" title="查看全部材料明细并可导出 Excel">材料清单</button>
           </div>
         </div>
-        <div class="rail-block rail-block-files" data-project-pane="files">
-          <div class="mobile-canvas-actions mobile-workspace-only">
-            <button type="button" class="btn btn-compact" id="btnMobileFit">适应画布</button>
-            <button type="button" class="btn btn-compact" id="btnMobileZoom1">1:1</button>
-            <button type="button" class="btn btn-compact" id="btnMobileMapSize">地图面积</button>
-            <button type="button" class="btn btn-compact" id="btnMobileNewTerrain">新地形</button>
-            <button type="button" class="btn btn-compact btn-wide" id="btnMobileChangeTerrain">更换地形</button>
-          </div>
-          <div class="file-section">
-            <div class="rail-head">本机</div>
-            <div class="file-grid">
-              <button type="button" class="btn btn-compact" id="btnSaveLocal" title="保存到服务器，换手机也能接着做">保存</button>
-              <button type="button" class="btn btn-compact" id="btnHistory" title="查看自动保存的历史版本">历史</button>
+        <div class="rail-block rail-block-files project-files-pane" data-project-pane="files">
+          <div class="project-files-chrome">
+            <div class="mobile-canvas-actions mobile-workspace-only project-quick-bar">
+              <button type="button" class="btn btn-compact" id="btnMobileFit">适应画布</button>
+              <button type="button" class="btn btn-compact" id="btnMobileZoom1">1:1</button>
             </div>
-            <label class="field">
-              <span>名称</span>
-              <input class="input" id="desc" maxlength="40" placeholder="保存和导出时用作文件名" />
-            </label>
-          </div>
-          <div class="file-section">
-            <div class="rail-head">地形</div>
-            <div class="file-grid">
-              <button type="button" class="btn btn-compact" id="btnOpenTerr" title="导入地形图纸">导入</button>
-              <button type="button" class="btn btn-compact" id="btnSaveTerr" title="导出地形图纸">导出</button>
-              <button type="button" class="btn btn-compact btn-wide" id="btnSavePng" title="导出当前画面为图片">导出图片</button>
-              <button type="button" class="btn btn-compact btn-wide" id="btnImageTerrain" title="按图片颜色在地图上生成地形">图片生成地形</button>
-            </div>
-          </div>
-          <div class="file-section">
-            <div class="rail-head">建筑</div>
-            <div class="file-grid">
-              <button type="button" class="btn btn-compact" id="btnOpenBld" title="导入游戏庄园建筑物品图纸">导入庄园图纸</button>
-              <button type="button" class="btn btn-compact" id="btnSaveBld" title="导出游戏庄园建筑物品图纸">导出庄园图纸</button>
-              <button type="button" class="btn btn-compact btn-wide btn-primary-soft" id="btnOpenDeskPaper" title="把建筑设计桌图纸作为真实场景建筑放到地形上">放置设计建筑</button>
-              <button type="button" class="btn btn-compact btn-wide" id="btnPlanOverlay" title="导入建筑截图作为可缩放的场景参考，不写入游戏图纸">放置建筑图片</button>
-            </div>
-          </div>
-        </div>
-        <div class="rail-block preview-buildings-block" data-project-pane="scene">
-          <div class="preview-buildings-head">
-            <div class="rail-head">场景建筑</div>
-            <span id="previewBuildingCount">0</span>
-          </div>
-          <div class="preview-building-empty" id="previewBuildingEmpty">放置设计图纸或图片后，可在这里管理。</div>
-          <div class="preview-building-list" id="previewBuildingList"></div>
-          <div class="preview-building-inspector" id="previewBuildingInspector" hidden>
-            <div class="preview-inspector-name" id="previewInspectorName"></div>
-            <div class="field-row preview-size-row">
-              <label class="field"><span>宽度</span><input class="input" id="previewWidth" type="number" min="16" max="4096" step="1" /></label>
-              <label class="field"><span>高度</span><input class="input" id="previewHeight" type="number" min="16" max="4096" step="1" /></label>
-            </div>
-            <div class="preview-image-only" id="previewImageOptions">
-              <div class="field-row preview-size-row">
-                <label class="field"><span>占地宽</span><input class="input" id="previewFootprintWidth" type="number" min="1" max="64" step="1" /></label>
-                <label class="field"><span>占地高</span><input class="input" id="previewFootprintHeight" type="number" min="1" max="64" step="1" /></label>
+            <div class="project-io-slot" id="terrainIoSlot" hidden></div>
+
+            <section class="project-strip" aria-label="项目">
+              <div class="project-strip-actions">
+                <button type="button" class="btn btn-primary btn-compact" id="btnPaperLibrary" title="打开图纸库，可叠加导入建筑和地形图纸">图纸库</button>
+                <button type="button" class="btn btn-compact" id="btnSaveLocal" title="保存到服务器，换手机也能接着做">保存</button>
+                <button type="button" class="btn btn-compact" id="btnHistory" title="查看自动保存的历史版本">历史</button>
               </div>
-              <button type="button" class="btn btn-compact btn-block" id="btnPreviewFitFootprint">适合当前占地</button>
-            </div>
-            <label class="check" id="previewAspectField">
-              <input type="checkbox" id="previewAspectLocked" checked />
-              <span>锁定宽高比</span>
-            </label>
-            <label class="field"><span>透明度 <b id="previewOpacityLabel">100%</b></span><input id="previewOpacity" type="range" min="10" max="100" value="100" /></label>
-            <div class="preview-inspector-actions">
-              <button type="button" class="btn btn-compact" id="btnPreviewDuplicate">复制</button>
-              <button type="button" class="btn btn-compact" id="btnPreviewLock">锁定</button>
-              <button type="button" class="btn btn-compact danger" id="btnPreviewDelete">删除</button>
-            </div>
+              <label class="field project-field">
+                <span>名称</span>
+                <input class="input" id="desc" maxlength="40" placeholder="保存和导出时用作文件名" />
+              </label>
+            </section>
           </div>
-        </div>
-        <div class="rail-block" data-project-pane="overview">
-          <div class="rail-head">显示</div>
-          <div class="view-toggles">
-            <label class="check">
-              <input type="checkbox" id="showBuild" checked />
-              <span>建筑模型</span>
-            </label>
-            <label class="check">
-              <input type="checkbox" id="showGrid" checked />
-              <span>地块网格</span>
-            </label>
-          </div>
-          <div class="plan-overlay-meta" id="planOverlayMeta" hidden>
-            <div class="plan-overlay-meta-row">
+
+          <section class="project-preview" aria-label="画布预览">
+            <header class="project-preview-head">
+              <div class="project-section-head">
+                <h3 class="project-section-title">画布预览</h3>
+                <span class="project-count" id="previewBuildingCount">0</span>
+              </div>
+              <div class="preview-panel-foot">
+                <button type="button" class="btn btn-compact" id="btnRemovePlanOverlay">清空</button>
+              </div>
+            </header>
+            <div class="preview-building-empty" id="previewBuildingEmpty">从图纸库导入建筑预览，可在画布上点选拖动。不写入游戏图纸。</div>
+            <div class="preview-building-list" id="previewBuildingList"></div>
+            <div class="preview-building-inspector" id="previewBuildingInspector" hidden>
+              <div class="preview-inspector-body">
+                <div class="field-row preview-size-row">
+                  <label class="field"><span>宽度</span><input class="input" id="previewWidth" type="number" min="16" max="4096" step="1" /></label>
+                  <label class="field"><span>高度</span><input class="input" id="previewHeight" type="number" min="16" max="4096" step="1" /></label>
+                </div>
+                <div class="preview-image-only" id="previewImageOptions">
+                  <div class="field-row preview-size-row">
+                    <label class="field"><span>占地宽</span><input class="input" id="previewFootprintWidth" type="number" min="1" max="64" step="1" /></label>
+                    <label class="field"><span>占地高</span><input class="input" id="previewFootprintHeight" type="number" min="1" max="64" step="1" /></label>
+                  </div>
+                  <button type="button" class="btn btn-compact btn-block" id="btnPreviewFitFootprint">适合当前占地</button>
+                </div>
+                <div class="preview-toggle-row">
+                  <label class="check" id="previewAspectField">
+                    <input type="checkbox" id="previewAspectLocked" checked />
+                    <span>锁定宽高比</span>
+                  </label>
+                  <label class="check" id="previewFoundationField" title="保留户型自带的砖块地板。绿色外壳不会画到地形上。">
+                    <input type="checkbox" id="previewKeepFoundation" checked />
+                    <span>保留砖块地基</span>
+                  </label>
+                </div>
+                <label class="field preview-opacity-field"><span>透明度 <b id="previewOpacityLabel">100%</b></span><input id="previewOpacity" type="range" min="10" max="100" value="100" /></label>
+              </div>
+            </div>
+            <p class="preview-scene-note" id="planOverlayMeta" hidden>
               <span id="planOverlayFootprint">占地 0×0</span>
-              <button type="button" class="btn btn-compact" id="btnRemovePlanOverlay">移除对照图</button>
-            </div>
-            <label class="check">
-              <input type="checkbox" id="showPlanOverlay" checked />
-              <span>对照图</span>
-            </label>
-          </div>
+            </p>
+          </section>
         </div>
       </aside>
     </div>
@@ -274,6 +304,49 @@
         <span class="mobile-dock-glyph">☰</span><span>项目</span>
       </button>
     </nav>
+    <section class="paper-library" id="paperLibrary" hidden aria-label="图纸库">
+      <header class="paper-library-bar">
+        <div class="paper-library-title">
+          <strong id="paperLibraryTitle">图纸库</strong>
+          <div class="paper-batch-status" id="paperBatchStatus">还没有图纸。</div>
+        </div>
+        <div class="paper-library-toolbar">
+          <div class="paper-library-tools">
+            <input class="input" id="paperBatchSearch" type="search" placeholder="搜索文件名…" autocomplete="off" />
+            <label class="paper-library-sort">
+              <span class="paper-library-sort-cap">排序</span>
+              <select class="input" id="paperLibrarySort" aria-label="图纸排序">
+                <option value="savedAt:desc">日期 · 新→旧</option>
+                <option value="savedAt:asc">日期 · 旧→新</option>
+                <option value="name:asc">名称 · A→Z</option>
+                <option value="name:desc">名称 · Z→A</option>
+              </select>
+            </label>
+            <div class="paper-library-tool-actions">
+              <button type="button" class="btn btn-primary" id="btnPaperLibraryFolder" title="导入文件夹或更多图纸，按内容去重">导入</button>
+              <button type="button" class="btn" id="btnPaperLibraryFiles" title="选择若干 txt 图纸导入"><span class="btn-label-full">导入文件</span><span class="btn-label-short">文件</span></button>
+              <button type="button" class="btn" id="btnPaperLibraryClear" title="清空图纸库">清空</button>
+            </div>
+          </div>
+          <button type="button" class="btn" id="btnPaperLibraryClose">返回</button>
+          <div class="paper-library-filters" role="toolbar" aria-label="图纸筛选">
+            <div class="paper-kind-tabs" role="tablist" aria-label="图纸类型">
+              <button type="button" class="on" data-paper-kind="all" aria-selected="true">全部</button>
+              <button type="button" data-paper-kind="desk" aria-selected="false">建筑</button>
+              <button type="button" data-paper-kind="terrain" aria-selected="false">地形</button>
+            </div>
+            <div class="paper-group-tabs" id="paperGroupTabs" role="tablist" aria-label="图纸分组"></div>
+            <button type="button" class="btn btn-compact" id="btnPaperLibraryNewGroup"><span class="btn-label-full">新建分组</span><span class="btn-label-short">+分组</span></button>
+          </div>
+        </div>
+      </header>
+      <div class="paper-library-empty" id="paperLibraryEmpty">
+        <strong>还没有图纸</strong>
+        <p>导入文件夹或文件。地形桌可收入建筑图纸和地形图纸；已有图纸会按内容去重后叠加。</p>
+        <button type="button" class="btn btn-primary" id="btnPaperLibraryPick">导入图纸</button>
+      </div>
+      <div class="paper-preview-grid" id="paperPreviewGrid" hidden></div>
+    </section>
     <div class="drawer-mask mobile-sheet-backdrop" id="drawerMask" hidden></div>
   </div>
 
@@ -324,27 +397,28 @@
   <div class="modal" id="dlgImageTerrain" hidden>
     <div class="modal-card image-terrain-card">
       <div class="modal-cap">
-        <span>按图片颜色生成地形</span>
+        <span>按图片生成地形</span>
         <button type="button" class="icon-x" data-close="dlgImageTerrain" aria-label="关闭"></button>
       </div>
       <div class="modal-body image-terrain-body">
-        <canvas id="imageTerrainPreview" width="256" height="256"></canvas>
+        <p class="dlg-desc">默认正面投影，按当前地图每一格采样后铺满。颜色分区可改成对应地形。</p>
+        <div class="image-terrain-preview-wrap">
+          <canvas id="imageTerrainPreview" width="256" height="256" aria-label="颜色预览"></canvas>
+          <p class="image-terrain-status" id="imageTerrainStatus">导入图片后可预览颜色分区。</p>
+        </div>
         <div class="image-terrain-options">
           <div class="field-row">
-            <label class="field"><span>宽（格）</span><input class="input" id="imageTerrainWidth" type="number" min="1" max="96" value="16" /></label>
-            <label class="field"><span>高（格）</span><input class="input" id="imageTerrainHeight" type="number" min="1" max="96" value="16" /></label>
+            <label class="field"><span>落图方式</span><select class="input" id="imageTerrainProjection"><option value="front" selected>正面（屏幕横平竖直）</option><option value="iso">地形轴（斜向铺格）</option></select></label>
+            <label class="field"><span>颜色数量</span><select class="input" id="imageTerrainColors"><option value="4">4 色</option><option value="6" selected>6 色</option><option value="8">8 色</option><option value="12">12 色</option><option value="16">16 色</option></select></label>
           </div>
           <div class="field-row">
-            <label class="field"><span>生成方向</span><select class="input" id="imageTerrainProjection"><option value="front">正面（横平竖直）</option><option value="iso">斜 45°（地形轴）</option></select></label>
-            <label class="field"><span>颜色数量</span><select class="input" id="imageTerrainColors"><option value="4">4 色</option><option value="6">6 色</option><option value="8" selected>8 色</option><option value="12">12 色</option><option value="16">16 色</option></select></label>
+            <label class="field"><span>图片适配</span><select class="input" id="imageTerrainFit"><option value="stretch" selected>拉伸铺满</option><option value="cover">铺满裁切</option><option value="contain">完整显示</option></select></label>
+            <label class="field"><span>透明阈值</span><input class="input" id="imageTerrainAlpha" type="number" min="0" max="255" value="16" inputmode="numeric" /></label>
           </div>
-          <div class="field-row">
-            <label class="field"><span>图片适配</span><select class="input" id="imageTerrainFit"><option value="contain">完整显示</option><option value="cover">铺满裁切</option><option value="stretch">拉伸铺满</option></select></label>
-            <label class="field"><span>透明阈值</span><input class="input" id="imageTerrainAlpha" type="number" min="0" max="255" value="48" /></label>
-          </div>
-          <label class="check"><input type="checkbox" id="imageTerrainReplace" /><span>生成前清空现有地形笔触</span></label>
-          <div class="image-color-map" id="imageColorMap"></div>
-          <button type="button" class="btn btn-primary btn-block" id="btnApplyImageTerrain">生成到地图中央</button>
+          <label class="check"><input type="checkbox" id="imageTerrainSkipBg" /><span>跳过背景色（四角取样，那些格子不铺）</span></label>
+          <label class="check"><input type="checkbox" id="imageTerrainReplace" checked /><span>生成前清空现有地形笔触</span></label>
+          <div class="image-color-map" id="imageColorMap" role="list" aria-label="颜色对应地形"></div>
+          <button type="button" class="btn btn-primary btn-block" id="btnApplyImageTerrain">铺满当前地图</button>
         </div>
       </div>
     </div>
@@ -353,12 +427,12 @@
   <div class="modal" id="dlgPlanOverlay" hidden>
     <div class="modal-card preview-place-card">
       <div class="modal-cap">
-        <span>放置场景建筑</span>
+        <span>导入画布预览</span>
         <button type="button" class="icon-x" data-close="dlgPlanOverlay" aria-label="关闭"></button>
       </div>
       <div class="modal-body preview-place-body">
         <div class="preview-place-visual">
-          <canvas id="planOverlayCanvas" width="570" height="420" aria-label="场景建筑放置预览"></canvas>
+          <canvas id="planOverlayCanvas" width="570" height="420" aria-label="画布预览"></canvas>
           <div class="plan-overlay-loading" id="planOverlayLoading" hidden>正在生成真实预览…</div>
         </div>
         <div class="preview-place-options">
@@ -375,8 +449,12 @@
             <input type="checkbox" id="planOverlayAspect" checked />
             <span>图片保持宽高比</span>
           </label>
+          <label class="check" id="planOverlayFoundationField" title="保留户型自带的砖块地板。绿色外壳不会画到地形上。">
+            <input type="checkbox" id="planOverlayKeepFoundation" checked />
+            <span>保留砖块地基</span>
+          </label>
           <label class="field" id="planOverlayOpacityField"><span>透明度 <b id="planOverlayOpacityLabel">100%</b></span><input id="planOverlayOpacity" type="range" min="10" max="100" value="100" /></label>
-          <p class="dlg-desc" id="planOverlayHelp">建筑代码和图片均按原生像素比例透明裁切；图片可在放置后拖动四角修改大小。</p>
+          <p class="dlg-desc" id="planOverlayHelp">建筑代码和图片均按原生像素比例透明裁切。地形上不会带绿色外壳；勾选「保留砖块地基」才画出户型自带的砖块地板。图片可在放置后拖动四角修改大小。</p>
           <button type="button" class="btn btn-primary btn-block" id="btnApplyPlanOverlay">放到地图中央</button>
         </div>
       </div>
@@ -412,11 +490,15 @@
   <input type="file" id="fileDeskPaper" accept=".txt,text/plain,*/*" hidden />
   <input type="file" id="fileImageTerrain" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
   <input type="file" id="filePlanOverlay" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+  <input type="file" id="paperLibraryFolder" accept=".txt,text/plain" multiple webkitdirectory directory hidden />
+  <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
 
   <script src="/web/codec.js?v=43"></script>
+  <script src="/web/paper-library-core.js?v=4"></script>
   <script src="/web/app-dialog.js?v=1"></script>
-  <script src="/web/mobile-workspace.js?v=9"></script>
-  <script src="/web/building-preview.js?v=3"></script>
-  <script src="/web/app.js?v=204"></script>
+  <script src="/web/mobile-workspace.js?v=14"></script>
+  <script src="/web/building-preview.js?v=6"></script>
+  <script src="/web/material-ledger.js?v=3"></script>
+  <script src="/web/app.js?v=240"></script>
 </body>
 </html>

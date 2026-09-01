@@ -57,7 +57,10 @@ const BASE_KIND_TABS = [
 const CUSTOMS_KEY = "manor-building-customs-v1";
 const SESSION_KEY = "manor-building-session-v1";
 const ASSET_PREFS_KEY = "manor-building-asset-prefs-v1";
-const HUD_LAYOUT_KEY = "manor-building-hud-layout-v1";
+const HUD_LAYOUT_KEY = "manor-building-hud-layout-v2";
+const SHEET_LAYOUT_KEY = "manor-building-sheet-layout-v1";
+const SHEET_MIN_W = 280;
+const SHEET_MIN_H = 260;
 const OBJECT_SNAP_PX = 6;
 const MAX_PLANE = 8192;
 // Center / content-front helpers stay in the authored visible range.
@@ -75,15 +78,15 @@ const STAMP_PREVIEW_MAX = 80;
 const PLACE_TOOLS = new Set(["paint", "stamp", "tile", "rect", "line", "circle", "triangle", "diamond", "ring"]);
 const TOOL_INFO = {
   select: { label: "选择", hint: "点击选中 · Space+拖动移动素材 · 空白处拖动圈选" },
-  paint: { label: "纯笔刷", hint: "只铺不选 · 点到哪画到哪" },
-  stamp: { label: "点刷", hint: "点击盖一枚，拖着连续盖" },
-  tile: { label: "平铺", hint: "拖出区域错缝铺满 · Shift 整齐网格" },
-  rect: { label: "矩形", hint: "拖出矩形铺满 · Shift 正方形" },
-  line: { label: "直线", hint: "拖任意角度的线，素材精确吸附排在线上 · Shift 锁 45°" },
-  circle: { label: "圆形", hint: "拖出圆形铺放 · Shift 正圆" },
-  triangle: { label: "三角", hint: "拖出三角形区域铺放" },
+  paint: { label: "纯笔刷", hint: "只铺不选 · 按贴地点连续盖，自动避开已占格子" },
+  stamp: { label: "点刷", hint: "点击盖一枚，拖着按地块格子连续盖" },
+  tile: { label: "平铺", hint: "按 2:1 地块格子铺满 · Shift 正方形区域" },
+  rect: { label: "矩形", hint: "按地块格子铺满矩形 · Shift 正方形" },
+  line: { label: "直线", hint: "沿线贴地排开，间距跟脚印走 · Shift 锁 45°" },
+  circle: { label: "圆形", hint: "按地块格子铺圆 · Shift 正圆" },
+  triangle: { label: "三角", hint: "按地块格子铺三角形" },
   diamond: { label: "菱形", hint: "斜向菱形铺满，贴地块 · Shift 正菱" },
-  ring: { label: "描边", hint: "沿一圈铺放 · Shift 圆圈" },
+  ring: { label: "描边", hint: "沿一圈按脚印间距铺 · Shift 圆圈" },
 };
 const BI = globalThis.BuildingInteractions;
 if (!BI) throw new Error("building-interactions.js 未加载");
@@ -153,6 +156,8 @@ const state = {
   spacePan: false,
   railCollapsed: false,
   railWidth: 340,
+  sheetPinned: false,
+  sheetLayout: null,
   assetMode: "all",
   assetFavorites: new Set(),
   assetRecent: [],
@@ -199,7 +204,7 @@ function upgradeWorkspaceChrome() {
     root.id = "viewportOverlayRoot";
     root.className = "viewport-overlay-root";
     shell.after(root);
-    ["designDock", "canvasToolDock", "hudStack"].forEach((id) => {
+    ["designDock", "canvasToolDock", "hudStack", "mobileSelectionBar", "materialsDock"].forEach((id) => {
       const element = document.getElementById(id);
       if (element) root.appendChild(element);
     });
@@ -250,25 +255,49 @@ function clampHudPosition(el, left, top) {
 function applyHudPosition(el, pos) {
   if (!el || !pos || !Number.isFinite(pos.left) || !Number.isFinite(pos.top)) return;
   el.classList.add("is-placed");
-  el.style.left = `${Math.round(pos.left)}px`;
-  el.style.top = `${Math.round(pos.top)}px`;
+  const left = `${Math.round(pos.left)}px`;
+  const top = `${Math.round(pos.top)}px`;
+  el.style.setProperty("--hud-left", left);
+  el.style.setProperty("--hud-top", top);
+  el.style.left = left;
+  el.style.top = top;
   el.style.right = "auto";
   el.style.bottom = "auto";
   el.style.transform = "none";
 }
 
-function resetHudPosition(el) {
+function resetHudPosition(el, options = {}) {
   if (!el) return;
   el.classList.remove("is-placed");
+  el.style.removeProperty("--hud-left");
+  el.style.removeProperty("--hud-top");
   el.style.left = "";
   el.style.top = "";
   el.style.right = "";
   el.style.bottom = "";
   el.style.transform = "";
-  saveHudLayout();
+  if (options.persist !== false) saveHudLayout();
+}
+
+function workspaceMode() {
+  return window.MobileWorkspace?.modeForViewport() || { mobile: false, tablet: false, coarse: false };
+}
+
+function isCoarsePointer() {
+  return !!workspaceMode().coarse;
+}
+
+function buildingFloatingHud() {
+  const mode = workspaceMode();
+  return mode.mobile && (mode.tablet || state.phase === "design");
+}
+
+function hudDragEnabled() {
+  return !workspaceMode().mobile || buildingFloatingHud();
 }
 
 function layoutFloatingHuds() {
+  if (!hudDragEnabled()) return;
   const parent = hudLayoutParent();
   if (!parent || parent.clientWidth < 32 || parent.clientHeight < 32) return;
   const saved = loadHudLayout();
@@ -291,12 +320,22 @@ function layoutFloatingHuds() {
 }
 
 function hudDragAllowed(event, mode) {
-  if (event.button !== 0) return false;
-  if (mode === "grip") return !!event.target.closest(".hud-drag-grip");
-  if (event.target.closest("button:not(.hud-drag-grip), input, select, textarea, a, .tool-item, [data-command], [data-tool], [data-align], [data-marquee-mode]")) {
+  if (!hudDragEnabled()) return false;
+  if (event.pointerType === "mouse" && event.button !== 0) return false;
+  if (event.target.closest(".hud-drag-grip")) return true;
+  if (
+    event.target.closest(
+      "button:not(.hud-drag-grip), input, select, textarea, a, .tool-item, [data-command], [data-tool], [data-align], [data-marquee-mode], .facing-control, .mobile-tool-tabs"
+    )
+  ) {
     return false;
   }
-  return true;
+  const modeWs = workspaceMode();
+  if (buildingFloatingHud() && mode === "chrome") return true;
+  if (mode === "grip") return false;
+  const needGrip = event.pointerType !== "mouse" || isCoarsePointer();
+  if (needGrip) return false;
+  return mode === "chrome";
 }
 
 function bindFloatingHud(el, mode, listenOn) {
@@ -317,8 +356,14 @@ function bindFloatingHud(el, mode, listenOn) {
     const originTop = rect.top - parentRect.top;
     let dragging = false;
     const pointerId = event.pointerId;
+    try {
+      node.setPointerCapture(pointerId);
+    } catch {
+      // Capture may fail for synthetic events.
+    }
     const onMove = (moveEvent) => {
       if (moveEvent.pointerId !== pointerId) return;
+      moveEvent.preventDefault();
       const dx = moveEvent.clientX - startX;
       const dy = moveEvent.clientY - startY;
       if (!dragging && dx * dx + dy * dy < 16) return;
@@ -328,10 +373,27 @@ function bindFloatingHud(el, mode, listenOn) {
     };
     const onUp = (upEvent) => {
       if (upEvent.pointerId !== pointerId) return;
+      node.removeEventListener("pointermove", onMove);
+      node.removeEventListener("pointerup", onUp);
+      node.removeEventListener("pointercancel", onUp);
       window.removeEventListener("pointermove", onMove, true);
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onUp, true);
+      try {
+        node.releasePointerCapture(pointerId);
+      } catch {
+        // Already released.
+      }
       el.classList.remove("is-dragging-hud");
+      const tapped = !dragging;
+      const now = performance.now();
+      const prevTap = Number(node.dataset.hudTapAt || 0);
+      node.dataset.hudTapAt = tapped ? String(now) : "0";
+      if (tapped && prevTap && now - prevTap < 420) {
+        node.dataset.hudTapAt = "0";
+        resetHudPosition(el);
+        return;
+      }
       if (dragging) {
         saveHudLayout();
         const swallow = (clickEvent) => {
@@ -341,10 +403,13 @@ function bindFloatingHud(el, mode, listenOn) {
         el.addEventListener("click", swallow, { capture: true, once: true });
       }
     };
+    node.addEventListener("pointermove", onMove);
+    node.addEventListener("pointerup", onUp);
+    node.addEventListener("pointercancel", onUp);
     window.addEventListener("pointermove", onMove, true);
     window.addEventListener("pointerup", onUp, true);
     window.addEventListener("pointercancel", onUp, true);
-  });
+  }, { passive: false });
   el.querySelector(".hud-drag-grip")?.addEventListener("dblclick", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -355,8 +420,10 @@ function bindFloatingHud(el, mode, listenOn) {
 function bindFloatingHuds() {
   const command = document.getElementById("designDock");
   const tools = document.getElementById("canvasToolDock");
-  bindFloatingHud(command, "chrome");
-  bindFloatingHud(tools, "grip", tools?.querySelector(".hud-drag-grip"));
+  const toolrail = tools?.querySelector(".canvas-toolrail");
+  bindFloatingHud(command, "chrome", command);
+  if (toolrail) bindFloatingHud(tools, "chrome", toolrail);
+  else bindFloatingHud(tools, "grip", tools?.querySelector(".hud-drag-grip"));
   layoutFloatingHuds();
 }
 
@@ -391,9 +458,11 @@ function rememberAsset(component, pack = component?._pack || state.pack) {
 async function bootBuilding() {
   document.documentElement.classList.add("boot-pending");
   window.MobileWorkspace?.init();
+  window.MaterialLedger?.bind();
   upgradeWorkspaceChrome();
   loadAssetPreferences();
   loadImage("/bdesign/imgs/glsbg.gif");
+  const remoteSavesPromise = fetchBuildingSaves();
   const [catalog, uidCatalog, packUids, itemIcons] = await Promise.all([
     fetch("/api/editor-catalog").then((response) => response.json()),
     fetch("/data/building_uid_map.json")
@@ -427,7 +496,7 @@ async function bootBuilding() {
   ensureActiveCategory();
   state.base =
     catalog.building.bases.find((base) => base.kind === 0) || catalog.building.bases[0] || null;
-  const remoteSaves = await fetchBuildingSaves();
+  const remoteSaves = await remoteSavesPromise;
   if (remoteSaves && remoteSaves.customs) {
     applyCustomsData(remoteSaves.customs);
     try {
@@ -453,29 +522,52 @@ async function bootBuilding() {
   fillBaseIcons();
   fillCustoms();
   setRailTab("assets");
-  const restored = restoreBuildingSession(remoteSaves && remoteSaves.session);
-  let wasMobileWorkspace = !!window.MobileWorkspace?.modeForViewport().mobile;
+  const sessionSnap = pickNewerBuildingSnap(
+    readLocalBuildingSession(),
+    remoteSaves && remoteSaves.session
+  );
+  const restored = restoreBuildingSession(sessionSnap);
+  let wasMobileWorkspace = !!workspaceMode().mobile;
   if (wasMobileWorkspace) {
     state.railCollapsed = restored && state.phase === "design";
     applyRailState();
+    if (!buildingFloatingHud()) {
+      resetHudPosition(document.getElementById("designDock"), { persist: false });
+      resetHudPosition(document.getElementById("canvasToolDock"), { persist: false });
+    }
   }
   window.MobileWorkspace?.onModeChange((mode) => {
     if (mode.mobile !== wasMobileWorkspace) {
-      setMobileToolsOpen(false);
+      setMobileToolsOpen(mode.mobile && state.phase === "design");
       wasMobileWorkspace = mode.mobile;
+      if (mode.mobile && !buildingFloatingHud()) {
+        resetHudPosition(document.getElementById("designDock"), { persist: false });
+        resetHudPosition(document.getElementById("canvasToolDock"), { persist: false });
+      } else {
+        layoutFloatingHuds();
+      }
       if (mode.mobile) {
         if (state.phase === "select") openBuildingRail("assets");
         else closeBuildingRail();
       } else {
         state.railCollapsed = false;
         applyRailState();
+        layoutFloatingHuds();
       }
     } else {
       syncBuildingRailAccessibility();
+      syncBuildingSheetLayout();
       fitStageToShell();
+      if (mode.mobile) layoutFloatingHuds();
     }
   });
-  if (restored && !(remoteSaves && remoteSaves.session)) saveBuildingSession();
+  if (
+    restored &&
+    sessionSnap &&
+    Number(sessionSnap.savedAt) > Number(remoteSaves?.session?.savedAt || 0)
+  ) {
+    putBuildingSaves({ session: sessionSnap }, false).catch((error) => console.warn(error));
+  }
   if (!(remoteSaves && remoteSaves.customs) && (state.customs.length || state.customFolders.length)) {
     saveCustoms();
   }
@@ -484,6 +576,7 @@ async function bootBuilding() {
     updateBase();
   }
   if (wasMobileWorkspace && state.phase === "select") openBuildingRail("assets");
+  if (wasMobileWorkspace && state.phase === "design") setMobileToolsOpen(true);
   syncSnapUi();
   syncMarqueeModeUi();
   syncVeilControls();
@@ -502,6 +595,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=239"]);
 }
 
 function sortThemes(packs) {
@@ -607,6 +701,11 @@ function updateAssetFilterSummary() {
     : `${themeFilterLabel()} · ${catLabel} · 无素材`;
 }
 
+function syncMaterialsDock() {
+  const dock = document.getElementById("materialsDock");
+  if (dock) dock.hidden = state.phase !== "design";
+}
+
 function setPhase(phase) {
   state.phase = phase;
   const app = document.getElementById("buildingApp");
@@ -631,6 +730,8 @@ function setPhase(phase) {
   updateToolHint();
   updateSelectionCaption();
   syncMobileBuildingChrome();
+  syncMaterialsDock();
+  if (workspaceMode().mobile) setMobileToolsOpen(phase === "design");
   markBuildingDirty();
 }
 
@@ -750,14 +851,19 @@ function setRailTab(tab) {
     state.category = CUSTOM_CATEGORY;
     tab = "assets";
   }
+  if (tab !== "layers" && tab !== "materials") tab = "assets";
   state.railTab = tab;
   if (window.MobileWorkspace?.modeForViewport().mobile) state.mobileSheetMode = tab;
   document.querySelectorAll(".rail-tab").forEach((button) => {
     button.classList.toggle("on", button.dataset.tab === tab);
     button.setAttribute("aria-selected", String(button.dataset.tab === tab));
   });
-  document.getElementById("tabAssets").hidden = tab !== "assets";
-  document.getElementById("tabLayers").hidden = tab !== "layers";
+  const assets = document.getElementById("tabAssets");
+  const layers = document.getElementById("tabLayers");
+  const materials = document.getElementById("tabMaterials");
+  if (assets) assets.hidden = tab !== "assets";
+  if (layers) layers.hidden = tab !== "layers";
+  if (materials) materials.hidden = tab !== "materials";
   if (tab === "layers") fillLayers();
   if (tab === "assets") syncAssetCategoryView();
   syncMobileBuildingPanels();
@@ -843,41 +949,62 @@ function stampGeometry(template = stampTemplate()) {
   return { width: 32, height: 24 };
 }
 
-function stampPitch(aligned = false) {
-  const geometry = stampGeometry();
-  if (aligned) {
+function stampGroundSize(component = stampTemplate()?.component, face = state.brushState) {
+  const geometry = component
+    ? frameGeometry(component, face)
+    : stampGeometry();
+  const pack = component?._pack || state.pack;
+  const image = component ? loadImage(spriteUrl(component, pack, face)) : null;
+  const opaque = cacheSpriteOpaqueBounds(image);
+  const span = opaque?.width > 1 ? opaque.width : Number(geometry.width) || 24;
+  const width = Math.max(12, Math.min(72, span * 0.72));
+  return { width, depth: Math.max(8, width * 0.5) };
+}
+
+function stampFootOffset(component, face = 0) {
+  const geometry = frameGeometry(component, face);
+  const pack = component?._pack || state.pack;
+  const image = loadImage(spriteUrl(component, pack, face));
+  const opaque = cacheSpriteOpaqueBounds(image);
+  if (opaque && opaque.width > 1 && opaque.height > 1) {
     return {
-      x: Math.max(8, Math.round(geometry.width) || 16),
-      y: Math.max(8, Math.round(geometry.height) || 16),
+      x: opaque.x + opaque.width / 2,
+      y: opaque.y + opaque.height - Math.max(1, opaque.height * 0.08),
     };
   }
   return {
-    x: Math.max(8, Math.round((geometry.width || 16) / 2)),
-    y: Math.max(8, Math.round((geometry.height || 16) / 2)),
+    x: (geometry.width || 16) / 2,
+    y: (geometry.height || 16) * 0.8,
   };
 }
 
+function stampPitch(aligned = false) {
+  const ground = stampGroundSize();
+  const width = Math.max(8, Math.round(ground.width));
+  const depth = Math.max(8, Math.round(ground.depth));
+  if (aligned) return { x: width, y: depth };
+  return { x: width, y: depth };
+}
+
 function lineStampStep(stroke) {
-  const geometry = stampGeometry();
+  const ground = stampGroundSize();
   const dx = Number(stroke?.end?.x) - Number(stroke?.start?.x);
   const dy = Number(stroke?.end?.y) - Number(stroke?.start?.y);
   const length = Math.hypot(dx, dy);
-  if (length < 0.001) return 8;
+  if (length < 0.001) return Math.max(6, ground.width * 0.5);
   const ux = Math.abs(dx / length);
   const uy = Math.abs(dy / length);
-  // Building sprites are upright on a 2:1 ground plane. Their full image
-  // height is not footprint depth; using it creates huge gaps for lamps.
-  const groundWidth = Math.max(12, Math.min(64, (Number(geometry.width) || 24) * 0.5));
-  const groundDepth = Math.max(8, groundWidth * 0.5);
-  // 沿线铺放要贴紧成串（栅栏、灯柱），步长就取素材在该方向上的投影脚印，
-  // 不再额外放大留缝。
-  return Math.max(6, ux * groundWidth + uy * groundDepth);
+  return Math.max(6, ux * ground.width + uy * ground.depth);
 }
 
-function depthSortedStampPoints(points, tool) {
-  const rows = points.slice();
-  if (tool === "line") rows.sort((a, b) => a.y - b.y || a.x - b.x);
-  return rows;
+function depthSortedStampPoints(points) {
+  return points.slice().sort((a, b) => a.x + 2 * a.y - (b.x + 2 * b.y) || a.x - b.x);
+}
+
+function isoCellKey(x, y, stepU) {
+  const iso = BI.sceneToIso(x, y);
+  const step = Math.max(1, Number(stepU) || 4);
+  return `${Math.round(iso.u / step)}:${Math.round(iso.v / step)}`;
 }
 
 function currentShapeEnd(event) {
@@ -896,10 +1023,13 @@ function shapeStampPoints(stroke = state.shapeStroke) {
     stroke.tool === "diamond" ||
     (stroke.tool === "tile" && !!stroke.aligned);
   const ringEllipse = stroke.tool === "ring" && !!stroke.aligned;
+  const useIso = snapAxis() !== "ortho";
+  const lineStep = stroke.tool === "line" || stroke.tool === "ring" ? lineStampStep(stroke) : 0;
   return BI.collectStampPoints(stroke.tool, stroke.start, stroke.end, stampPitch(gridAligned), {
     aligned: gridAligned || ringEllipse,
     cap: STAMP_CAP,
-    lineStep: stroke.tool === "line" ? lineStampStep(stroke) : 0,
+    lineStep,
+    lattice: useIso ? "iso" : "ortho",
   });
 }
 
@@ -2045,6 +2175,7 @@ function appendAssetTile(parent, row) {
   button.onpointerdown = (event) => {
     if (missing || component.kind === "kit") return;
     if (event.button !== 0) return;
+    if (isCoarsePointer()) return;
     event.preventDefault();
     selectBrush();
     beginPaletteDrag("component", component, event, button);
@@ -2060,7 +2191,7 @@ function appendAssetTile(parent, row) {
       return;
     }
     selectBrush();
-    if (window.MobileWorkspace?.modeForViewport().mobile) closeBuildingRail();
+    if (window.MobileWorkspace?.modeForViewport().mobile) closeBuildingRailOnPick();
   };
   const favorite = document.createElement("button");
   favorite.type = "button";
@@ -2324,7 +2455,9 @@ function updateSelectionCaption() {
   const btnClearPick = document.getElementById("btnClearPick");
   const count = state.selected.length;
   const mobileBar = document.getElementById("mobileSelectionBar");
-  if (mobileBar) mobileBar.hidden = state.phase !== "design" || count < 1;
+  const mobileActive =
+    state.phase === "design" && (count >= 1 || hasBrush() || !!state.component || !!state.customBrush);
+  if (mobileBar) mobileBar.hidden = !mobileActive;
   const picking = hasBrush() || count > 0;
   if (btnClearPick) btnClearPick.hidden = !picking;
   if (actions) actions.hidden = count < 1;
@@ -2354,7 +2487,10 @@ function updateSelectionCaption() {
 
   if (count > 1) {
     selected.textContent = `已选 ${count} 项${groupHint}${lockHint}${lockedCount === count ? "" : " · 可一起移动变换"}`;
-    updateCurrentMaterials(null);
+    updateCurrentMaterials(null, {
+      records: state.selected.map((index) => state.records[index]).filter(Boolean),
+      title: `已选 ${count} 项`,
+    });
     updateAlignBar();
     return;
   }
@@ -2414,13 +2550,194 @@ function renderMaterialChip(name, count) {
   return chip;
 }
 
-function updateCurrentMaterials(component) {
+function sortedMaterialPairs(map) {
+  return [...(map || [])].sort(
+    (a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0) || String(a[0]).localeCompare(String(b[0]), "zh")
+  );
+}
+
+function materialRowsFromPairs(pairs, source = "") {
+  return pairs.map(([name, count]) => ({
+    name,
+    count,
+    iconUrl: materialIconUrl(name),
+    source,
+  }));
+}
+
+function materialsFromComponent(component, source = "") {
+  return (component?.materials || []).map((item) => ({
+    name: item.name,
+    count: item.count,
+    iconUrl: materialIconUrl(item.name),
+    source: source || component.category || "此件",
+  }));
+}
+
+function materialsFromRecords(records, source = "选中") {
+  const map = new Map();
+  (records || []).forEach((record) => {
+    const component = recordComponent(record);
+    (component?.materials || []).forEach((item) => {
+      map.set(item.name, (map.get(item.name) || 0) + item.count);
+    });
+  });
+  return materialRowsFromPairs(sortedMaterialPairs(map), source);
+}
+
+function buildingMaterialGroups(records = state.records) {
+  const report = buildingMaterialReport(records);
+  const baseMap = new Map();
+  (state.base?.baseMaterials || []).forEach((item) => {
+    baseMap.set(item.name, (baseMap.get(item.name) || 0) + item.count);
+  });
+  const spriteMap = new Map();
+  records.forEach((record) => {
+    if (record.hidden || Number(record.mat) === 0) return;
+    const component = recordComponent(record);
+    (component?.materials || []).forEach((item) => {
+      spriteMap.set(item.name, (spriteMap.get(item.name) || 0) + item.count);
+    });
+  });
+  const groups = [];
+  const totalRows = materialRowsFromPairs(sortedMaterialPairs(report.totals), "整栋");
+  if (totalRows.length) groups.push({ id: "total", name: "合计", rows: totalRows });
+  if (baseMap.size) {
+    groups.push({ name: "户型", rows: materialRowsFromPairs(sortedMaterialPairs(baseMap), "户型") });
+  }
+  if (spriteMap.size) {
+    groups.push({
+      name: "装修素材",
+      rows: materialRowsFromPairs(sortedMaterialPairs(spriteMap), "装修"),
+    });
+  }
+  return { groups, report, totalRows };
+}
+
+function buildingLedgerPayload() {
+  const { groups } = buildingMaterialGroups();
+  const baseName = state.base?.name || "建筑";
+  return {
+    title: `${baseName} 材料清单`,
+    filename: `${baseName}-材料清单`,
+    groups,
+  };
+}
+
+let pieceMaterialPayload = null;
+let showingPieceMaterials = false;
+
+function pieceLedgerPayload(rows, title) {
+  return {
+    title: title || "此件材料",
+    filename: `${title || "此件"}-材料清单`,
+    groups: [{ name: title || "此件", rows: rows || [] }],
+  };
+}
+
+function openBuildingMaterialLedger() {
+  window.MaterialLedger?.open(buildingLedgerPayload());
+}
+
+function openPieceMaterialLedger() {
+  if (pieceMaterialPayload?.groups?.[0]?.rows?.length) {
+    window.MaterialLedger?.open(pieceMaterialPayload);
+    return;
+  }
+  openBuildingMaterialLedger();
+}
+
+function fillMaterialRows(host, rows, emptyText) {
+  if (!host) return;
+  if (window.MaterialLedger?.fillList) {
+    window.MaterialLedger.fillList(host, rows, { empty: emptyText || "暂无材料" });
+    return;
+  }
+  host.replaceChildren();
+  if (!rows?.length) {
+    const empty = document.createElement("p");
+    empty.className = "design-materials-empty";
+    empty.textContent = emptyText || "暂无材料";
+    host.appendChild(empty);
+  }
+}
+
+function setDesignMaterials(rows, title, piece) {
+  const heading = document.getElementById("designMaterialsTitle");
+  const pieceBtn = document.getElementById("btnPieceMaterials");
+  if (heading) heading.textContent = title || (piece ? "此件材料" : "整栋材料");
+  if (pieceBtn) pieceBtn.hidden = !piece;
+  fillMaterialRows(document.getElementById("designMaterialsList"), rows, piece ? "此件没有材料需求" : "还没有材料");
+}
+
+function updateCurrentMaterials(component, options = {}) {
   const host = document.getElementById("currentMaterials");
+  const records = options.records || null;
+  let rows = [];
+  let title = "整栋材料";
+  showingPieceMaterials = false;
+  if (component) {
+    rows = materialsFromComponent(component);
+    title = options.title || `${component.category || ""} #${component.id}`.trim() || "此件材料";
+    showingPieceMaterials = true;
+  } else if (records?.length) {
+    rows = materialsFromRecords(records, options.title || "选中");
+    title = options.title || `已选 ${records.length} 项`;
+    showingPieceMaterials = true;
+  } else {
+    rows = buildingMaterialGroups().totalRows;
+  }
+  pieceMaterialPayload = showingPieceMaterials ? pieceLedgerPayload(rows, title) : null;
+  if (host) {
+    host.replaceChildren();
+    rows.slice(0, 12).forEach((item) => host.appendChild(renderMaterialChip(item.name, item.count)));
+    host.disabled = !showingPieceMaterials || !rows.length;
+    host.hidden = false;
+    host.title = showingPieceMaterials ? "查看此件材料" : "";
+  }
+  const pieceRow = host?.closest(".materials-dock-piece");
+  const mode = workspaceMode();
+  if (pieceRow && mode.mobile) pieceRow.hidden = !showingPieceMaterials;
+  setDesignMaterials(rows, showingPieceMaterials ? title : "整栋材料", showingPieceMaterials);
+}
+
+function fillMaterialList(host, totals = null, unresolved = null) {
   if (!host) return;
   host.replaceChildren();
-  (component?.materials || []).forEach((item) => {
-    host.appendChild(renderMaterialChip(item.name, item.count));
+  let rows = totals;
+  let missing = unresolved;
+  if (!rows) {
+    const report = buildingMaterialReport();
+    rows = report.totals;
+    missing = report.unresolved;
+  }
+  if (Number(missing) > 0) {
+    const warning = document.createElement("span");
+    warning.className = "material-warning";
+    warning.textContent = `部分统计：${missing} 件素材未解析`;
+    warning.title = "未解析素材无法可靠计算所需材料，不会用其他素材包猜测补齐。";
+    host.appendChild(warning);
+  }
+  sortedMaterialPairs(rows).forEach(([name, count]) => {
+    host.appendChild(renderMaterialChip(name, count));
   });
+}
+
+function updateAllMaterials() {
+  const report = buildingMaterialReport();
+  const strip = document.getElementById("allMaterials");
+  fillMaterialList(strip, report.totals, report.unresolved);
+  const meta = document.getElementById("allMaterialsMeta");
+  const kinds = report.totals.size;
+  let pieces = 0;
+  report.totals.forEach((count) => {
+    pieces += count;
+  });
+  if (meta) meta.textContent = kinds ? `${kinds} 种 · ${pieces} 件` : "";
+  const totalRows = materialRowsFromPairs(sortedMaterialPairs(report.totals), "整栋");
+  const projectMeta = document.getElementById("projectMaterialsMeta");
+  if (projectMeta) projectMeta.textContent = kinds ? `${kinds}种 · ${pieces}件` : "暂无材料";
+  if (!showingPieceMaterials) setDesignMaterials(totalRows, "整栋材料", false);
 }
 
 function updateAlignBar() {
@@ -2602,10 +2919,12 @@ function drawGhost() {
   const url = spriteUrl(component, state.pack, state.brushState);
   const image = loadImage(url);
   const geometry = frameGeometry(component, state.brushState);
-  const x = Math.round(state.ghost.x - geometry.width / 2);
-  const y = Math.round(state.ghost.y - geometry.height / 2);
+  const foot = stampFootOffset(component, state.brushState);
+  const x = Math.round(state.ghost.x - foot.x);
+  const y = Math.round(state.ghost.y - foot.y);
   ctx.save();
   ctx.globalAlpha = 0.55;
+  drawGroundDiamond(state.ghost.x, state.ghost.y);
   if (image?.complete && image.naturalWidth) {
     drawFrameImage(ctx, image, x, y, geometry.width, geometry.height);
   } else {
@@ -2615,7 +2934,21 @@ function drawGhost() {
   ctx.restore();
 }
 
+function drawGroundDiamond(cx, cy) {
+  const ground = stampGroundSize();
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - ground.depth / 2);
+  ctx.lineTo(cx + ground.width / 2, cy);
+  ctx.lineTo(cx, cy + ground.depth / 2);
+  ctx.lineTo(cx - ground.width / 2, cy);
+  ctx.closePath();
+  ctx.strokeStyle = "rgba(46, 107, 79, 0.85)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
 function drawStampGhostAt(template, cx, cy) {
+  drawGroundDiamond(cx, cy);
   if (template.type === "custom") {
     const custom = template.custom;
     const bounds = customBrushBounds(custom);
@@ -2641,8 +2974,9 @@ function drawStampGhostAt(template, cx, cy) {
   const pack = template.pack || recordPack(record) || component?._pack;
   const face = record ? record.state ?? record.flip ?? 0 : state.brushState;
   const geometry = frameGeometry(component, face);
-  const x = Math.round(cx - geometry.width / 2);
-  const y = Math.round(cy - geometry.height / 2);
+  const foot = stampFootOffset(component, face);
+  const x = Math.round(cx - foot.x);
+  const y = Math.round(cy - foot.y);
   const url = spriteUrl(component, pack, face);
   const image = loadImage(url);
   if (image?.complete && image.naturalWidth) {
@@ -2660,7 +2994,7 @@ function drawShapePreview() {
   ctx.save();
   ctx.globalAlpha = 0.42;
   ctx.fillStyle = "#7ec8a0";
-  depthSortedStampPoints(shapeStampPoints(stroke), stroke.tool)
+  depthSortedStampPoints(shapeStampPoints(stroke))
     .slice(0, STAMP_PREVIEW_MAX)
     .forEach((point) => drawStampGhostAt(template, point.x, point.y));
   ctx.restore();
@@ -2823,33 +3157,6 @@ function buildingMaterialReport(records = state.records) {
 
 function buildingMaterialTotals(records = state.records) {
   return buildingMaterialReport(records).totals;
-}
-
-function fillMaterialList(host, totals = null, unresolved = null) {
-  if (!host) return;
-  host.replaceChildren();
-  let rows = totals;
-  let missing = unresolved;
-  if (!rows) {
-    const report = buildingMaterialReport();
-    rows = report.totals;
-    missing = report.unresolved;
-  }
-  if (Number(missing) > 0) {
-    const warning = document.createElement("span");
-    warning.className = "material-warning";
-    warning.textContent = `部分统计：${missing} 件素材未解析`;
-    warning.title = "未解析素材无法可靠计算所需材料，不会用其他素材包猜测补齐。";
-    host.appendChild(warning);
-  }
-  [...rows].forEach(([name, count]) => {
-    host.appendChild(renderMaterialChip(name, count));
-  });
-}
-
-function updateAllMaterials() {
-  const strip = document.getElementById("allMaterials");
-  fillMaterialList(strip);
 }
 
 function sceneRectToFrame(rect, transform = viewportTransform()) {
@@ -3532,12 +3839,14 @@ function normalizeBrushState() {
 
 function updateFacingControl() {
   const label = document.getElementById("facingLabel");
-  if (!label) return;
   const frames = normalizeBrushState();
-  label.textContent = `${state.brushState + 1}/${frames}`;
+  const text = `${state.brushState + 1}/${frames}`;
+  if (label) label.textContent = text;
+  const mobileLabel = document.getElementById("mobileFacingLabel");
+  if (mobileLabel) mobileLabel.textContent = text;
   applyHoverTip(
     document.getElementById("facingLabel"),
-    `朝向 ${state.brushState + 1}/${frames}`,
+    `朝向 ${text}`,
     "Q / E"
   );
 }
@@ -3710,7 +4019,7 @@ function updatePaletteDrag(event) {
   const drag = state.paletteDrag;
   if (!drag) return;
   const dist = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-  if (!drag.active && dist > 6) {
+  if (!drag.active && dist > (isCoarsePointer() ? 22 : 6)) {
     drag.active = true;
     document.body.classList.add("is-palette-dragging");
     drag.sourceEl?.classList.add("dragging");
@@ -3862,6 +4171,24 @@ function buildingSessionSnapshot() {
   };
 }
 
+function readLocalBuildingSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const snap = JSON.parse(raw);
+    return snap && snap.v === 1 ? snap : null;
+  } catch {
+    return null;
+  }
+}
+
+function pickNewerBuildingSnap(a, b) {
+  const ok = (snap) => snap && snap.v === 1;
+  if (!ok(a)) return ok(b) ? b : null;
+  if (!ok(b)) return a;
+  return Number(b.savedAt) > Number(a.savedAt) ? b : a;
+}
+
 function saveBuildingSession() {
   const snap = buildingSessionSnapshot();
   try {
@@ -3871,6 +4198,17 @@ function saveBuildingSession() {
     console.warn("建筑会话保存失败", error);
   }
   putBuildingSaves({ session: snap }, true).catch((error) => console.warn(error));
+}
+
+async function saveBuildingSessionForSwitch() {
+  const snap = buildingSessionSnapshot();
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(snap));
+    state.sessionDirty = false;
+  } catch (error) {
+    console.warn("建筑会话保存失败", error);
+  }
+  putBuildingSaves({ session: snap }, false).catch((error) => console.warn(error));
 }
 
 async function saveDesignNow() {
@@ -4008,13 +4346,27 @@ function wireDeskSwitchSave(saveFn) {
   document.querySelectorAll(".desk-switch-inline a[href]").forEach((link) => {
     if (link.classList.contains("on") || link.getAttribute("aria-current") === "page") return;
     link.addEventListener("click", (event) => {
+      if (link.dataset.switching === "1") {
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
+      link.dataset.switching = "1";
       const href = link.getAttribute("href");
       Promise.resolve(saveFn())
         .catch(() => {})
         .finally(() => {
           window.location.assign(href);
         });
+    });
+  });
+}
+
+function warmOtherDesk(htmlHref, extraUrls = []) {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 700));
+  idle(() => {
+    [htmlHref, ...extraUrls].filter(Boolean).forEach((url) => {
+      fetch(url, { credentials: "same-origin" }).catch(() => {});
     });
   });
 }
@@ -4256,15 +4608,9 @@ function addComponent(x, y) {
     appAlert("原版素材表中没有这个组件对应的图像记录。");
     return;
   }
-  const geometry = frameGeometry(state.component, state.brushState);
-  let px = x - geometry.width / 2;
-  let py = y - geometry.height / 2;
-  if (state.snap.enabled) {
-    const snapped = snapGridPoint(px, py);
-    px = snapped.x;
-    py = snapped.y;
-  }
-  const pos = clampRecordPos(px, py);
+  const world = state.snap.enabled ? snapGridPoint(x, y) : { x, y };
+  const foot = stampFootOffset(state.component, state.brushState);
+  const pos = clampRecordPos(world.x - foot.x, world.y - foot.y);
   pushHistory();
   state.records.push({
     mode: "desk",
@@ -4280,21 +4626,19 @@ function addComponent(x, y) {
   renderBuilding();
 }
 
-function appendSpriteStamp(component, pack, face, cx, cy, seen, { gridSnap = true } = {}) {
+function appendSpriteStamp(component, pack, face, cx, cy, seen, { occupied } = {}) {
   const usePack = pack || component?._pack || state.pack;
   const uid = componentUid(component?.id, usePack);
   if (uid == null || !component) return -1;
-  const geometry = frameGeometry(component, face);
-  let px = cx - geometry.width / 2;
-  let py = cy - geometry.height / 2;
-  if (gridSnap && state.snap.enabled) {
-    const snapped = snapGridPoint(px, py);
-    px = snapped.x;
-    py = snapped.y;
-  }
-  const pos = clampRecordPos(px, py);
+  const foot = stampFootOffset(component, face);
+  const pos = clampRecordPos(cx - foot.x, cy - foot.y);
   const key = `${pos.x},${pos.y},${uid},${face}`;
   if (seen.has(key)) return -1;
+  if (occupied) {
+    const cell = isoCellKey(cx, cy, occupied.step);
+    if (occupied.cells.has(cell)) return -1;
+    occupied.cells.add(cell);
+  }
   seen.add(key);
   state.records.push({
     mode: "desk",
@@ -4316,10 +4660,9 @@ function placeStampBatch(points, tool = state.tool) {
   const seen = new Set();
   const indices = [];
   const historyLen = state.history.length;
-  // 直线铺放的落点已经精确落在用户画的线上；再逐点吸附网格会把线抖成
-  // 锯齿、间距忽大忽小，所以直线跳过网格吸附。
-  const stampOptions = { gridSnap: tool !== "line" };
-  depthSortedStampPoints(points, tool).forEach((point) => {
+  const ground = stampGroundSize(template.component, facingAbsolute(template.component || recordComponent(template.record)));
+  const occupied = { cells: new Set(), step: Math.max(1, ground.width / 4) };
+  depthSortedStampPoints(points).forEach((point) => {
     if (template.type === "sprite") {
       const index = appendSpriteStamp(
         template.component,
@@ -4328,7 +4671,7 @@ function placeStampBatch(points, tool = state.tool) {
         point.x,
         point.y,
         seen,
-        stampOptions
+        { occupied }
       );
       if (index >= 0) indices.push(index);
       return;
@@ -4343,12 +4686,15 @@ function placeStampBatch(points, tool = state.tool) {
         point.x,
         point.y,
         seen,
-        stampOptions
+        { occupied }
       );
       if (index >= 0) indices.push(index);
       return;
     }
     if (template.type === "custom") {
+      const cell = isoCellKey(point.x, point.y, occupied.step);
+      if (occupied.cells.has(cell)) return;
+      occupied.cells.add(cell);
       const start = state.records.length;
       placeCustomBrush(point.x, point.y, { history: false, select: false, render: false });
       for (let i = start; i < state.records.length; i++) indices.push(i);
@@ -4654,7 +5000,7 @@ function pasteClipboard(atScene) {
 async function groupSelected() {
   const indices = selectedUnlockedIndices();
   if (indices.length < 2) {
-    await appAlert("请先框选至少两个素材。分组只是方便图层里一次点选，圈选后已经可以一起移动。");
+    await appAlert("请先框选至少两个素材。点组标题一次选中整组，点组内素材仍可选中单件；圈选后已经可以一起移动。");
     return;
   }
   const name = await appPrompt("方便在图层里识别，也可以留空。", {
@@ -4739,12 +5085,12 @@ async function toggleLockSelected() {
   else lockSelected();
 }
 
-function nudgeSelected(dx, dy) {
+function nudgeSelected(dx, dy, { history = true } = {}) {
   const indices = expandGroupSelection(selectedUnlockedIndices()).filter(
     (index) => state.records[index] && !state.records[index].locked
   );
   if (!indices.length) return;
-  pushHistory();
+  if (history) pushHistory();
   indices.forEach((index) => {
     const record = state.records[index];
     const pos = clampRecordPos(record.x + dx, record.y + dy);
@@ -4754,6 +5100,91 @@ function nudgeSelected(dx, dy) {
   setSelection(indices);
   markBuildingDirty();
   renderBuilding();
+}
+
+const NUDGE_HOLD_DELAY = 320;
+const NUDGE_HOLD_MS = 55;
+const NUDGE_STEP_KEY = "manor-building-nudge-step";
+let nudgeRepeatTimer = 0;
+let nudgeRepeatInterval = 0;
+let nudgePadStep = 1;
+
+function stopNudgeRepeat() {
+  if (nudgeRepeatTimer) {
+    clearTimeout(nudgeRepeatTimer);
+    nudgeRepeatTimer = 0;
+  }
+  if (nudgeRepeatInterval) {
+    clearInterval(nudgeRepeatInterval);
+    nudgeRepeatInterval = 0;
+  }
+}
+
+function bindNudgePad() {
+  const pad = document.getElementById("nudgePad");
+  if (!pad) return;
+  const stepBtn = document.getElementById("btnNudgeStep");
+  try {
+    const stored = Number(localStorage.getItem(NUDGE_STEP_KEY));
+    if (Number.isFinite(stored) && stored >= 1) nudgePadStep = Math.min(128, Math.max(1, Math.round(stored)));
+  } catch (error) {}
+  const updateStepLabel = () => {
+    if (!stepBtn) return;
+    const value = `${nudgePadStep}px`;
+    let kicker = stepBtn.querySelector(".nudge-step-kicker");
+    let valueEl = stepBtn.querySelector(".nudge-step-value");
+    if (!kicker || !valueEl) {
+      stepBtn.replaceChildren();
+      kicker = document.createElement("span");
+      kicker.className = "nudge-step-kicker";
+      kicker.textContent = "步长";
+      valueEl = document.createElement("span");
+      valueEl.className = "nudge-step-value";
+      stepBtn.append(kicker, valueEl);
+    }
+    valueEl.textContent = value;
+    stepBtn.classList.toggle("is-coarse", nudgePadStep >= 10);
+    stepBtn.setAttribute("aria-label", `步长 ${nudgePadStep} 像素，点按设置`);
+    stepBtn.title = `当前步长 ${nudgePadStep} 像素，点按设置`;
+  };
+  updateStepLabel();
+  window.MobileWorkspace?.bindNudgeStepControl?.({
+    pad,
+    button: stepBtn,
+    unit: "px",
+    min: 1,
+    max: 128,
+    presets: [1, 2, 4, 5, 8, 10, 16],
+    fallback: 1,
+    getValue: () => nudgePadStep,
+    setValue: (value) => {
+      nudgePadStep = value;
+      try { localStorage.setItem(NUDGE_STEP_KEY, String(nudgePadStep)); } catch (error) {}
+      updateStepLabel();
+    },
+  });
+  pad.addEventListener("contextmenu", (event) => event.preventDefault());
+  pad.addEventListener("pointerdown", (event) => {
+    const btn = event.target.closest("[data-nudge]");
+    if (!btn || !pad.contains(btn)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = Number(btn.dataset.nudgeX) || 0;
+    const dy = Number(btn.dataset.nudgeY) || 0;
+    if (!dx && !dy) return;
+    btn.setPointerCapture?.(event.pointerId);
+    stopNudgeRepeat();
+    nudgeSelected(dx * nudgePadStep, dy * nudgePadStep);
+    nudgeRepeatTimer = setTimeout(() => {
+      nudgeRepeatInterval = setInterval(() => {
+        nudgeSelected(dx * nudgePadStep, dy * nudgePadStep, { history: false });
+      }, NUDGE_HOLD_MS);
+    }, NUDGE_HOLD_DELAY);
+  });
+  const endHold = () => stopNudgeRepeat();
+  pad.addEventListener("pointerup", endHold);
+  pad.addEventListener("pointercancel", endHold);
+  pad.addEventListener("lostpointercapture", endHold);
 }
 
 function alignSelection(mode) {
@@ -5044,11 +5475,13 @@ function beginCanvasPointer(event, shell) {
 
   if (isPlaceTool() && stampTemplate()) {
     interaction.mode = "shape";
-    const points = [{ x: startScene.x, y: startScene.y }];
+    const origin =
+      state.snap.enabled !== false ? snapGridPoint(startScene.x, startScene.y) : startScene;
+    const points = [{ x: origin.x, y: origin.y }];
     state.shapeStroke = {
       tool: state.tool,
-      start: startScene,
-      end: startScene,
+      start: origin,
+      end: origin,
       points,
       transform,
       aligned: !!event.shiftKey,
@@ -5187,9 +5620,11 @@ function moveCanvasPointer(event, shell) {
     state.shapeStroke.aligned = !!event.shiftKey;
     const point = interaction.transform.clientToScene(event.clientX, event.clientY);
     if (isStampLike(state.shapeStroke.tool)) {
+      const raw = interaction.transform.clientToScene(event.clientX, event.clientY);
+      const point = state.snap.enabled !== false ? snapGridPoint(raw.x, raw.y) : raw;
       const last = state.shapeStroke.points[state.shapeStroke.points.length - 1] || state.shapeStroke.start;
       const pitch = stampPitch(false);
-      if (Math.hypot(point.x - last.x, point.y - last.y) >= Math.min(pitch.x, pitch.y)) {
+      if (Math.hypot(point.x - last.x, point.y - last.y) >= Math.min(pitch.x, pitch.y) * 0.72) {
         if (state.shapeStroke.points.length < STAMP_CAP) state.shapeStroke.points.push(point);
       }
       state.shapeStroke.end = point;
@@ -5479,9 +5914,10 @@ function fillCustoms() {
     return;
   }
   items.forEach((item) => {
-      const card = document.createElement("button");
-      card.type = "button";
+      const card = document.createElement("div");
       card.className = "custom-card" + (state.customBrush?.id === item.id ? " on" : "");
+      card.setAttribute("role", "button");
+      card.tabIndex = 0;
       card.title = "按住拖到画布放置，或点击选用";
       const thumb = buildCustomThumb(item);
       const body = document.createElement("div");
@@ -5531,6 +5967,7 @@ function fillCustoms() {
       card.onpointerdown = (event) => {
         if (event.target.closest(".del")) return;
         if (event.button !== 0) return;
+        if (isCoarsePointer()) return;
         event.preventDefault();
         selectCustom();
         beginPaletteDrag("custom", item, event, card);
@@ -5542,7 +5979,12 @@ function fillCustoms() {
           return;
         }
         selectCustom();
-        if (window.MobileWorkspace?.modeForViewport().mobile) closeBuildingRail();
+        if (window.MobileWorkspace?.modeForViewport().mobile) closeBuildingRailOnPick();
+      };
+      card.onkeydown = (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        selectCustom();
       };
       list.appendChild(card);
     });
@@ -5649,9 +6091,10 @@ function toggleGroupLock(groupId) {
 function selectLayerIndex(index, event) {
   const record = state.records[index];
   if (!record) return;
-  if (event.altKey) {
-    setSelection([index]);
-  } else if (event.ctrlKey || event.metaKey) {
+  // Layer-list clicks always target this row. Group expansion is only for the
+  // group header and for canvas hits — otherwise grouped materials cannot be
+  // selected one at a time (and touch has no Alt isolate).
+  if (event.ctrlKey || event.metaKey) {
     const set = new Set(state.selected);
     if (set.has(index)) set.delete(index);
     else set.add(index);
@@ -5666,13 +6109,14 @@ function selectLayerIndex(index, event) {
     }
     setSelection(range);
   } else {
-    setSelection([index], { expandGroup: !!record.group });
+    setSelection([index]);
   }
   state.component = null;
   state.customBrush = null;
   fillComponents();
   fillCustoms();
   renderBuilding();
+  revealSelection();
 }
 
 async function renameLayer(index) {
@@ -5834,7 +6278,8 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
   const collapsed = state.layerCollapsed.has(groupId);
   const allHidden = memberIndices.every((index) => state.records[index].hidden);
   const allLocked = memberIndices.every((index) => state.records[index].locked);
-  const selected = memberIndices.some((index) => selectedSet.has(index));
+  const allSelected = memberIndices.length > 0 && memberIndices.every((index) => selectedSet.has(index));
+  const someSelected = !allSelected && memberIndices.some((index) => selectedSet.has(index));
   const groupHit = !filterText || `${groupName}`.toLowerCase().includes(filterText);
   const memberHit = !filterText || memberIndices.some((index) => {
     const record = state.records[index];
@@ -5844,10 +6289,14 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
   if (filterText && !groupHit && !memberHit) return { shown: false, forceChildren: false };
 
   const row = document.createElement("div");
-  row.className = "layer-row is-group" + (selected ? " on" : "") + (allHidden ? " is-hidden" : "");
+  row.className =
+    "layer-row is-group" +
+    (allSelected ? " on" : someSelected ? " is-partial" : "") +
+    (allHidden ? " is-hidden" : "");
   row.dataset.group = groupId;
   row.setAttribute("role", "option");
-  row.setAttribute("aria-selected", selected ? "true" : "false");
+  row.setAttribute("aria-selected", allSelected ? "true" : "false");
+  row.title = "点击选中整组 · 点下面的素材可选中单件";
 
   const twist = document.createElement("button");
   twist.type = "button";
@@ -5868,7 +6317,9 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
   name.innerHTML = `${groupName}<small>${memberIndices.length} 个图层</small>`;
   const lock = createLayerLockButton(allLocked, () => toggleGroupLock(groupId));
 
-  row.style.gridTemplateColumns = "22px 24px 36px minmax(0,1fr) 28px";
+  row.style.gridTemplateColumns = isCoarsePointer()
+    ? "44px 44px 40px minmax(0,1fr) 44px"
+    : "22px 24px 36px minmax(0,1fr) 28px";
   row.append(twist, eye, thumb, name, lock);
 
   row.onclick = (event) => {
@@ -5887,6 +6338,7 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
     fillComponents();
     fillCustoms();
     renderBuilding();
+    revealSelection();
   };
   bindLayerContextMenu(row, memberIndices);
   row.ondblclick = async (event) => {
@@ -5968,9 +6420,10 @@ function appendLayerRow(list, index, selectedSet, filterText, asChild) {
   });
 
   row.append(eye, thumb, name, lock);
-  row.title = "点击选中这件素材 · 方向键微调（Shift 大步 10px）· Ctrl+点击多选";
+  row.title = "点击选中并定位到画布 · 方向键微调（Shift 大步 10px）· Ctrl+点击多选";
   row.onclick = (event) => {
     if (event.target.closest("button")) return;
+    event.stopPropagation();
     selectLayerIndex(index, event);
   };
   bindLayerContextMenu(row, [index]);
@@ -6059,6 +6512,10 @@ function measureGroupHeader(groupId, memberIndices, filterText) {
   return { shown: true, forceChildren: groupHit && !!filterText };
 }
 
+function layerRowHeight() {
+  return document.documentElement.classList.contains("is-mobile-workspace") ? 56 : LAYER_ROW_H;
+}
+
 function paintLayerWindow() {
   const list = document.getElementById("layerList");
   if (!list || state.railTab !== "layers") return;
@@ -6080,23 +6537,24 @@ function paintLayerWindow() {
     return;
   }
 
+  const rowH = layerRowHeight();
   const viewH = Math.max(1, list.clientHeight || 400);
-  const maxScroll = Math.max(0, items.length * LAYER_ROW_H - viewH);
+  const maxScroll = Math.max(0, items.length * rowH - viewH);
   const scrollTop = Math.min(list.scrollTop, maxScroll);
   if (list.scrollTop !== scrollTop) list.scrollTop = scrollTop;
   const virtual = items.length > 60;
   let start = 0;
   let end = items.length;
   if (virtual) {
-    start = Math.max(0, Math.floor(scrollTop / LAYER_ROW_H) - LAYER_WINDOW_PAD);
-    end = Math.min(items.length, start + Math.ceil(viewH / LAYER_ROW_H) + LAYER_WINDOW_PAD * 2);
+    start = Math.max(0, Math.floor(scrollTop / rowH) - LAYER_WINDOW_PAD);
+    end = Math.min(items.length, start + Math.ceil(viewH / rowH) + LAYER_WINDOW_PAD * 2);
   }
 
   const fragment = document.createDocumentFragment();
   if (virtual) {
     const topPad = document.createElement("div");
     topPad.className = "layer-pad";
-    topPad.style.height = `${start * LAYER_ROW_H}px`;
+    topPad.style.height = `${start * rowH}px`;
     fragment.appendChild(topPad);
   }
   for (let i = start; i < end; i++) {
@@ -6110,7 +6568,7 @@ function paintLayerWindow() {
   if (virtual) {
     const botPad = document.createElement("div");
     botPad.className = "layer-pad";
-    botPad.style.height = `${(items.length - end) * LAYER_ROW_H}px`;
+    botPad.style.height = `${(items.length - end) * rowH}px`;
     fragment.appendChild(botPad);
   }
   list.replaceChildren(fragment);
@@ -6154,8 +6612,8 @@ function fillLayers() {
       );
     }
     if (itemIndex >= 0) {
-      const top = itemIndex * LAYER_ROW_H;
-      if (top < list.scrollTop || top + LAYER_ROW_H > list.scrollTop + list.clientHeight) {
+      const top = itemIndex * layerRowHeight();
+      if (top < list.scrollTop || top + layerRowHeight() > list.scrollTop + list.clientHeight) {
         list.scrollTop = Math.max(0, top - Math.floor((list.clientHeight || 0) / 3));
       }
     }
@@ -6170,25 +6628,36 @@ function selectAllRecords() {
   renderBuilding();
 }
 
-function focusSelection() {
+function revealSelection() {
   const bounds = unionBox(selectionHitBoxes(state.selected));
   const shell = document.getElementById("canvasShell");
   if (!bounds || !shell) return;
   const { w: sw, h: sh } = shellViewSize();
   const fit = houseFitScale(sw, sh);
-  const next = Math.min(
+  const pad = 72;
+  const fitZoom = Math.min(
     ZOOM_MAX,
-    Math.max(ZOOM_MIN, Math.min(sw / (bounds.width * fit), sh / (bounds.height * fit)) * 0.72)
+    Math.max(
+      ZOOM_MIN,
+      Math.min(sw / ((bounds.width + pad) * fit), sh / ((bounds.height + pad) * fit))
+    )
   );
-  setZoom(next);
+  if (fitZoom < state.zoom - 0.02) setZoom(fitZoom);
   requestAnimationFrame(() => {
     const transform = viewportTransform();
-    const center = transform.sceneToClient((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+    const center = transform.sceneToClient(
+      (bounds.left + bounds.right) / 2,
+      (bounds.top + bounds.bottom) / 2
+    );
     const shellRect = shell.getBoundingClientRect();
     shell.scrollLeft += center.x - shellRect.left - shell.clientWidth / 2;
     shell.scrollTop += center.y - shellRect.top - shell.clientHeight / 2;
     syncViewportOverlays();
   });
+}
+
+function focusSelection() {
+  revealSelection();
 }
 
 function zoomActualSize() {
@@ -6198,6 +6667,7 @@ function zoomActualSize() {
 }
 
 function setActiveTool(tool) {
+  if (tool === "diamond") tool = "rect";
   const next = PLACE_TOOLS.has(tool) || tool === "select" ? tool : "select";
   state.tool = next;
   if (!isPlaceTool()) state.shapeStroke = null;
@@ -6227,7 +6697,6 @@ const COMMANDS = [
   { id: "lineTool", label: "直线 / 斜线铺放", shortcut: "L", run: () => setActiveTool("line") },
   { id: "circleTool", label: "圆形铺放", shortcut: "O", run: () => setActiveTool("circle") },
   { id: "triangleTool", label: "三角形铺放", shortcut: "I", run: () => setActiveTool("triangle") },
-  { id: "diamondTool", label: "菱形铺放", shortcut: "C", run: () => setActiveTool("diamond") },
   { id: "ringTool", label: "一圈描边", shortcut: "G", run: () => setActiveTool("ring") },
   { id: "undo", label: "撤销", shortcut: "Ctrl+Z", run: undo },
   { id: "redo", label: "重做", shortcut: "Ctrl+Y / Ctrl+Shift+Z", run: redo },
@@ -6237,7 +6706,7 @@ const COMMANDS = [
   { id: "delete", label: "删除选中", shortcut: "Delete / Backspace", run: deleteSelected },
   { id: "flip", label: "转向", shortcut: "R", run: flipSelectedOrBrush },
   { id: "lock", label: "锁定/解锁", shortcut: "Ctrl+L", run: toggleLockSelected },
-  { id: "group", label: "成组", shortcut: "Ctrl+G", run: groupSelected },
+  { id: "group", label: "成组", shortcut: "C", run: groupSelected },
   { id: "ungroup", label: "拆组", shortcut: "Ctrl+Shift+G", run: ungroupSelected },
   { id: "savePreset", label: "存为组件", shortcut: "P", run: openPresetDialog },
   { id: "bottom", label: "到底层", shortcut: "A", run: () => reorderSelected("bottom") },
@@ -6283,7 +6752,8 @@ const SHORTCUT_NOTES = [
   { label: "平移画布（空白处）", shortcut: "Space / 中键" },
   { label: "圈选碰到 / 完整包含", shortcut: "M / Shift+M" },
   { label: "点刷 / 平铺 / 矩形 / 直线", shortcut: "B / T / U / L" },
-  { label: "圆 / 三角 / 菱形 / 描边", shortcut: "O / I / C / G" },
+  { label: "圆 / 三角 / 描边", shortcut: "O / I / G" },
+  { label: "成组 / 拆组", shortcut: "C / Ctrl+Shift+G" },
   { label: "到底 / 下移 / 上移 / 到顶", shortcut: "A / S / W / D" },
   { label: "图层循环（四层）", shortcut: "Z / X" },
   { label: "朝向上一 / 下一", shortcut: "Q / E" },
@@ -6345,6 +6815,13 @@ function applyCommandTooltips() {
   applyHoverTip(document.getElementById("btnZoomIn"), "放大", "+");
   applyHoverTip(document.getElementById("btnZoomOut"), "缩小", "-");
   applyHoverTip(document.getElementById("btnZoomReset"), "适应画布", "0");
+  applyHoverTip(document.getElementById("btnNudgeStep"), "设置微调步长", "点按输入");
+  document.querySelectorAll("#nudgePad [data-nudge]").forEach((button) => {
+    const dx = Number(button.dataset.nudgeX) || 0;
+    const dy = Number(button.dataset.nudgeY) || 0;
+    const label = dy < 0 ? "上移" : dy > 0 ? "下移" : dx < 0 ? "左移" : "右移";
+    applyHoverTip(button, label, "方向键");
+  });
   applyHoverTip(document.getElementById("facingLabel"), "朝向", "Q / E");
   applyHoverTip(document.getElementById("layerOrderLabel"), "图层循环", "Z / X");
   applyHoverTip(document.getElementById("snapAxis"), "吸附轴向", "水平 / 斜角 / 双轴");
@@ -6524,7 +7001,7 @@ function openCanvasContextMenu(client, scene) {
     items.push("sep");
     items.push({ label: "复制", shortcut: "Ctrl+C", run: () => executeCommand("copy") });
     items.push({ label: "再放一份", shortcut: "Ctrl+D", disabled: !unlocked.length, run: () => executeCommand("duplicate") });
-    items.push({ label: "成组", shortcut: "Ctrl+G", disabled: unlocked.length < 2, run: () => executeCommand("group") });
+    items.push({ label: "成组", shortcut: "C", disabled: unlocked.length < 2, run: () => executeCommand("group") });
     items.push({ label: "拆组", shortcut: "Ctrl+Shift+G", disabled: !grouped, run: () => executeCommand("ungroup") });
     items.push({ label: "存为组件", shortcut: "P", disabled: !unlocked.length, run: () => executeCommand("savePreset") });
     items.push("sep");
@@ -6651,8 +7128,9 @@ function setMobileToolsOpen(open) {
     setMobileToolFamily(state.tool === "select" ? "select" : "brush");
   }
   document.documentElement.classList.toggle("mobile-tools-open", !!open);
-  const mobile = window.MobileWorkspace?.modeForViewport().mobile;
-  if (mobile) {
+  const mode = workspaceMode();
+  const useFloatingHud = buildingFloatingHud();
+  if (mode.mobile && !useFloatingHud) {
     if (open && window.MobileWorkspace.activeSheet() !== "building-tools") {
       window.MobileWorkspace.openSheet("building-tools", {
         trigger: document.getElementById("btnBuildingMobileTools"),
@@ -6661,9 +7139,11 @@ function setMobileToolsOpen(open) {
     } else if (!open && window.MobileWorkspace.activeSheet() === "building-tools") {
       window.MobileWorkspace.closeSheet("building-tools", { restoreFocus: false });
     }
+  } else if (window.MobileWorkspace?.activeSheet() === "building-tools") {
+    window.MobileWorkspace.closeSheet("building-tools", { restoreFocus: false });
   }
   const dock = document.getElementById("canvasToolDock");
-  dock?.setAttribute("aria-hidden", String(mobile && !open));
+  dock?.setAttribute("aria-hidden", String(mode.mobile && !useFloatingHud && !open));
   const button = document.getElementById("btnBuildingMobileTools");
   button?.classList.toggle("on", !!open);
   button?.setAttribute("aria-pressed", String(!!open));
@@ -6686,14 +7166,13 @@ function setMobileToolFamily(family) {
 function syncBuildingBackdrop() {
   const backdrop = document.getElementById("buildingRailBackdrop");
   if (!backdrop) return;
-  const mobile = window.MobileWorkspace?.modeForViewport().mobile;
-  if (!mobile) {
+  const mode = workspaceMode();
+  if (!mode.mobile || buildingFloatingHud()) {
     backdrop.hidden = true;
     return;
   }
   const railOpen = !state.railCollapsed;
-  const toolsOpen = document.documentElement.classList.contains("mobile-tools-open");
-  backdrop.hidden = !(railOpen || toolsOpen);
+  backdrop.hidden = !railOpen;
 }
 
 function closeBuildingRail() {
@@ -6701,14 +7180,227 @@ function closeBuildingRail() {
   applyRailState();
 }
 
+function closeBuildingRailOnPick() {
+  if (state.sheetPinned && workspaceMode().tablet) return;
+  closeBuildingRail();
+}
+
+function buildingSheetRail() {
+  return document.querySelector(".building-rail");
+}
+
+function loadSheetLayout() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SHEET_LAYOUT_KEY) || "{}") || {};
+    state.sheetPinned = !!saved.pinned;
+    const box = saved.layout;
+    state.sheetLayout =
+      box &&
+      Number.isFinite(box.left) &&
+      Number.isFinite(box.top) &&
+      Number.isFinite(box.width) &&
+      Number.isFinite(box.height)
+        ? { left: box.left, top: box.top, width: box.width, height: box.height }
+        : null;
+  } catch {
+    state.sheetPinned = false;
+    state.sheetLayout = null;
+  }
+}
+
+function saveSheetLayout() {
+  localStorage.setItem(
+    SHEET_LAYOUT_KEY,
+    JSON.stringify({
+      pinned: !!state.sheetPinned,
+      layout: state.sheetLayout,
+    })
+  );
+}
+
+function sheetViewportBox() {
+  const mode = workspaceMode();
+  const pad = 8;
+  return {
+    left: pad,
+    top: Math.max(pad, 44),
+    width: Math.max(SHEET_MIN_W, (mode.width || window.innerWidth || 1024) - pad * 2),
+    height: Math.max(SHEET_MIN_H, (mode.height || window.innerHeight || 768) - pad * 2 - 44),
+  };
+}
+
+function clampSheetBox(box) {
+  const view = sheetViewportBox();
+  const width = Math.min(view.width, Math.max(SHEET_MIN_W, Math.round(box.width)));
+  const height = Math.min(view.height, Math.max(SHEET_MIN_H, Math.round(box.height)));
+  const maxLeft = view.left + view.width - width;
+  const maxTop = view.top + view.height - height;
+  return {
+    left: Math.min(maxLeft, Math.max(view.left, Math.round(box.left))),
+    top: Math.min(maxTop, Math.max(view.top, Math.round(box.top))),
+    width,
+    height,
+  };
+}
+
+function currentSheetBox(rail = buildingSheetRail()) {
+  if (!rail) return null;
+  const rect = rail.getBoundingClientRect();
+  if (rect.width < 8 || rect.height < 8) return state.sheetLayout;
+  return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
+function applySheetBox(rail, box) {
+  if (!rail || !box) return;
+  const next = clampSheetBox(box);
+  state.sheetLayout = next;
+  rail.classList.add("is-sheet-placed");
+  rail.style.setProperty("--sheet-left", `${next.left}px`);
+  rail.style.setProperty("--sheet-top", `${next.top}px`);
+  rail.style.setProperty("--sheet-width", `${next.width}px`);
+  rail.style.setProperty("--sheet-height", `${next.height}px`);
+}
+
+function clearSheetBox(rail = buildingSheetRail()) {
+  if (!rail) return;
+  rail.classList.remove("is-sheet-placed");
+  rail.style.removeProperty("--sheet-left");
+  rail.style.removeProperty("--sheet-top");
+  rail.style.removeProperty("--sheet-width");
+  rail.style.removeProperty("--sheet-height");
+}
+
+function syncSheetPinButton() {
+  const button = document.getElementById("btnBuildingSheetPin");
+  if (!button) return;
+  const pinned = !!state.sheetPinned && workspaceMode().tablet;
+  button.setAttribute("aria-pressed", String(pinned));
+  button.classList.toggle("on", pinned);
+  button.title = pinned ? "取消固定，选素材后收起面板" : "固定后选素材不会收起";
+  button.setAttribute("aria-label", pinned ? "取消固定面板" : "固定面板");
+}
+
+function syncBuildingSheetLayout() {
+  const rail = buildingSheetRail();
+  if (!rail) return;
+  if (!workspaceMode().tablet) {
+    rail.classList.remove("is-sheet-pinned", "is-sheet-resizing", "is-sheet-dragging");
+    clearSheetBox(rail);
+    syncSheetPinButton();
+    return;
+  }
+  rail.classList.toggle("is-sheet-pinned", !!state.sheetPinned);
+  if (state.sheetLayout) applySheetBox(rail, state.sheetLayout);
+  else clearSheetBox(rail);
+  syncSheetPinButton();
+}
+
+function setSheetPinned(pinned) {
+  state.sheetPinned = !!pinned;
+  const rail = buildingSheetRail();
+  if (pinned && rail && !state.sheetLayout) {
+    const box = currentSheetBox(rail);
+    if (box) applySheetBox(rail, box);
+  }
+  saveSheetLayout();
+  syncBuildingSheetLayout();
+}
+
+function bindBuildingSheetChrome() {
+  loadSheetLayout();
+  const rail = buildingSheetRail();
+  const pin = document.getElementById("btnBuildingSheetPin");
+  pin?.addEventListener("click", () => setSheetPinned(!state.sheetPinned));
+  if (!rail || rail.dataset.sheetChromeBound) return;
+  rail.dataset.sheetChromeBound = "1";
+
+  const startGesture = (event, kind, edge) => {
+    if (!workspaceMode().tablet) return false;
+    if (event.pointerType === "mouse" && event.button !== 0) return false;
+    const origin = currentSheetBox(rail);
+    if (!origin) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let moved = false;
+    rail.classList.add(kind === "resize" ? "is-sheet-resizing" : "is-sheet-dragging");
+    try {
+      event.currentTarget.setPointerCapture?.(pointerId);
+    } catch {
+      // Capture may fail for synthetic events.
+    }
+    const onMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      moveEvent.preventDefault();
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      if (!moved && dx * dx + dy * dy < 16) return;
+      moved = true;
+      let next = { ...origin };
+      if (kind === "move") {
+        next.left = origin.left + dx;
+        next.top = origin.top + dy;
+      } else {
+        if (edge.includes("e")) next.width = origin.width + dx;
+        if (edge.includes("s")) next.height = origin.height + dy;
+        if (edge.includes("w")) {
+          next.left = origin.left + dx;
+          next.width = origin.width - dx;
+        }
+        if (edge.includes("n")) {
+          next.top = origin.top + dy;
+          next.height = origin.height - dy;
+        }
+      }
+      applySheetBox(rail, next);
+    };
+    const onUp = (upEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+      rail.classList.remove("is-sheet-resizing", "is-sheet-dragging");
+      try {
+        event.currentTarget.releasePointerCapture?.(pointerId);
+      } catch {
+        // Already released.
+      }
+      if (moved) {
+        saveSheetLayout();
+        paintAssetWindow?.();
+      }
+    };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+    return true;
+  };
+
+  rail.querySelectorAll(".sheet-resize").forEach((handle) => {
+    handle.addEventListener("pointerdown", (event) => {
+      startGesture(event, "resize", handle.dataset.resize || "");
+    });
+  });
+  rail.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".sheet-resize, button, input, select, textarea, a, .component-list, .layer-list, .base-icon-grid")) {
+      return;
+    }
+    if (!event.target.closest(".drawer-cap, .mobile-sheet-handle")) return;
+    startGesture(event, "move", "");
+  });
+  syncBuildingSheetLayout();
+}
+
 function openBuildingRail(mode = state.phase === "select" ? "base" : state.railTab || "assets") {
-  setMobileToolsOpen(false);
+  if (!buildingFloatingHud()) setMobileToolsOpen(false);
   state.mobilePan = false;
   syncMobilePanUi();
   if (state.phase !== "design") mode = "base";
-  if (!["base", "assets", "layers", "project"].includes(mode)) mode = "assets";
+  if (!["base", "assets", "layers", "materials", "project"].includes(mode)) mode = "assets";
   state.mobileSheetMode = mode;
-  if (mode === "assets" || mode === "layers") setRailTab(mode);
+  if (mode === "assets" || mode === "layers" || mode === "materials") setRailTab(mode);
   state.railCollapsed = false;
   applyRailState();
   requestAnimationFrame(() => {
@@ -6748,7 +7440,8 @@ function syncMobilePanUi() {
 }
 
 function syncBuildingRailAccessibility() {
-  const mobile = window.MobileWorkspace?.modeForViewport().mobile;
+  const mode = workspaceMode();
+  const mobile = mode.mobile;
   const rail = document.querySelector(".building-rail");
   const stage = document.querySelector(".building-stage");
   const open = mobile && !state.railCollapsed;
@@ -6765,18 +7458,18 @@ function syncBuildingRailAccessibility() {
   }
   rail?.classList.toggle("open", open);
   window.MobileWorkspace?.setInert(rail, mobile && !open);
-  window.MobileWorkspace?.setInert(stage, open);
+  window.MobileWorkspace?.setInert(stage, open && !buildingFloatingHud());
   syncBuildingBackdrop();
   syncMobileBuildingPanels();
   syncMobileBuildingChrome();
   const assets = document.getElementById("btnBuildingMobileAssets");
   const project = document.getElementById("btnBuildingMobileProject");
-  const mode = state.phase === "select" ? "base" : state.mobileSheetMode;
-  assets?.setAttribute("aria-expanded", String(open && mode !== "project"));
-  project?.setAttribute("aria-expanded", String(open && mode === "project"));
-  assets?.classList.toggle("on", open && mode !== "project");
-  project?.classList.toggle("on", open && mode === "project");
-  if (open) setMobileToolsOpen(false);
+  const sheetMode = state.phase === "select" ? "base" : state.mobileSheetMode;
+  assets?.setAttribute("aria-expanded", String(open && sheetMode !== "project"));
+  project?.setAttribute("aria-expanded", String(open && sheetMode === "project"));
+  assets?.classList.toggle("on", open && sheetMode !== "project");
+  project?.classList.toggle("on", open && sheetMode === "project");
+  if (open && !buildingFloatingHud()) setMobileToolsOpen(false);
 }
 
 function syncMobileBuildingChrome() {
@@ -6785,7 +7478,7 @@ function syncMobileBuildingChrome() {
   const title = document.getElementById("buildingSheetTitle");
   if (!title) return;
   const mode = state.phase === "select" ? "base" : state.mobileSheetMode;
-  title.textContent = mode === "base" ? "户型" : mode === "layers" ? "图层" : mode === "project" ? "项目" : "素材";
+  title.textContent = mode === "base" ? "户型" : mode === "layers" ? "图层" : mode === "materials" ? "材料" : mode === "project" ? "项目" : "素材";
 }
 
 function applyRailState() {
@@ -6797,6 +7490,7 @@ function applyRailState() {
   const button = document.getElementById("btnToggleRail");
   if (button) button.textContent = state.railCollapsed ? "展开" : "侧栏";
   syncBuildingRailAccessibility();
+  syncBuildingSheetLayout();
   requestAnimationFrame(() => fitStageToShell());
 }
 
@@ -6810,8 +7504,8 @@ function applyImportedPaperBase() {
   return "paper";
 }
 
-async function parseBuildingFile(file) {
-  const buffer = await file.arrayBuffer();
+async function parseBuildingFile(file, existingBuffer) {
+  const buffer = existingBuffer || await file.arrayBuffer();
   const response = await fetch("/api/parse-building-desk", {
     method: "POST",
     body: buffer,
@@ -6888,17 +7582,20 @@ function previewPackForMat(mat) {
   return state.pack;
 }
 
+const previewImageCache = new Map();
+
 function loadPreviewImage(url) {
-  return new Promise((resolve) => {
-    if (!url) {
-      resolve(null);
-      return;
-    }
+  if (!url) return Promise.resolve(null);
+  const cached = previewImageCache.get(url);
+  if (cached) return cached;
+  const pending = new Promise((resolve) => {
     const image = new Image();
     image.onload = () => resolve(image);
     image.onerror = () => resolve(null);
     image.src = url;
   });
+  previewImageCache.set(url, pending);
+  return pending;
 }
 
 async function paintPaperThumbnail(target, documentData, options = {}) {
@@ -6933,11 +7630,26 @@ async function paintPaperThumbnail(target, documentData, options = {}) {
         height: geometry.height || 16,
       };
     });
+  if (documentData.kind === "terrain") {
+    const stamps = documentData.stamps || [];
+    const size = Math.max(1, Number(documentData.size) || 1);
+    stamps.slice(0, 400).forEach((stamp) => {
+      const x = 10 + (Number(stamp.x) || 0) / size * (width - 20);
+      const y = 10 + (Number(stamp.y) || 0) / size * (height - 20);
+      c.fillStyle = "rgba(238, 245, 234, 0.9)";
+      c.fillRect(x, y, 3, 3);
+    });
+    c.fillStyle = "#eef5ea";
+    c.font = "12px sans-serif";
+    c.textAlign = "center";
+    c.fillText(`${size} 格 · ${stamps.length} 地块`, width / 2, height - 14);
+    return;
+  }
   if (!rows.length) {
     c.fillStyle = "#eef5ea";
     c.font = "12px sans-serif";
     c.textAlign = "center";
-    c.fillText("没有可预览素材", width / 2, height / 2);
+    c.fillText(documentData.kind === "manor" ? "庄园摆放图" : "没有可预览素材", width / 2, height / 2);
     return;
   }
   const left = Math.min(...rows.map((row) => Number(row.record.x) || 0));
@@ -6947,16 +7659,24 @@ async function paintPaperThumbnail(target, documentData, options = {}) {
   const scale = Math.min((width - 18) / Math.max(1, right - left), (height - 18) / Math.max(1, bottom - top), 1);
   const ox = (width - (right - left) * scale) / 2 - left * scale;
   const oy = (height - (bottom - top) * scale) / 2 - top * scale;
-  const images = await Promise.all(
-    rows.map((row) =>
-      loadPreviewImage(spriteUrl(row.component, row.pack, row.record.state ?? row.record.flip ?? 0))
-    )
-  );
-  rows.forEach((row, index) => {
+  const imagesByUrl = new Map();
+  rows.forEach((row) => {
+    const url = spriteUrl(row.component, row.pack, row.record.state ?? row.record.flip ?? 0);
+    row.url = url;
+    if (url && !imagesByUrl.has(url)) imagesByUrl.set(url, loadPreviewImage(url));
+  });
+  const loaded = new Map();
+  await Promise.all([...imagesByUrl].map(async ([url, pending]) => {
+    loaded.set(url, await pending);
+  }));
+  rows.forEach((row) => {
     const x = ox + (Number(row.record.x) || 0) * scale;
     const y = oy + (Number(row.record.y) || 0) * scale;
-    const image = images[index];
-    if (image) c.drawImage(image, x, y, row.width * scale, row.height * scale);
+    const drawW = Math.max(1, row.width * scale);
+    const drawH = Math.max(1, row.height * scale);
+    if (drawW < 0.6 && drawH < 0.6) return;
+    const image = loaded.get(row.url);
+    if (image) c.drawImage(image, x, y, drawW, drawH);
     else {
       c.fillStyle = "#e7644d";
       c.fillRect(x, y, Math.max(3, 8 * scale), Math.max(3, 8 * scale));
@@ -6972,9 +7692,171 @@ const batchLibrary = {
   loading: false,
   folderLabel: "",
   query: "",
+  kindFilter: "all",
+  groupFilter: "all",
+  groups: [],
   entries: [],
   failed: 0,
+  skippedDup: 0,
+  skippedKind: 0,
 };
+
+const PAPER_LIBRARY_DESK = "building";
+const PAPER_LIBRARY_DB = "manor-paper-library";
+const PAPER_LIBRARY_STORE = "papers";
+
+function openPaperLibraryDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(PAPER_LIBRARY_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(PAPER_LIBRARY_STORE)) {
+        db.createObjectStore(PAPER_LIBRARY_STORE, { keyPath: "fingerprint" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function paperFingerprint(name, bytes) {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let hash = 2166136261;
+  const step = Math.max(1, Math.floor(view.length / 96) || 1);
+  for (let i = 0; i < view.length; i += step) {
+    hash ^= view[i];
+    hash = Math.imul(hash, 16777619);
+  }
+  const head = Math.min(32, view.length);
+  for (let i = 0; i < head; i++) {
+    hash ^= view[i];
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${String(name || "")}::${view.length}::${hash >>> 0}`;
+}
+
+function paperContentIdFromBase64(data) {
+  return PaperLibraryCore.contentIdFromBase64(data);
+}
+
+function sniffPaperKind(bytes) {
+  return PaperLibraryCore.sniffKind(bytes);
+}
+
+function paperKindLabel(kind) {
+  return PaperLibraryCore.kindLabel(kind);
+}
+
+function libraryAcceptsKind(kind) {
+  if (PAPER_LIBRARY_DESK === "building") return kind === "desk";
+  return kind === "desk" || kind === "terrain" || kind === "manor";
+}
+
+async function loadPaperLibraryCacheMap() {
+  try {
+    const db = await openPaperLibraryDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(PAPER_LIBRARY_STORE, "readonly");
+      const req = tx.objectStore(PAPER_LIBRARY_STORE).getAll();
+      req.onsuccess = () => {
+        const map = new Map();
+        (req.result || []).forEach((row) => {
+          if (row?.fingerprint) map.set(row.fingerprint, row);
+          if (row?.contentId) map.set(`id:${row.contentId}`, row);
+        });
+        resolve(map);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (error) {
+    console.warn("图纸库缓存不可用", error);
+    return new Map();
+  }
+}
+
+async function putPaperLibraryCache(rows) {
+  if (!rows.length) return;
+  try {
+    const db = await openPaperLibraryDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(PAPER_LIBRARY_STORE, "readwrite");
+      const store = tx.objectStore(PAPER_LIBRARY_STORE);
+      rows.forEach((row) => store.put(row));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (error) {
+    console.warn("图纸库缓存写入失败", error);
+  }
+}
+
+async function clearPaperLibraryCache() {
+  try {
+    const db = await openPaperLibraryDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(PAPER_LIBRARY_STORE, "readwrite");
+      const req = tx.objectStore(PAPER_LIBRARY_STORE).clear();
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch (error) {
+    console.warn("图纸库缓存清空失败", error);
+  }
+}
+
+function serializePaperLibraryCache(entry, fingerprint, thumb) {
+  return {
+    fingerprint,
+    contentId: entry.contentId || "",
+    name: entry.name,
+    search: entry.search,
+    kind: entry.kind,
+    groupId: entry.groupId || "",
+    count: entry.count,
+    meta: entry.meta,
+    unresolved: entry.unresolved || 0,
+    materials: [...(entry.materials || [])],
+    documentData: entry.documentData,
+    thumb: thumb || "",
+  };
+}
+
+function entryFromPaperCache(cached, file, id) {
+  return {
+    id,
+    contentId: cached.contentId || "",
+    file,
+    documentData: cached.documentData,
+    name: cached.name,
+    search: cached.search || String(cached.name || "").toLowerCase(),
+    kind: cached.kind,
+    groupId: cached.groupId || "",
+    count: cached.count,
+    meta: cached.meta,
+    materials: new Map(cached.materials || []),
+    unresolved: cached.unresolved || 0,
+    savedAt: Number(cached.savedAt) || Date.now(),
+  };
+}
+
+function canvasThumbDataUrl(canvas) {
+  try {
+    return canvas.toDataURL("image/jpeg", 0.72);
+  } catch {
+    return "";
+  }
+}
+
+async function paintCachedPaperThumbnail(canvas, dataUrl) {
+  if (!dataUrl) return false;
+  const image = await loadPreviewImage(dataUrl);
+  if (!image?.naturalWidth) return false;
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(image, 0, 0);
+  return true;
+}
 
 const paperInspectView = {
   entry: null,
@@ -6988,6 +7870,9 @@ const paperInspectView = {
   pointers: new Map(),
   pinch: null,
   resizeObserver: null,
+  drawQueued: false,
+  canvasCssW: 0,
+  canvasCssH: 0,
 };
 
 function isPaperLibraryOpen() {
@@ -7012,7 +7897,7 @@ function updateBatchPreviewButton() {
     btn.title = "图纸正在解析，打开可查看进度";
   } else {
     btn.textContent = "图纸库";
-    btn.title = "打开图纸库；上传过的图纸会自动从服务器载入";
+    btn.title = "打开图纸库";
   }
   btn.classList.toggle("on", isPaperLibraryOpen());
 }
@@ -7031,6 +7916,7 @@ function setPaperLibraryOpen(open) {
   if (!open) closePaperInspect();
   panel.hidden = !open;
   window.MobileWorkspace?.setInert(document.querySelector(".building-stage"), open);
+  window.MobileWorkspace?.setInert(document.querySelector(".building-app .topbar"), open);
   window.MobileWorkspace?.setInert(document.querySelector(".building-rail"), open || (window.MobileWorkspace.modeForViewport().mobile && state.railCollapsed));
   window.MobileWorkspace?.setInert(document.getElementById("buildingMobileDock"), open);
   document.getElementById("buildingApp")?.classList.toggle("library-open", open);
@@ -7056,7 +7942,7 @@ function togglePaperLibrary() {
 }
 
 async function clearServerPaperLibrary() {
-  const ok = await appConfirm("删除服务器上保存的全部图纸？本地文件不受影响。", {
+  const ok = await appConfirm("清空图纸库里的全部图纸？", {
     title: "清空图纸库",
     okLabel: "清空",
     danger: true,
@@ -7071,11 +7957,23 @@ async function clearServerPaperLibrary() {
   batchLibrary.loading = false;
   batchLibrary.entries = [];
   batchLibrary.failed = 0;
+  batchLibrary.skippedDup = 0;
+  batchLibrary.skippedKind = 0;
   batchLibrary.folderLabel = "";
+  batchLibrary.groups = [];
+  batchLibrary.kindFilter = "all";
+  batchLibrary.groupFilter = "all";
+  document.querySelectorAll("[data-paper-kind]").forEach((tab) => {
+    const on = tab.dataset.paperKind === "all";
+    tab.classList.toggle("on", on);
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+  });
   document.getElementById("paperPreviewGrid")?.replaceChildren();
+  renderPaperGroupTabs();
   syncPaperLibraryEmpty();
-  updatePaperLibraryStatus("已清空服务器图纸库。");
+  updatePaperLibraryStatus("已清空图纸库。");
   updateBatchPreviewButton();
+  clearPaperLibraryCache().catch((error) => console.warn(error));
 }
 
 function folderLabelFromFiles(files) {
@@ -7102,14 +8000,18 @@ function paperLibraryMaterials(records) {
   return { materialTotals, unresolved };
 }
 
+function paperLibrarySkipNote() {
+  const notes = [];
+  if (batchLibrary.skippedDup) notes.push(`跳过 ${batchLibrary.skippedDup} 张重复`);
+  if (batchLibrary.skippedKind) notes.push(`跳过 ${batchLibrary.skippedKind} 张非建筑图纸`);
+  if (batchLibrary.failed) notes.push(`${batchLibrary.failed} 张无法读取`);
+  return notes.length ? ` · ${notes.join(" · ")}` : "";
+}
+
 function updatePaperLibraryStatus(message = "") {
   const status = document.getElementById("paperBatchStatus");
   const title = document.getElementById("paperLibraryTitle");
-  if (title) {
-    title.textContent = batchLibrary.folderLabel
-      ? `本地图纸库 · ${batchLibrary.folderLabel}`
-      : "本地图纸库";
-  }
+  if (title) title.textContent = "图纸库";
   if (!status) return;
   if (message) {
     status.textContent = message;
@@ -7119,22 +8021,33 @@ function updatePaperLibraryStatus(message = "") {
   const unresolved = batchLibrary.entries.reduce((sum, entry) => sum + Number(entry.unresolved || 0), 0);
   const shown = [...(document.getElementById("paperPreviewGrid")?.children || [])].filter((card) => !card.hidden).length;
   if (batchLibrary.loading) {
-    status.textContent = `正在解析… 已载入 ${total} 张`
+    status.textContent = `正在载入… 已载入 ${total} 张`
       + (unresolved ? ` · ${unresolved} 件素材未解析` : "")
-      + (batchLibrary.failed ? ` · ${batchLibrary.failed} 张无法读取` : "");
+      + paperLibrarySkipNote();
     return;
   }
   if (!total) {
-    status.textContent = batchLibrary.failed
-      ? `${batchLibrary.failed} 张文件无法读取。`
-      : "还没有载入图纸。上传过的图纸保存在服务器，打开图纸库会自动载入。";
+    status.textContent = paperLibrarySkipNote().replace(/^ · /, "") || "还没有图纸。导入文件夹或文件即可叠加。";
     return;
   }
-  const filterNote = batchLibrary.query && shown !== total ? ` · 显示 ${shown} 张` : "";
-  status.textContent = `已载入 ${total} 张图纸${filterNote}`
+  const filtered = batchLibrary.query || batchLibrary.kindFilter !== "all" || batchLibrary.groupFilter !== "all";
+  const filterNote = filtered && shown !== total ? ` · 显示 ${shown} 张` : "";
+  status.textContent = `${total} 张图纸${filterNote}`
     + (unresolved ? ` · ${unresolved} 件素材未解析` : "")
-    + (batchLibrary.failed ? ` · ${batchLibrary.failed} 张无法读取` : "")
-    + " · 已缓存";
+    + paperLibrarySkipNote();
+}
+
+function paperEntryVisible(entry, query) {
+  const queryOk = !query || String(entry.search || "").includes(query);
+  const kind = PaperLibraryCore.resolvePaperKind(entry);
+  const kindOk = PaperLibraryCore.kindMatchesFilter(kind, batchLibrary.kindFilter);
+  const groupOk = batchLibrary.groupFilter === "all" || String(entry.groupId || "") === batchLibrary.groupFilter;
+  return queryOk && kindOk && groupOk;
+}
+
+function paperCardKindFromDom(card) {
+  const meta = card.querySelector(".paper-preview-copy small")?.textContent || "";
+  return PaperLibraryCore.resolvePaperKind({ kind: card.dataset.kind, meta });
 }
 
 function applyPaperLibraryFilter() {
@@ -7142,29 +8055,144 @@ function applyPaperLibraryFilter() {
   batchLibrary.query = query;
   const grid = document.getElementById("paperPreviewGrid");
   if (!grid) return;
+  const byId = new Map(batchLibrary.entries.map((entry) => [String(entry.id), entry]));
   grid.querySelectorAll(".paper-preview-item").forEach((card) => {
-    card.hidden = Boolean(query) && !String(card.dataset.search || "").includes(query);
+    const entry = byId.get(String(card.dataset.id || ""));
+    if (entry) {
+      card.hidden = !paperEntryVisible(entry, query);
+      return;
+    }
+    const queryOk = !query || String(card.dataset.search || "").includes(query);
+    const kindOk = PaperLibraryCore.kindMatchesFilter(paperCardKindFromDom(card), batchLibrary.kindFilter);
+    const groupOk = batchLibrary.groupFilter === "all" || String(card.dataset.group || "") === batchLibrary.groupFilter;
+    card.hidden = !(queryOk && kindOk && groupOk);
   });
+  PaperLibraryCore.reorderPaperCards(grid, batchLibrary.entries, PaperLibraryCore.loadPaperSort());
   updatePaperLibraryStatus();
 }
 
-function fillPaperCardMaterials(host, materials, unresolved, kind) {
-  const preview = new Map([...materials].slice(0, 6));
-  fillMaterialList(host, preview, 0);
-  if (materials.size > 6) {
-    const more = document.createElement("span");
-    more.className = "mat-chip";
-    more.textContent = `+${materials.size - 6}`;
-    more.title = "在明细里查看全部材料";
-    host.appendChild(more);
-  } else if (!materials.size) {
+function renderPaperGroupTabs() {
+  const host = document.getElementById("paperGroupTabs");
+  if (!host) return;
+  host.replaceChildren();
+  const tabs = [{ id: "all", name: "全部分组" }, ...batchLibrary.groups];
+  tabs.forEach((tab) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = tab.name;
+    const on = batchLibrary.groupFilter === tab.id;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-selected", on ? "true" : "false");
+    button.onclick = () => {
+      batchLibrary.groupFilter = tab.id;
+      renderPaperGroupTabs();
+      applyPaperLibraryFilter();
+    };
+    host.appendChild(button);
+  });
+}
+
+function fillPaperGroupSelect(select, value) {
+  if (!select) return;
+  const current = value == null ? select.value : value;
+  select.replaceChildren(new Option("未分组", ""));
+  batchLibrary.groups.forEach((group) => {
+    select.appendChild(new Option(group.name, group.id));
+  });
+  select.value = current || "";
+}
+
+function refreshPaperGroupControls() {
+  renderPaperGroupTabs();
+  document.querySelectorAll(".paper-card-group").forEach((select) => {
+    fillPaperGroupSelect(select);
+  });
+  fillPaperGroupSelect(document.getElementById("paperInspectGroup"), paperInspectView.entry?.groupId || "");
+}
+
+async function persistPaperLibraryGroups() {
+  await persistPaperLibrary([], false);
+}
+
+async function createPaperLibraryGroup() {
+  const name = await appPrompt("给这组图纸起个名字。", {
+    title: "新建分组",
+    fieldLabel: "分组名称",
+    placeholder: "例如 咖啡馆",
+  });
+  if (name == null) return;
+  const trimmed = String(name).trim().slice(0, 40);
+  if (!trimmed) return;
+  const id = `g${Date.now().toString(36)}`;
+  batchLibrary.groups = [...batchLibrary.groups, { id, name: trimmed }];
+  try {
+    await persistPaperLibraryGroups();
+  } catch (error) {
+    console.warn(error);
+  }
+  refreshPaperGroupControls();
+}
+
+async function assignPaperGroup(entry, groupId) {
+  if (!entry) return;
+  entry.groupId = String(groupId || "");
+  const card = document.querySelector(`.paper-preview-item[data-id="${CSS.escape(String(entry.id))}"]`);
+  if (card) {
+    card.dataset.group = entry.groupId;
+    const select = card.querySelector(".paper-card-group");
+    if (select) select.value = entry.groupId;
+  }
+  applyPaperLibraryFilter();
+  if (!entry.contentId) return;
+  try {
+    await persistPaperLibrary([{
+      id: entry.contentId,
+      name: entry.name,
+      kind: entry.kind,
+      group: entry.groupId,
+    }], false);
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function fillPaperCardMaterials(host, materials, unresolved, kind, onDetail, { hydrated = true } = {}) {
+  host.replaceChildren();
+  if (!materials.size) {
     const empty = document.createElement("small");
-    empty.textContent = kind === "desk" ? "没有可统计的材料" : "庄园摆放图不含装修材料";
+    empty.textContent = kind === "desk"
+      ? (hydrated ? "没有可统计的材料" : "点开查看材料")
+      : kind === "terrain"
+        ? "地形图纸不含装修材料"
+        : "庄园摆放图不含装修材料";
     host.appendChild(empty);
+    return;
   }
-  if (unresolved) {
-    host.title = `${unresolved} 件素材未解析`;
-  }
+  const list = document.createElement("div");
+  list.className = "paper-preview-item-materials-list";
+  fillMaterialList(list, materials, 0);
+  const detail = document.createElement("button");
+  detail.type = "button";
+  detail.className = "paper-preview-materials-detail";
+  detail.textContent = "明细";
+  detail.title = "查看完整材料清单";
+  detail.setAttribute("aria-label", "查看完整材料清单");
+  detail.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onDetail?.();
+  };
+  host.append(list, detail);
+  if (unresolved) host.title = `${unresolved} 件素材未解析`;
+}
+
+function syncPaperCardMaterialOverflow(card) {
+  const list = card.querySelector(".paper-preview-item-materials-list");
+  const detail = card.querySelector(".paper-preview-materials-detail");
+  if (!list || !detail) return;
+  const overflowed = list.scrollHeight > list.clientHeight + 1;
+  list.classList.toggle("has-overflow", overflowed);
+  detail.textContent = overflowed ? "… 明细" : "明细";
 }
 
 function renderPaperLibraryCard(entry) {
@@ -7172,18 +8200,29 @@ function renderPaperLibraryCard(entry) {
   card.className = "paper-preview-item" + (entry.unresolved ? " has-unresolved" : "");
   card.dataset.search = entry.search;
   card.dataset.id = String(entry.id);
+  card.dataset.kind = entry.kind || "";
+  card.dataset.group = entry.groupId || "";
   const visual = document.createElement("button");
   visual.type = "button";
   visual.className = "paper-preview-visual";
   visual.title = "点击放大，查看明细并缩放";
-  const canvas = document.createElement("canvas");
+  const img = document.createElement("img");
+  img.className = "paper-preview-thumb";
+  img.alt = "";
+  img.decoding = "async";
+  img.draggable = false;
+  const kindBadge = document.createElement("span");
+  kindBadge.className = "paper-kind-badge" + (entry.kind === "terrain" ? " is-terrain" : entry.kind === "manor" ? " is-manor" : "");
+  kindBadge.textContent = paperKindLabel(entry.kind);
   const badge = document.createElement("span");
   badge.className = "paper-preview-badge" + (entry.unresolved ? " is-warning" : "");
-  badge.textContent = entry.unresolved ? `${entry.unresolved} 件未解析` : "素材已解析";
+  badge.textContent = entry.kind === "desk"
+    ? (entry.unresolved ? `${entry.unresolved} 件未解析` : (entry.documentData ? "素材已解析" : "待解析"))
+    : paperKindLabel(entry.kind);
   const hint = document.createElement("span");
   hint.className = "paper-preview-zoom-hint";
   hint.textContent = "点击放大";
-  visual.append(canvas, badge, hint);
+  visual.append(img, kindBadge, badge, hint);
   visual.onclick = () => openPaperInspect(entry);
   const copy = document.createElement("div");
   copy.className = "paper-preview-copy";
@@ -7193,22 +8232,32 @@ function renderPaperLibraryCard(entry) {
   name.onclick = () => openPaperInspect(entry);
   const meta = document.createElement("small");
   meta.textContent = entry.meta;
-  copy.append(name, meta);
+  const group = document.createElement("select");
+  group.className = "input paper-card-group";
+  group.title = "把图纸放到分组";
+  fillPaperGroupSelect(group, entry.groupId || "");
+  group.addEventListener("click", (event) => event.stopPropagation());
+  group.addEventListener("change", () => {
+    assignPaperGroup(entry, group.value).catch((error) => console.warn(error));
+  });
+  copy.append(name, meta, group);
   const materials = document.createElement("div");
   materials.className = "paper-preview-item-materials";
-  fillPaperCardMaterials(materials, entry.materials, entry.unresolved, entry.kind);
+  fillPaperCardMaterials(materials, entry.materials, entry.unresolved, entry.kind, () => {
+    openPaperInspect(entry, { focusMaterials: true });
+  }, { hydrated: !!entry.documentData });
   const actions = document.createElement("div");
   actions.className = "paper-preview-item-actions";
   if (entry.kind === "desk") {
     const replace = document.createElement("button");
     replace.type = "button";
     replace.className = "btn";
-    replace.textContent = "覆盖打开";
+    replace.innerHTML = '<span class="btn-label-full">覆盖打开</span><span class="btn-label-short">覆盖</span>';
     replace.onclick = () => importLibraryPaper(entry, "replace");
     const merge = document.createElement("button");
     merge.type = "button";
     merge.className = "btn btn-primary";
-    merge.textContent = "合并到当前";
+    merge.innerHTML = '<span class="btn-label-full">合并到当前</span><span class="btn-label-short">合并</span>';
     merge.onclick = () => importLibraryPaper(entry, "merge");
     actions.append(replace, merge);
   } else {
@@ -7220,10 +8269,62 @@ function renderPaperLibraryCard(entry) {
     actions.appendChild(terrain);
   }
   card.append(visual, copy, materials, actions);
-  return { card, canvas };
+  entry.card = card;
+  entry.thumbImg = img;
+  return { card, img };
+}
+
+function refreshPaperLibraryCard(entry) {
+  const card = entry?.card;
+  if (!card) return;
+  card.classList.toggle("has-unresolved", !!entry.unresolved);
+  card.dataset.kind = entry.kind || "";
+  const meta = card.querySelector(".paper-preview-copy small");
+  if (meta) meta.textContent = entry.meta;
+  const badge = card.querySelector(".paper-preview-badge");
+  if (badge) {
+    badge.classList.toggle("is-warning", !!entry.unresolved);
+    badge.textContent = entry.kind === "desk"
+      ? (entry.unresolved ? `${entry.unresolved} 件未解析` : (entry.documentData ? "素材已解析" : "待解析"))
+      : paperKindLabel(entry.kind);
+  }
+  const materials = card.querySelector(".paper-preview-item-materials");
+  if (materials) {
+    fillPaperCardMaterials(materials, entry.materials, entry.unresolved, entry.kind, () => {
+      openPaperInspect(entry, { focusMaterials: true });
+    }, { hydrated: !!entry.documentData });
+    syncPaperCardMaterialOverflow(card);
+  }
 }
 
 async function importLibraryPaper(entry, mode) {
+  try {
+    await hydratePaperEntry(entry);
+  } catch (error) {
+    await appAlert(error.message || String(error), { title: "导入失败" });
+    return;
+  }
+  if (entry?.kind && entry.kind !== "desk") {
+    closePaperInspect();
+    setPaperLibraryOpen(false);
+    const bytes = entry.file ? new Uint8Array(await entry.file.arrayBuffer()) : null;
+    if (!bytes?.length) {
+      await appAlert("这张图纸无法带到地形桌。", { title: "导入失败" });
+      return;
+    }
+    const expect = entry.kind === "terrain" ? "terrain" : "build";
+    sessionStorage.setItem(
+      expect === "terrain" ? "manor-pending-terrain-import" : "manor-pending-building-import",
+      JSON.stringify({
+        name: entry.name || entry.file?.name || "图纸.txt",
+        encoding: entry.documentData?._source?.encoding || "gbk",
+        base64: PaperLibraryCore.bytesToBase64(bytes),
+        at: Date.now(),
+      })
+    );
+    location.href = expect === "terrain" ? "/web/index.html?importTerrain=1" : "/web/index.html?importBuilding=1";
+    return;
+  }
   if (mode === "replace" && state.records.length) {
     const ok = await appConfirm("覆盖打开会清空当前设计，是否继续？", {
       title: "覆盖打开",
@@ -7271,11 +8372,17 @@ function drawPaperInspect() {
   const canvas = document.getElementById("paperInspectCanvas");
   const bitmap = paperInspectView.bitmap;
   if (!canvas || !isPaperInspectOpen()) return;
-  const ctx = canvas.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
   const view = inspectViewportSize();
-  canvas.width = Math.max(1, Math.round(view.width * dpr));
-  canvas.height = Math.max(1, Math.round(view.height * dpr));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const pxW = Math.max(1, Math.round(view.width * dpr));
+  const pxH = Math.max(1, Math.round(view.height * dpr));
+  if (canvas.width !== pxW || canvas.height !== pxH) {
+    canvas.width = pxW;
+    canvas.height = pxH;
+    paperInspectView.canvasCssW = view.width;
+    paperInspectView.canvasCssH = view.height;
+  }
+  const ctx = canvas.getContext("2d", { alpha: false });
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = "#163522";
   ctx.fillRect(0, 0, view.width, view.height);
@@ -7283,11 +8390,20 @@ function drawPaperInspect() {
   ctx.save();
   ctx.translate(paperInspectView.panX, paperInspectView.panY);
   ctx.scale(paperInspectView.zoom, paperInspectView.zoom);
-  ctx.imageSmoothingEnabled = paperInspectView.zoom < 1.6;
-  ctx.imageSmoothingQuality = "high";
+  ctx.imageSmoothingEnabled = !paperInspectView.dragging && paperInspectView.zoom < 1.6;
+  ctx.imageSmoothingQuality = paperInspectView.dragging ? "low" : "medium";
   ctx.drawImage(bitmap, 0, 0);
   ctx.restore();
   updatePaperInspectZoomLabel();
+}
+
+function requestPaperInspectDraw() {
+  if (paperInspectView.drawQueued) return;
+  paperInspectView.drawQueued = true;
+  requestAnimationFrame(() => {
+    paperInspectView.drawQueued = false;
+    drawPaperInspect();
+  });
 }
 
 function fitPaperInspect() {
@@ -7322,7 +8438,7 @@ function zoomPaperInspectAt(clientX, clientY, factor) {
   paperInspectView.zoom = next;
   paperInspectView.panX = mx - contentX * next;
   paperInspectView.panY = my - contentY * next;
-  drawPaperInspect();
+  requestPaperInspectDraw();
 }
 
 function zoomPaperInspectBy(direction) {
@@ -7341,8 +8457,11 @@ function closePaperInspect() {
   paperInspectView.dragging = false;
   paperInspectView.pointers.clear();
   paperInspectView.pinch = null;
+  paperInspectView.canvasCssW = 0;
+  paperInspectView.canvasCssH = 0;
   document.getElementById("paperInspectViewport")?.classList.remove("is-panning");
   paperInspectView.resizeObserver?.disconnect();
+  setPaperInspectChrome(false);
 }
 
 function bindPaperInspectControls() {
@@ -7392,7 +8511,7 @@ function bindPaperInspectControls() {
       paperInspectView.zoom = zoom;
       paperInspectView.panX = mx - paperInspectView.pinch.contentX * zoom;
       paperInspectView.panY = my - paperInspectView.pinch.contentY * zoom;
-      drawPaperInspect();
+      requestPaperInspectDraw();
       return;
     }
     if (!paperInspectView.dragging) return;
@@ -7400,7 +8519,7 @@ function bindPaperInspectControls() {
     paperInspectView.panY += event.clientY - paperInspectView.lastY;
     paperInspectView.lastX = event.clientX;
     paperInspectView.lastY = event.clientY;
-    drawPaperInspect();
+    requestPaperInspectDraw();
   });
   const endPan = (event) => {
     paperInspectView.pointers.delete(event.pointerId);
@@ -7414,6 +8533,7 @@ function bindPaperInspectControls() {
     paperInspectView.dragging = false;
     viewport.classList.remove("is-panning");
     try { viewport.releasePointerCapture(event.pointerId); } catch {}
+    drawPaperInspect();
   };
   viewport.addEventListener("pointerup", endPan);
   viewport.addEventListener("pointercancel", endPan);
@@ -7446,7 +8566,8 @@ async function paintPaperInspectBitmap(documentData) {
     right = Math.max(right, x + (geometry.width || 16));
     bottom = Math.max(bottom, y + (geometry.height || 16));
   });
-  const cap = 2400;
+  const view = inspectViewportSize();
+  const cap = Math.min(1400, Math.max(720, Math.round(Math.max(view.width, view.height) * 1.6)));
   const contentW = Math.max(1, right - left);
   const contentH = Math.max(1, bottom - top);
   const scale = Math.min(1, cap / contentW, cap / contentH);
@@ -7457,7 +8578,64 @@ async function paintPaperInspectBitmap(documentData) {
   return bitmap;
 }
 
-async function openPaperInspect(entry) {
+function clonePaperCardThumb(entry) {
+  const img = entry?.thumbImg;
+  if (img?.naturalWidth) {
+    const copy = document.createElement("canvas");
+    copy.width = img.naturalWidth;
+    copy.height = img.naturalHeight;
+    copy.getContext("2d").drawImage(img, 0, 0);
+    return copy;
+  }
+  const canvas = entry?.card?.querySelector("canvas");
+  if (!canvas?.width) return null;
+  const copy = document.createElement("canvas");
+  copy.width = canvas.width;
+  copy.height = canvas.height;
+  copy.getContext("2d").drawImage(canvas, 0, 0);
+  return copy;
+}
+
+function fillInspectMaterialList(host, materials, unresolved) {
+  if (!host) return;
+  host.replaceChildren();
+  if (Number(unresolved) > 0) {
+    const warning = document.createElement("span");
+    warning.className = "material-warning";
+    warning.textContent = `部分统计：${unresolved} 件素材未解析`;
+    host.appendChild(warning);
+  }
+  [...materials].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), "zh")).forEach(([name, count]) => {
+    const row = document.createElement("div");
+    row.className = "inspect-mat-row";
+    const url = materialIconUrl(name);
+    if (url) {
+      const icon = document.createElement("img");
+      icon.className = "mat-icon";
+      icon.src = url;
+      icon.alt = "";
+      icon.draggable = false;
+      row.appendChild(icon);
+    } else {
+      const slot = document.createElement("span");
+      slot.className = "mat-icon-slot";
+      row.appendChild(slot);
+    }
+    const label = document.createElement("span");
+    label.className = "inspect-mat-name";
+    label.textContent = name;
+    const em = document.createElement("em");
+    em.textContent = `×${count}`;
+    row.append(label, em);
+    host.appendChild(row);
+  });
+}
+
+function setPaperInspectChrome(open) {
+  document.getElementById("buildingApp")?.classList.toggle("inspect-open", open);
+}
+
+async function openPaperInspect(entry, { focusMaterials = false } = {}) {
   if (!entry) return;
   bindPaperInspectControls();
   paperInspectView.entry = entry;
@@ -7466,20 +8644,35 @@ async function openPaperInspect(entry) {
   if (name) name.textContent = entry.name;
   if (summary) {
     summary.textContent = [
-      entry.kind === "desk" ? "建筑图纸" : "庄园摆放图",
+      paperKindLabel(entry.kind),
       entry.meta,
-      entry.unresolved ? `${entry.unresolved} 件素材未解析` : "素材已全部解析",
-    ].join("\n");
+      entry.kind === "desk"
+        ? (entry.unresolved ? `${entry.unresolved} 件未解析` : "已全部解析")
+        : entry.kind === "terrain"
+          ? "在地形桌打开"
+          : "请到地形桌查看",
+    ].filter(Boolean).join(" · ");
   }
-  fillMaterialList(document.getElementById("paperInspectMaterials"), entry.materials, entry.unresolved);
+  const materialsHeading = document.getElementById("paperInspectMaterialsHeading");
+  if (materialsHeading) {
+    materialsHeading.textContent = entry.materials.size
+      ? `所需材料 · ${entry.materials.size} 种`
+      : "所需材料";
+  }
+  fillInspectMaterialList(document.getElementById("paperInspectMaterials"), entry.materials, entry.unresolved);
   if (!entry.materials.size) {
     const host = document.getElementById("paperInspectMaterials");
     if (host && !host.childElementCount) {
       const empty = document.createElement("small");
-      empty.textContent = entry.kind === "desk" ? "没有可统计的材料" : "庄园摆放图不含装修材料";
+      empty.textContent = entry.kind === "desk"
+        ? "没有可统计的材料"
+        : entry.kind === "terrain"
+          ? "地形图纸不含装修材料"
+          : "庄园摆放图不含装修材料";
       host.appendChild(empty);
     }
   }
+  fillPaperGroupSelect(document.getElementById("paperInspectGroup"), entry.groupId || "");
   const mergeBtn = document.getElementById("btnPaperInspectMerge");
   const replaceBtn = document.getElementById("btnPaperInspectReplace");
   if (entry.kind === "desk") {
@@ -7496,161 +8689,366 @@ async function openPaperInspect(entry) {
     if (mergeBtn) mergeBtn.hidden = true;
   }
   const panel = document.getElementById("paperInspect");
+  setPaperInspectChrome(true);
   window.MobileWorkspace?.openLayer(panel, document.activeElement);
   if (!paperInspectView.resizeObserver) {
-    paperInspectView.resizeObserver = new ResizeObserver(() => drawPaperInspect());
+    paperInspectView.resizeObserver = new ResizeObserver(() => {
+      const view = inspectViewportSize();
+      if (view.width === paperInspectView.canvasCssW && view.height === paperInspectView.canvasCssH) return;
+      requestPaperInspectDraw();
+    });
   }
   paperInspectView.resizeObserver.disconnect();
   paperInspectView.resizeObserver.observe(document.getElementById("paperInspectViewport"));
-  const bitmap = await paintPaperInspectBitmap(entry.documentData);
+  const thumb = entry.inspectBitmap || clonePaperCardThumb(entry);
+  if (thumb && paperInspectView.entry === entry) {
+    paperInspectView.bitmap = thumb;
+    requestAnimationFrame(() => fitPaperInspect());
+  }
+  try {
+    await hydratePaperEntry(entry);
+  } catch (error) {
+    if (paperInspectView.entry === entry) {
+      await appAlert(error.message || String(error), { title: "无法打开图纸" });
+    }
+    return;
+  }
   if (paperInspectView.entry !== entry) return;
+  if (materialsHeading) {
+    materialsHeading.textContent = entry.materials.size
+      ? `所需材料 · ${entry.materials.size} 种`
+      : "所需材料";
+  }
+  fillInspectMaterialList(document.getElementById("paperInspectMaterials"), entry.materials, entry.unresolved);
+  const bitmap = entry.inspectBitmap || await paintPaperInspectBitmap(entry.documentData);
+  if (paperInspectView.entry !== entry) return;
+  entry.inspectBitmap = bitmap;
   paperInspectView.bitmap = bitmap;
   requestAnimationFrame(() => {
     fitPaperInspect();
-    document.getElementById("paperInspectViewport")?.focus();
+    if (focusMaterials) {
+      document.getElementById("paperInspectMaterials")?.scrollTo({ top: 0 });
+    } else {
+      document.getElementById("paperInspectViewport")?.focus();
+    }
   });
 }
 
 function bytesToBase64(bytes) {
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
+  return PaperLibraryCore.bytesToBase64(bytes);
 }
 
 function base64ToBytes(text) {
-  const binary = atob(text);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+  return PaperLibraryCore.base64ToBytes(text);
 }
 
 async function persistPaperLibrary(uploads, replace) {
-  // 按实际 JSON 字节数分批，确保低于服务端 8MB 请求上限。固定按张数
-  // 分批在单张图纸较大时仍可能触发 413。
-  const MAX_BATCH_BYTES = 6 * 1024 * 1024;
-  const batches = [];
-  let batch = [];
-  let batchBytes = 32;
-  uploads.forEach((paper) => {
-    const paperBytes = String(paper.name || "").length * 3 + String(paper.data || "").length + 64;
-    if (batch.length && batchBytes + paperBytes > MAX_BATCH_BYTES) {
-      batches.push(batch);
-      batch = [];
-      batchBytes = 32;
-    }
-    batch.push(paper);
-    batchBytes += paperBytes;
-  });
-  if (batch.length) batches.push(batch);
-  let saved = 0;
-  for (const [index, papers] of batches.entries()) {
-    const response = await fetch("/api/saves/building/papers", {
-      method: "PUT",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ replace: replace && index === 0, papers }),
+  return PaperLibraryCore.persist(uploads, { replace: !!replace, groups: batchLibrary.groups });
+}
+
+function paperSummaryPayload(entry) {
+  return {
+    id: entry.contentId,
+    name: entry.name,
+    kind: entry.kind,
+    group: entry.groupId || "",
+    count: entry.count || 0,
+    meta: entry.meta || "",
+    unresolved: entry.unresolved || 0,
+  };
+}
+
+async function hydratePaperEntry(entry) {
+  if (!entry) return entry;
+  if (entry.file && entry.documentData) return entry;
+  if (entry._hydrate) return entry._hydrate;
+  const contentId = entry.contentId || entry.id;
+  entry._hydrate = (async () => {
+    const paper = await PaperLibraryCore.fetchPaper(contentId);
+    const { file, bytes } = PaperLibraryCore.fileFromPaper(paper);
+    const parsed = await parsePaperLibraryFile(file, bytes.buffer);
+    const rebuilt = buildPaperLibraryEntry(file, parsed.documentData, {
+      id: entry.id,
+      contentId,
+      name: entry.name || paper.name,
+      groupId: entry.groupId || paper.group || "",
     });
-    if (!response.ok) throw new Error(`图纸库同步失败 (${response.status})`);
-    saved += Number((await response.json())?.saved || 0);
+    entry.file = rebuilt.file;
+    entry.documentData = rebuilt.documentData;
+    entry.kind = rebuilt.kind;
+    entry.count = rebuilt.count;
+    entry.meta = rebuilt.meta;
+    entry.materials = rebuilt.materials;
+    entry.unresolved = rebuilt.unresolved;
+    refreshPaperLibraryCard(entry);
+    persistPaperLibrary([paperSummaryPayload(entry)], false).catch((error) => console.warn(error));
+    return entry;
+  })();
+  try {
+    return await entry._hydrate;
+  } catch (error) {
+    entry._hydrate = null;
+    throw error;
   }
-  return saved;
+}
+
+async function uploadPaperThumb(entry, canvas) {
+  if (!entry?.contentId) return;
+  try {
+    let blob = canvas ? await PaperLibraryCore.canvasToJpegBlob(canvas) : null;
+    if (!blob && entry.thumbImg?.src) {
+      blob = await fetch(entry.thumbImg.src).then((response) => response.blob()).catch(() => null);
+    }
+    if (!blob) return;
+    if (await PaperLibraryCore.putThumb(entry.contentId, blob)) {
+      entry.hasThumb = true;
+      entry.thumbAt = Date.now();
+    }
+  } catch (error) {
+    console.warn("图纸缩略图同步失败", error);
+  }
+}
+
+async function fillMissingPaperThumb(entry) {
+  if (!entry?.thumbImg || entry.thumbReady) return;
+  if (entry.hasThumb) {
+    entry.thumbImg.src = PaperLibraryCore.thumbUrl(entry.contentId, entry.thumbAt || entry.savedAt);
+    entry.thumbReady = true;
+    return;
+  }
+  await hydratePaperEntry(entry);
+  const canvas = document.createElement("canvas");
+  await paintPaperThumbnail(canvas, entry.documentData);
+  if (entry.thumbImg) entry.thumbImg.src = canvas.toDataURL("image/jpeg", 0.72);
+  entry.thumbReady = true;
+  uploadPaperThumb(entry, canvas);
+}
+
+function bindPaperCardThumb(entry, loader) {
+  const img = entry?.thumbImg;
+  if (!img) return;
+  if (entry.hasThumb) {
+    img.src = PaperLibraryCore.thumbUrl(entry.contentId, entry.thumbAt || entry.savedAt);
+    img.addEventListener("error", () => {
+      if (entry.thumbReady) return;
+      entry.hasThumb = false;
+      loader?.watch(img, () => fillMissingPaperThumb(entry));
+    }, { once: true });
+    return;
+  }
+  loader?.watch(img, () => fillMissingPaperThumb(entry));
+}
+
+function showPaperLibraryIndex(papers) {
+  const grid = document.getElementById("paperPreviewGrid");
+  if (!grid) return;
+  batchLibrary.thumbLoader?.disconnect();
+  batchLibrary.generation += 1;
+  batchLibrary.loading = false;
+  batchLibrary.failed = 0;
+  batchLibrary.skippedDup = 0;
+  batchLibrary.skippedKind = 0;
+  batchLibrary.entries = PaperLibraryCore.sortedPaperEntries(
+    papers.map((paper) => PaperLibraryCore.entryFromIndex(paper)),
+    PaperLibraryCore.loadPaperSort()
+  );
+  grid.replaceChildren();
+  const loader = PaperLibraryCore.createLazyLoader({ root: grid, concurrency: 2 });
+  batchLibrary.thumbLoader = loader;
+  batchLibrary.entries.forEach((entry) => {
+    const { card } = renderPaperLibraryCard(entry);
+    grid.appendChild(card);
+    bindPaperCardThumb(entry, loader);
+  });
+  grid.hidden = !batchLibrary.entries.length;
+  const empty = document.getElementById("paperLibraryEmpty");
+  if (empty) empty.hidden = !!batchLibrary.entries.length;
+  applyPaperLibraryFilter();
+  updatePaperLibraryStatus();
+  updateBatchPreviewButton();
+}
+
+async function parsePaperLibraryFile(file, existingBuffer) {
+  const buffer = existingBuffer || await file.arrayBuffer();
+  const documentData = await PaperLibraryCore.parseFile(buffer);
+  return { buffer, documentData };
+}
+
+function paperLibraryEntryMeta(documentData, materials) {
+  const kind = documentData.kind;
+  if (kind === "desk") {
+    const paperRows = (documentData.records || []).filter((record) => Number(record.mat));
+    return `${paperRows.length} 件素材 · ${materials.size} 种材料`;
+  }
+  if (kind === "terrain") {
+    const stamps = documentData.stamps || [];
+    return `${documentData.size || "?"} 格 · ${stamps.length} 个地块`;
+  }
+  return `${(documentData.records || []).length} 个庄园建筑点`;
+}
+
+function buildPaperLibraryEntry(file, documentData, { id, contentId, name, groupId }) {
+  const records = documentData.records || [];
+  const { materialTotals, unresolved } = documentData.kind === "desk"
+    ? paperLibraryMaterials(records)
+    : { materialTotals: new Map(), unresolved: 0 };
+  const relative = name || String(file.webkitRelativePath || file.name);
+  return {
+    id,
+    contentId: contentId || "",
+    file,
+    documentData,
+    name: relative,
+    search: relative.toLowerCase(),
+    kind: documentData.kind,
+    groupId: groupId || "",
+    count: records.filter((record) => Number(record.mat)).length,
+    meta: paperLibraryEntryMeta(documentData, materialTotals),
+    materials: materialTotals,
+    unresolved,
+    savedAt: Date.now(),
+  };
 }
 
 async function openBatchPaperPreview(files) {
   const candidates = [...files].filter((file) => /\.txt$/i.test(file.name));
-  // 手选文件夹 = 替换服务器上的图纸库存档。
-  await loadPaperLibraryFiles(candidates, { persist: true });
+  await loadPaperLibraryFiles(candidates, { persist: true, append: true });
 }
 
 async function openServerPaperLibrary() {
-  // 图纸库为空时先看服务器：上传过的图纸都存在服务端，不用重新选文件夹。
   setPaperLibraryOpen(true);
-  updatePaperLibraryStatus("正在从服务器读取图纸库…");
+  updatePaperLibraryStatus("正在读取图纸库…");
   let papers = [];
   try {
-    const response = await fetch("/api/saves/building/papers", { credentials: "same-origin" });
-    if (response.ok) {
-      const data = await response.json();
-      if (Array.isArray(data?.papers)) papers = data.papers;
-    }
+    const data = await PaperLibraryCore.fetchLibrary();
+    papers = data.papers;
+    batchLibrary.groups = data.groups || [];
+    renderPaperGroupTabs();
   } catch (error) {
-    console.warn("读取服务器图纸库失败", error);
+    console.warn("读取图纸库失败", error);
   }
   if (batchLibrary.entries.length || batchLibrary.loading) return;
   if (!papers.length) {
-    updatePaperLibraryStatus("服务器上还没有存过图纸，先选择一个本地文件夹。");
+    updatePaperLibraryStatus("还没有图纸。导入文件夹或文件即可叠加。");
     return;
   }
-  const files = papers.map((paper) => {
-    try {
-      return new File([base64ToBytes(paper.data)], String(paper.name || "图纸.txt"));
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
-  await loadPaperLibraryFiles(files, { persist: false, sourceLabel: "服务器存档" });
+  showPaperLibraryIndex(papers);
 }
 
-async function loadPaperLibraryFiles(candidates, { persist = false, sourceLabel = "" } = {}) {
+async function loadPaperLibraryFiles(candidates, { persist = false, append = true, sourceLabel = "" } = {}) {
   const grid = document.getElementById("paperPreviewGrid");
   const search = document.getElementById("paperBatchSearch");
   if (!grid) return;
-  if (search) search.value = "";
-  batchLibrary.query = "";
+  if (!append && search) search.value = "";
+  if (!append) batchLibrary.query = "";
   batchLibrary.generation += 1;
   const gen = batchLibrary.generation;
   batchLibrary.loading = true;
-  batchLibrary.entries = [];
   batchLibrary.failed = 0;
-  batchLibrary.folderLabel = sourceLabel || (candidates.length ? folderLabelFromFiles(candidates) : "");
-  grid.replaceChildren();
+  batchLibrary.skippedDup = 0;
+  batchLibrary.skippedKind = 0;
+  if (!append) {
+    batchLibrary.thumbLoader?.disconnect();
+    batchLibrary.entries = [];
+    grid.replaceChildren();
+  }
+  batchLibrary.folderLabel = sourceLabel || (candidates.length ? folderLabelFromFiles(candidates) : batchLibrary.folderLabel);
   setPaperLibraryOpen(true);
   syncPaperLibraryEmpty();
   if (!candidates.length) {
     batchLibrary.loading = false;
-    updatePaperLibraryStatus("所选文件夹里没有 .txt 图纸。");
+    updatePaperLibraryStatus("所选文件里没有 .txt 图纸。");
     updateBatchPreviewButton();
     return;
   }
-  updatePaperLibraryStatus(`正在读取 ${candidates.length} 张图纸…`);
+  updatePaperLibraryStatus(`正在载入 ${candidates.length} 张图纸…`);
   updateBatchPreviewButton();
+  const cacheMap = await loadPaperLibraryCacheMap();
+  if (gen !== batchLibrary.generation) return;
   let unresolvedTotal = 0;
   const uploads = [];
+  const pendingCache = [];
+  const knownIds = new Set(batchLibrary.entries.map((entry) => entry.contentId).filter(Boolean));
+  const flushCache = async () => {
+    if (!pendingCache.length) return;
+    const rows = pendingCache.splice(0, pendingCache.length);
+    await putPaperLibraryCache(rows);
+  };
   for (const [index, file] of candidates.entries()) {
     try {
-      const { buffer, documentData } = await parseBuildingFile(file);
-      if (gen !== batchLibrary.generation) return;
-      const records = documentData.records || [];
-      const paperRows = records.filter((record) => Number(record.mat));
-      const { materialTotals, unresolved } = paperLibraryMaterials(records);
-      unresolvedTotal += unresolved;
       const relative = String(file.webkitRelativePath || file.name).replace(/\\/g, "/");
-      if (persist) uploads.push({ name: relative, data: bytesToBase64(new Uint8Array(buffer)) });
-      const entry = {
-        id: `${gen}-${index}`,
-        file,
-        documentData,
-        name: relative,
-        search: relative.toLowerCase(),
-        kind: documentData.kind,
-        count: paperRows.length,
-        meta: documentData.kind === "desk"
-          ? `${paperRows.length} 件素材 · ${materialTotals.size} 种材料`
-          : `${records.length} 个庄园建筑点`,
-        materials: materialTotals,
-        unresolved,
-      };
+      const meta = file.paperMeta || {};
+      const buffer = meta.data ? base64ToBytes(meta.data).buffer : await file.arrayBuffer();
+      if (gen !== batchLibrary.generation) return;
+      const bytes = new Uint8Array(buffer);
+      const data = meta.data || bytesToBase64(bytes);
+      const contentId = meta.id || await paperContentIdFromBase64(data);
+      if (knownIds.has(contentId)) {
+        batchLibrary.skippedDup += 1;
+        continue;
+      }
+      if (persist && sniffPaperKind(bytes) === "terrain" && !libraryAcceptsKind("terrain")) {
+        batchLibrary.skippedKind += 1;
+        continue;
+      }
+      const fingerprint = paperFingerprint(relative, bytes);
+      const cached = cacheMap.get(`id:${contentId}`) || cacheMap.get(fingerprint);
+      let entry;
+      if (cached?.documentData) {
+        entry = entryFromPaperCache(cached, file, `${gen}-${index}`);
+        entry.contentId = contentId;
+        entry.groupId = meta.group || cached.groupId || entry.groupId || "";
+        if (meta.kind) entry.kind = meta.kind;
+      } else {
+        const parsed = await parsePaperLibraryFile(file, bytes.buffer);
+        if (gen !== batchLibrary.generation) return;
+        entry = buildPaperLibraryEntry(file, parsed.documentData, {
+          id: `${gen}-${index}`,
+          contentId,
+          name: relative,
+          groupId: meta.group || "",
+        });
+      }
+      if (persist && !libraryAcceptsKind(entry.kind)) {
+        batchLibrary.skippedKind += 1;
+        continue;
+      }
+      knownIds.add(contentId);
+      if (persist) {
+        uploads.push({
+          id: contentId,
+          name: relative,
+          data,
+          kind: entry.kind,
+          group: entry.groupId || "",
+          count: entry.count || 0,
+          meta: entry.meta || "",
+          unresolved: entry.unresolved || 0,
+        });
+      }
+      unresolvedTotal += Number(entry.unresolved || 0);
       batchLibrary.entries.push(entry);
-      const { card, canvas } = renderPaperLibraryCard(entry);
+      const { card, img } = renderPaperLibraryCard(entry);
       grid.appendChild(card);
+      syncPaperCardMaterialOverflow(card);
+      requestAnimationFrame(() => syncPaperCardMaterialOverflow(card));
       grid.hidden = false;
       const empty = document.getElementById("paperLibraryEmpty");
       if (empty) empty.hidden = true;
-      await paintPaperThumbnail(canvas, documentData);
+      if (cached?.thumb) {
+        img.src = cached.thumb;
+        entry.thumbReady = true;
+        if (!entry.hasThumb) uploadPaperThumb(entry);
+      } else {
+        const canvas = document.createElement("canvas");
+        await paintPaperThumbnail(canvas, entry.documentData);
+        img.src = canvas.toDataURL("image/jpeg", 0.72);
+        entry.thumbReady = true;
+        pendingCache.push(serializePaperLibraryCache(entry, fingerprint, canvasThumbDataUrl(canvas)));
+        uploadPaperThumb(entry, canvas);
+      }
       if (gen !== batchLibrary.generation) return;
+      if (pendingCache.length >= 8) await flushCache();
     } catch (error) {
       if (gen !== batchLibrary.generation) return;
       batchLibrary.failed += 1;
@@ -7658,29 +9056,28 @@ async function loadPaperLibraryFiles(candidates, { persist = false, sourceLabel 
     }
     applyPaperLibraryFilter();
     updatePaperLibraryStatus(
-      `正在解析 ${index + 1} / ${candidates.length} 张图纸`
+      `正在载入 ${index + 1} / ${candidates.length} 张图纸`
       + (unresolvedTotal ? ` · ${unresolvedTotal} 件素材未解析` : "")
-      + (batchLibrary.failed ? ` · ${batchLibrary.failed} 张无法读取` : "")
+      + paperLibrarySkipNote()
     );
-    if (index % 4 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (index % 8 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
   }
   if (gen !== batchLibrary.generation) return;
+  await flushCache();
   batchLibrary.loading = false;
   syncPaperLibraryEmpty();
   updatePaperLibraryStatus();
   updateBatchPreviewButton();
-  if (persist && uploads.length) {
+  if (persist && (uploads.length || batchLibrary.groups.length)) {
     try {
-      const saved = await persistPaperLibrary(uploads, true);
+      await persistPaperLibrary(uploads, false);
       if (gen === batchLibrary.generation) {
-        updatePaperLibraryStatus(
-          `已解析 ${batchLibrary.entries.length} 张 · 已存到服务器 ${saved} 张，下次打开自动载入`
-        );
+        updatePaperLibraryStatus();
       }
     } catch (error) {
       console.warn(error);
       if (gen === batchLibrary.generation) {
-        updatePaperLibraryStatus("图纸已载入，但保存到服务器失败，下次可能需要重新选择文件夹。");
+        updatePaperLibraryStatus("图纸已载入，但同步失败，可稍后再导入一次。");
       }
     }
   }
@@ -7888,6 +9285,7 @@ async function exportDesign() {
 }
 
 function bindBuilding() {
+  bindBuildingSheetChrome();
   window.MobileWorkspace?.registerSheet({
     id: "building-rail",
     root: ".building-rail",
@@ -7899,8 +9297,8 @@ function bindBuilding() {
   window.MobileWorkspace?.registerSheet({
     id: "building-tools",
     root: "#canvasToolDock",
-    backdrop: "#buildingRailBackdrop",
-    inert: ["#canvasZoomInner", ".stage-bar", ".building-app .topbar"],
+    backdrop: null,
+    inert: [".stage-bar", ".building-app .topbar"],
     initialFocus: "#btnBuildingToolsClose",
     mutex: "building-workspace",
     resetScroll: false,
@@ -7992,12 +9390,13 @@ function bindBuilding() {
   if (btnZoomOut) btnZoomOut.onclick = () => zoomBy(-ZOOM_STEP);
   if (btnZoomIn) btnZoomIn.onclick = () => zoomBy(ZOOM_STEP);
   if (btnZoomReset) btnZoomReset.onclick = () => setZoom(1);
+  bindNudgePad();
   const canvasShell = document.getElementById("canvasShell");
   if (canvasShell) {
     canvasShell.addEventListener(
       "wheel",
       (event) => {
-        if (event.target.closest(".stage-bar, .base-meta, .zoom-control, .stage-commandbar")) return;
+        if (event.target.closest(".stage-bar, .base-meta, .zoom-control, .nudge-pad, .stage-commandbar")) return;
         if (state.interaction) {
           event.preventDefault();
           return;
@@ -8041,10 +9440,33 @@ function bindBuilding() {
   document.getElementById("btnPaperLibraryFolder")?.addEventListener("click", () => {
     document.getElementById("buildingFolder")?.click();
   });
+  document.getElementById("btnPaperLibraryFiles")?.addEventListener("click", () => {
+    document.getElementById("paperLibraryFilePick")?.click();
+  });
   document.getElementById("btnPaperLibraryPick")?.addEventListener("click", () => {
     document.getElementById("buildingFolder")?.click();
   });
+  document.getElementById("btnPaperLibraryNewGroup")?.addEventListener("click", () => {
+    createPaperLibraryGroup().catch((error) => console.warn(error));
+  });
+  document.querySelectorAll("[data-paper-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      batchLibrary.kindFilter = button.dataset.paperKind || "all";
+      document.querySelectorAll("[data-paper-kind]").forEach((tab) => {
+        const on = tab.dataset.paperKind === batchLibrary.kindFilter;
+        tab.classList.toggle("on", on);
+        tab.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      applyPaperLibraryFilter();
+    });
+  });
   document.getElementById("paperBatchSearch")?.addEventListener("input", () => applyPaperLibraryFilter());
+  PaperLibraryCore.bindPaperSortSelect(() => applyPaperLibraryFilter());
+  document.getElementById("paperInspectGroup")?.addEventListener("change", (event) => {
+    if (paperInspectView.entry) {
+      assignPaperGroup(paperInspectView.entry, event.target.value).catch((error) => console.warn(error));
+    }
+  });
   document.getElementById("btnPaperInspectBack")?.addEventListener("click", () => closePaperInspect());
   document.getElementById("btnPaperInspectClose")?.addEventListener("click", () => closePaperInspect());
   document.getElementById("btnPaperInspectZoomIn")?.addEventListener("click", () => zoomPaperInspectBy(1));
@@ -8062,19 +9484,23 @@ function bindBuilding() {
     await openBatchPaperPreview(event.target.files || []);
     event.target.value = "";
   };
+  document.getElementById("paperLibraryFilePick")?.addEventListener("change", async (event) => {
+    await openBatchPaperPreview(event.target.files || []);
+    event.target.value = "";
+  });
   document.getElementById("btnDownloadPaper").onclick = () => {
     exportDesign().catch((error) => appAlert(error.message || String(error), { title: "导出失败" }));
   };
   document.getElementById("btnSavePaperPreview").onclick = saveCurrentPaperPreview;
-  document.getElementById("btnAllMaterials").onclick = () => {
-    const line = document.querySelector(".material-line");
-    if (!line) return;
-    line.classList.toggle("is-open");
-    document.getElementById("btnAllMaterials").setAttribute(
-      "aria-expanded",
-      line.classList.contains("is-open") ? "true" : "false"
-    );
-  };
+  document.getElementById("btnAllMaterials").onclick = () => openBuildingMaterialLedger();
+  document.getElementById("btnDesignMaterials")?.addEventListener("click", () => openBuildingMaterialLedger());
+  document.getElementById("btnProjectMaterials")?.addEventListener("click", () => openBuildingMaterialLedger());
+  document.getElementById("btnProjectMaterialsTab")?.addEventListener("click", () => openBuildingRail("materials"));
+  document.getElementById("btnPieceMaterials")?.addEventListener("click", () => openPieceMaterialLedger());
+  document.getElementById("currentMaterials")?.addEventListener("click", () => {
+    if (pieceMaterialPayload?.groups?.[0]?.rows?.length) openPieceMaterialLedger();
+  });
+  document.getElementById("allMaterials")?.addEventListener("click", () => openBuildingMaterialLedger());
   document.getElementById("buildingFile").onchange = async (event) => {
     if (!event.target.files[0]) return;
     try {
@@ -8249,13 +9675,17 @@ function bindBuilding() {
     };
   }
   document.getElementById("btnBuildingMobileAssets")?.addEventListener("click", () => {
-    setMobileToolsOpen(false);
+    if (!buildingFloatingHud()) setMobileToolsOpen(false);
     const mode = state.phase === "select" ? "base" : "assets";
     if (!state.railCollapsed && state.mobileSheetMode === mode) {
       closeBuildingRail();
     } else openBuildingRail(mode);
   });
   document.getElementById("btnBuildingMobileTools")?.addEventListener("click", () => {
+    if (buildingFloatingHud()) {
+      setMobileToolsOpen(true);
+      return;
+    }
     const open = !document.documentElement.classList.contains("mobile-tools-open");
     if (open) closeBuildingRail();
     setMobileToolsOpen(open);
@@ -8270,14 +9700,14 @@ function bindBuilding() {
     if (window.MobileWorkspace?.modeForViewport().mobile) openBuildingRail("assets");
   });
   document.getElementById("btnBuildingMobileProject")?.addEventListener("click", () => {
-    setMobileToolsOpen(false);
+    if (!buildingFloatingHud()) setMobileToolsOpen(false);
     if (!state.railCollapsed && state.mobileSheetMode === "project") closeBuildingRail();
     else openBuildingRail("project");
   });
   document.getElementById("btnBuildingMobileUndo")?.addEventListener("click", undo);
   document.getElementById("btnBuildingMobilePan")?.addEventListener("click", (event) => {
-    closeBuildingRail();
-    setMobileToolsOpen(false);
+    if (!(state.sheetPinned && workspaceMode().tablet)) closeBuildingRail();
+    if (!buildingFloatingHud()) setMobileToolsOpen(false);
     state.mobilePan = !state.mobilePan;
     syncMobilePanUi();
   });
@@ -8558,7 +9988,7 @@ function bindBuilding() {
       executeCommand("triangleTool");
     } else if (key === "c" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      executeCommand("diamondTool");
+      executeCommand("group");
     } else if (key === "g" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       executeCommand("ringTool");
@@ -8654,9 +10084,7 @@ function bindBuilding() {
     }
   });
 
-  wireDeskSwitchSave(() => {
-    saveBuildingSession();
-  });
+  wireDeskSwitchSave(saveBuildingSessionForSwitch);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) saveBuildingSession();
   });

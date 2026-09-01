@@ -104,6 +104,11 @@
   }
 
   function opaqueBottomVertex(image, threshold = 32) {
+    const diamond = opaqueDiamondVertices(image, threshold);
+    return diamond?.bottom || null;
+  }
+
+  function opaqueDiamondVertices(image, threshold = 32) {
     if (!image?.width || !image?.height) return null;
     const sheet = document.createElement("canvas");
     sheet.width = image.naturalWidth || image.width;
@@ -114,23 +119,70 @@
     try {
       pixels = ctx.getImageData(0, 0, sheet.width, sheet.height).data;
     } catch {
-      return { x: Math.round(sheet.width / 2), y: sheet.height - 1 };
+      return {
+        top: { x: Math.round(sheet.width / 2), y: 0 },
+        right: { x: sheet.width - 1, y: Math.round(sheet.height / 2) },
+        bottom: { x: Math.round(sheet.width / 2), y: sheet.height - 1 },
+        left: { x: 0, y: Math.round(sheet.height / 2) },
+      };
     }
-    for (let y = sheet.height - 1; y >= 0; y -= 1) {
+    const solid = (x, y) => {
+      const index = (y * sheet.width + x) * 4;
+      return (Math.max(pixels[index], pixels[index + 1], pixels[index + 2]) * pixels[index + 3]) / 255 >= threshold;
+    };
+    const midRunY = (y) => {
       let left = -1;
       let right = -1;
-      const row = y * sheet.width * 4;
       for (let x = 0; x < sheet.width; x += 1) {
-        const index = row + x * 4;
-        const cover =
-          (Math.max(pixels[index], pixels[index + 1], pixels[index + 2]) * pixels[index + 3]) / 255;
-        if (cover < threshold) continue;
+        if (!solid(x, y)) continue;
         if (left < 0) left = x;
         right = x;
       }
-      if (left >= 0) return { x: (left + right) >> 1, y };
+      return left < 0 ? null : { x: (left + right) >> 1, y };
+    };
+    const midRunX = (x) => {
+      let top = -1;
+      let bottom = -1;
+      for (let y = 0; y < sheet.height; y += 1) {
+        if (!solid(x, y)) continue;
+        if (top < 0) top = y;
+        bottom = y;
+      }
+      return top < 0 ? null : { x, y: (top + bottom) >> 1 };
+    };
+    let top = null;
+    let bottom = null;
+    let leftX = -1;
+    let rightX = -1;
+    for (let y = 0; y < sheet.height; y += 1) {
+      for (let x = 0; x < sheet.width; x += 1) {
+        if (!solid(x, y)) continue;
+        if (!top) top = midRunY(y);
+        bottom = { x, y };
+        if (leftX < 0 || x < leftX) leftX = x;
+        if (x > rightX) rightX = x;
+      }
     }
-    return null;
+    if (!top || !bottom) return null;
+    bottom = midRunY(bottom.y) || bottom;
+    return {
+      top,
+      right: rightX >= 0 ? midRunX(rightX) || { x: rightX, y: bottom.y } : { x: sheet.width - 1, y: bottom.y },
+      bottom,
+      left: leftX >= 0 ? midRunX(leftX) || { x: leftX, y: bottom.y } : { x: 0, y: bottom.y },
+    };
+  }
+
+  function floorQuadFromDiamond(diamond) {
+    const front = diamond?.bottom;
+    if (!front) return null;
+    const rel = (point) => ({ x: point.x - front.x, y: point.y - front.y });
+    return {
+      top: rel(diamond.top),
+      right: rel(diamond.right),
+      bottom: { x: 0, y: 0 },
+      left: rel(diamond.left),
+    };
   }
 
   function floorSnugInMask(floor, mask) {
@@ -359,7 +411,14 @@
     const documentData = options.documentData || { records: [] };
     const base = options.base || baseByNo(previewCatalog, options.baseNo);
     if (!base) throw new Error("必须先选择建筑户型");
-    const includeMaskGrass = options.includeMaskGrass !== false && options.purpose !== "terrain";
+    const forTerrain = options.purpose === "terrain";
+    // Terrain never paints the green mask shell. "地基" is the 户型 brick floor.
+    const includeMaskGrass = forTerrain
+      ? false
+      : (options.includeMaskGrass != null ? !!options.includeMaskGrass : true);
+    const includeFloor = options.includeFloor != null
+      ? !!options.includeFloor
+      : !forTerrain;
     const [floor, mask, grass] = await Promise.all([
       loadImage(baseImageUrl(base)),
       loadImage(maskImageUrl(base)),
@@ -411,18 +470,24 @@
     );
     const visible = rows.filter(Boolean);
 
-    let left = includeMaskGrass ? Math.min(0, snug.x) : snug.x;
-    let top = includeMaskGrass ? Math.min(0, snug.y) : snug.y;
-    let right = includeMaskGrass ? Math.max(maskWidth, snug.x + floorWidth) : snug.x + floorWidth;
-    let bottom = includeMaskGrass ? Math.max(maskHeight, snug.y + floorHeight) : snug.y + floorHeight;
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    const includeRect = (x, y, w, h) => {
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x + w);
+      bottom = Math.max(bottom, y + h);
+    };
+    if (includeMaskGrass) includeRect(0, 0, maskWidth, maskHeight);
+    if (includeFloor) includeRect(snug.x, snug.y, floorWidth, floorHeight);
     visible.forEach((row) => {
       const x = Number(row.record.x) + contentDx;
       const y = Number(row.record.y) + contentDy;
-      left = Math.min(left, x);
-      top = Math.min(top, y);
-      right = Math.max(right, x + row.width);
-      bottom = Math.max(bottom, y + row.height);
+      includeRect(x, y, row.width, row.height);
     });
+    if (!Number.isFinite(left)) includeRect(snug.x, snug.y, floorWidth, floorHeight);
     const margin = 8;
     const originX = Math.floor(left) - margin;
     const originY = Math.floor(top) - margin;
@@ -431,7 +496,7 @@
     scene.height = Math.max(1, Math.ceil(bottom) - originY + margin);
     const ctx = scene.getContext("2d");
     if (includeMaskGrass) drawMaskGrass(ctx, mask, grass, -originX, -originY);
-    ctx.drawImage(floor, snug.x - originX, snug.y - originY, floorWidth, floorHeight);
+    if (includeFloor) ctx.drawImage(floor, snug.x - originX, snug.y - originY, floorWidth, floorHeight);
     visible.forEach((row) => {
       ctx.drawImage(
         row.image,
@@ -442,7 +507,8 @@
       );
     });
 
-    const floorFront = opaqueBottomVertex(floor, 96) || {
+    const floorDiamond = opaqueDiamondVertices(floor, 96);
+    const floorFront = floorDiamond?.bottom || opaqueBottomVertex(floor, 96) || {
       x: Math.round(floorWidth / 2),
       y: floorHeight - 1,
     };
@@ -450,6 +516,7 @@
       x: snug.x + floorFront.x - originX,
       y: snug.y + floorFront.y - originY,
     };
+    const floorQuad = floorQuadFromDiamond(floorDiamond);
     const bounds = alphaBounds(scene);
     const bitmap = document.createElement("canvas");
     bitmap.width = Math.max(1, bounds.right - bounds.left);
@@ -474,10 +541,12 @@
         x: rawGroundAnchor.x - bounds.left,
         y: rawGroundAnchor.y - bounds.top,
       },
+      floorQuad,
       alphaBounds: bounds,
       resolved: visible.length,
       unresolved,
       contentOffset: { x: contentDx, y: contentDy },
+      includeFloor,
       transparent: !includeMaskGrass,
     };
   }
@@ -496,6 +565,8 @@
     maskImageUrl,
     frameGeometry,
     opaqueBottomVertex,
+    opaqueDiamondVertices,
+    floorQuadFromDiamond,
     floorSnugInMask,
     nativeHalfDelta,
     nativeMaskOriginForLayer,

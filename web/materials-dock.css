@@ -1,0 +1,204 @@
+.materials-dock {
+  position: absolute;
+  z-index: 23;
+  right: 8px;
+  bottom: 8px;
+  left: auto;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  column-gap: 6px;
+  row-gap: 2px;
+  align-items: center;
+  width: max-content;
+  max-width: min(340px, calc(100% - 16px));
+  padding: 6px 8px;
+  border: 1px solid rgba(183, 200, 178, 0.88);
+  border-radius: 10px;
+  background: rgba(247, 250, 246, 0.96);
+  box-shadow: 0 6px 18px rgba(16, 34, 24, 0.18);
+  backdrop-filter: blur(12px) saturate(1.08);
+  pointer-events: auto;
+}
+
+.materials-dock[hidden] {
+  display: none !important;
+}
+
+.materials-dock-row {
+  display: contents;
+}
+
+.materials-dock-label {
+  justify-self: end;
+  width: auto;
+  min-width: 28px;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  text-align: right;
+  line-height: 1;
+}
+
+.materials-dock-piece .materials-dock-label {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.materials-dock-all .materials-dock-label {
+  grid-column: 1;
+  grid-row: 2 / 4;
+  align-self: center;
+}
+
+.materials-dock-strip {
+  min-width: 0;
+}
+
+#currentMaterials {
+  grid-column: 2 / 4;
+  grid-row: 1;
+}
+
+#allMaterials {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.materials-dock-row .material-meta {
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: start;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ink-soft);
+}
+
+.materials-dock-row .material-meta:empty {
+  display: none;
+}
+
+.materials-dock-detail {
+  grid-column: 3;
+  grid-row: 2 / 4;
+  align-self: center;
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.materials-dock .current-materials,
+.materials-dock .all-material-strip {
+  min-height: 26px;
+  max-height: 26px;
+}
+
+.materials-dock .current-materials,
+.materials-dock .all-material-strip {
+  scrollbar-width: none;
+}
+
+.materials-dock .current-materials::-webkit-scrollbar,
+.materials-dock .all-material-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.materials-dock .mat-chip {
+  height: 22px;
+  font-size: 10px;
+  align-items: center;
+}
+
+.materials-dock .mat-icon,
+.materials-dock .mat-icon-slot {
+  width: 18px;
+  height: 18px;
+}
+
+html.is-mobile-workspace .materials-dock {
+  right: 8px;
+  max-width: min(320px, calc(100% - 16px));
+}
+
+/* Phone dock sits in grid row 3 — canvas bottom is already above it. */
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock {
+  right: 6px;
+  bottom: 4px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  max-width: min(280px, calc(100% - 12px));
+  padding: 5px 6px;
+  column-gap: 5px;
+  row-gap: 1px;
+  border-radius: 9px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock-label {
+  min-width: 24px;
+  font-size: 9px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock .current-materials,
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock .all-material-strip {
+  min-height: 24px;
+  max-height: 24px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock-detail {
+  min-width: 40px;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock .mat-chip {
+  height: 20px;
+  font-size: 9px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock .mat-icon,
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock .mat-icon-slot {
+  width: 16px;
+  height: 16px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .materials-dock-row .material-meta {
+  font-size: 9px;
+}
+
+html.is-tablet-workspace .materials-dock {
+  right: 8px;
+  bottom: calc(var(--mobile-dock-stack) + 4px);
+  max-width: min(300px, calc(100% - 88px));
+  padding: 5px 7px;
+}
+
+html.is-tablet-workspace .materials-dock .current-materials,
+html.is-tablet-workspace .materials-dock .all-material-strip {
+  min-height: 24px;
+  max-height: 24px;
+}
+
+html.is-tablet-workspace .materials-dock .mat-chip {
+  height: 20px;
+  font-size: 9px;
+}
+
+html.is-tablet-workspace .materials-dock .mat-icon,
+html.is-tablet-workspace .materials-dock .mat-icon-slot {
+  width: 16px;
+  height: 16px;
+}
+
+@media (max-width: 420px) {
+  .materials-dock {
+    max-width: min(260px, calc(100% - 12px));
+  }
+}

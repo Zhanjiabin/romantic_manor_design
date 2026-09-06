@@ -346,6 +346,26 @@ def test_http_saves_roundtrip():
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "PUT",
+            "/api/saves/terrain/version",
+            body='{"id":"v2","name":"history only","savedAt":3,"stamps":[],"_historyOnly":true}',
+            headers=headers,
+        )
+        history_only = conn.getresponse()
+        history_only.read()
+        assert history_only.status == 200
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/terrain", headers=headers)
+        history_index = conn.getresponse()
+        history_body = json.loads(history_index.read())
+        assert history_body["draft"]["id"] == "v1"
+        assert history_body["versions"][0]["id"] == "v2"
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
         conn.request("GET", "/api/saves/terrain/version/v1", headers=headers)
         got_version = conn.getresponse()
         assert got_version.status == 200

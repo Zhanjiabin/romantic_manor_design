@@ -54,8 +54,13 @@ def test_terrain_and_building_roundtrip():
         assert index["versions"][0]["stampCount"] == 0
         assert "stamps" not in index["versions"][0]
         assert load_terrain_version("v-99")["name"] == "快照"
+        save_terrain_draft({"id": "stale-draft", "savedAt": 15, "stamps": [{"kind": "B"}]})
+        save_terrain_draft({"id": "same-time-other", "savedAt": 20, "stamps": [{"kind": "C"}]})
+        save_terrain_version({"id": "stale-version", "name": "迟到快照", "savedAt": 12, "stamps": []})
+        assert load_terrain_bundle()["draft"]["id"] == "v-99"
+        assert load_terrain_version("stale-version")["name"] == "迟到快照"
         assert delete_terrain_version("v-99")
-        assert load_terrain_bundle()["versions"] == []
+        assert [row["id"] for row in load_terrain_bundle()["versions"]] == ["stale-version"]
 
         save_building_bundle({"session": {"v": 1, "records": []}, "customs": {"items": [1], "folders": ["x"]}})
         built = load_building_bundle()
@@ -204,6 +209,106 @@ def test_building_paper_keeps_desk_layers_across_upsert():
             os.environ["MANOR_SAVES"] = prev
 
 
+def test_terrain_paper_keeps_exact_project_snapshot_across_upsert():
+    tmp = tempfile.mkdtemp(prefix="manor-terrain-paper-project-")
+    prev = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = tmp
+    try:
+        project = {
+            "v": 2,
+            "id": "project-1",
+            "savedAt": 1234,
+            "name": "保存图纸",
+            "mapSize": 100,
+            "mapflag": 1,
+            "stamps": [{"kind": "A", "x": 10, "y": 20}],
+            "buildings": [{"item": 9, "x": 30, "y": 40, "dir": 2}],
+            "previewBuildings": [{
+                "id": "preview-1",
+                "sourceType": "paper",
+                "name": "咖啡馆",
+                "x": 100,
+                "y": 120,
+                "records": [{"mat": 14101, "x": 1, "y": 2, "state": 0}],
+            }],
+            "sourcePaper": {"id": "paper-1", "name": "9月6日.txt"},
+            "terrainSource": {"text": "large native source"},
+            "buildingSource": {"text": "large building source"},
+        }
+        assert save_building_papers([{
+            "id": "paper-1",
+            "name": "9月6日.txt",
+            "data": "xA==",
+            "kind": "terrain",
+            "terrainDocument": project,
+        }]) == 1
+        full = load_building_paper("paper-1")
+        assert full["terrainDocument"]["stamps"] == project["stamps"]
+        assert full["terrainDocument"]["previewBuildings"][0]["records"][0]["mat"] == 14101
+        assert "terrainSource" not in full["terrainDocument"]
+        assert "buildingSource" not in full["terrainDocument"]
+
+        assert save_building_papers([{
+            "id": "paper-1",
+            "name": "9月6日重命名.txt",
+            "kind": "terrain",
+            "count": 1,
+        }]) == 1
+        kept = load_building_paper("paper-1")
+        assert kept["terrainDocument"]["previewBuildings"][0]["name"] == "咖啡馆"
+    finally:
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev
+
+
+def test_paper_save_rejects_stale_body_and_thumbnail():
+    tmp = tempfile.mkdtemp(prefix="manor-paper-revision-")
+    prev = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = tmp
+    try:
+        ident = "paper-revision"
+        assert save_building_papers([{
+            "id": ident,
+            "name": "新版.txt",
+            "data": "bmV3",
+            "kind": "desk",
+            "savedAt": 200,
+            "revision": "rev-new",
+            "deskDocument": {"v": 1, "records": [{"mat": 14101, "x": 1, "y": 2}]},
+        }]) == 1
+        jpeg = b"\xff\xd8\xff\xd9" + b"\x00" * 16
+        save_paper_thumb(ident, jpeg, expected_revision="rev-new")
+        assert load_paper_thumb(ident) is not None
+
+        assert save_building_papers([{
+            "id": ident,
+            "name": "迟到旧版.txt",
+            "data": "b2xk",
+            "kind": "desk",
+            "savedAt": 100,
+            "revision": "rev-old",
+            "deskDocument": {"v": 1, "records": [{"mat": 8101, "x": 9, "y": 9}]},
+        }]) == 0
+        kept = load_building_paper(ident)
+        assert kept["name"] == "新版.txt"
+        assert kept["data"] == "bmV3"
+        assert kept["revision"] == "rev-new"
+
+        try:
+            save_paper_thumb(ident, jpeg, expected_revision="rev-old")
+        except ValueError as exc:
+            assert "changed" in str(exc)
+        else:
+            raise AssertionError("stale thumbnail upload should fail")
+    finally:
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev
+
+
 def test_paper_library_index_omits_blobs_and_stores_thumbs():
     tmp = tempfile.mkdtemp(prefix="manor-paper-thumbs-")
     prev = os.environ.get("MANOR_SAVES")
@@ -332,6 +437,8 @@ def test_building_paper_keeps_id_when_content_changes():
     try:
         assert save_building_papers([{"name": "a.txt", "data": "VjE7YQ=="}]) == 1
         ident = load_building_papers()["papers"][0]["id"]
+        save_paper_thumb(ident, b"\xff\xd8\xff\xd9" + b"\x00" * 16)
+        assert load_paper_thumb(ident) is not None
         assert save_building_papers([{
             "id": ident,
             "name": "b.txt",
@@ -342,6 +449,7 @@ def test_building_paper_keeps_id_when_content_changes():
         assert listed[0]["id"] == ident
         assert listed[0]["name"] == "b.txt"
         assert listed[0]["data"] == "VjE7Yg=="
+        assert load_paper_thumb(ident) is None
     finally:
         if prev is None:
             os.environ.pop("MANOR_SAVES", None)

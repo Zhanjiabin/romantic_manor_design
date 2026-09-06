@@ -19,6 +19,7 @@ const {
   remapImportedDeskGroups,
   wrapRecordsInGroup,
   expandGroupedIndices,
+  visiblePaperRecords,
   remapIndicesAfterInsert,
   resolveLayerInsertIndex,
   selectFromRect,
@@ -169,6 +170,28 @@ test("grouping two complete groups nests them without flattening", () => {
   assert.deepEqual(expandGroupedIndices(nested, [2]), [0, 1, 2, 3]);
   assert.deepEqual(expandGroupedIndices(nested, [0], "a"), [0, 1]);
   assert.deepEqual(expandGroupedIndices(nested, [2], "b"), [2, 3]);
+});
+
+test("paper export and library previews skip hidden desk layers", () => {
+  const rows = [
+    { mat: 0, hidden: true },
+    { mat: 14101, hidden: false },
+    { mat: 14102, hidden: true },
+    { mat: 8101, hidden: false },
+  ];
+  assert.deepEqual(visiblePaperRecords(rows).map((row) => row.mat), [14101, 8101]);
+  const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  assert.match(buildingJs, /function exportRecordList\(records = state\.records\) \{\s*const refs = records\.filter\(\(record\) => Number\(record\.mat\) === 0\);\s*return \[\.\.\.refs, \.\.\.BI\.visiblePaperRecords\(records\)\];\s*\}/);
+  assert.match(buildingJs, /const deskDocument = serializeDeskDocument\(\);[\s\S]*formatCurrentPaperBytes\(exportRecords, source\)/);
+  assert.match(buildingJs, /deskLayers: serializeDeskLayers\(deskDocument\.records\)/);
+  assert.match(buildingJs, /function serializeDeskLayers\(records = serializeSessionRecords\(\)\)/);
+  assert.match(buildingJs, /function paperLibraryPreviewDocument\(/);
+  assert.match(buildingJs, /entry\?\.kind === "terrain" \|\| entry\?\.documentData\?\.kind === "terrain"/);
+  assert.match(buildingJs, /function applyVisibleDeskLibraryStats\(/);
+  assert.match(buildingJs, /entry\.kind === "desk" \? await paintPaperInspectBitmap\(paperLibraryPreviewDocument\(entry\)\) : null/);
+  assert.match(buildingJs, /paintPaperThumbnail\(canvas, paperLibraryPreviewDocument\(entry\)\)/);
+  assert.match(buildingJs, /entry\.kind !== "desk" \? clonePaperCardThumb\(entry\) : null/);
+  assert.match(buildingJs, /Number\(record\.mat\) !== 0 && !record\.hidden/);
 });
 
 test("layer insert between grouped neighbors inherits that group", () => {
@@ -1192,11 +1215,13 @@ test("building designs and uploaded paper libraries persist explicitly", () => {
   assert.match(buildingJs, /async function commitDesignToPaperLibrary\(/);
   assert.match(buildingJs, /function serializeDeskLayers\(/);
   assert.match(buildingJs, /function serializeDeskDocument\(/);
-  assert.match(buildingJs, /deskLayers: serializeDeskLayers\(\)/);
-  assert.match(buildingJs, /deskDocument: serializeDeskDocument\(\)/);
+  assert.match(buildingJs, /const deskDocument = serializeDeskDocument\(\)/);
+  assert.match(buildingJs, /deskLayers: serializeDeskLayers\(deskDocument\.records\)/);
+  assert.match(buildingJs, /formatCurrentPaperBytes\(exportRecords, source\)/);
   assert.match(buildingJs, /BI\.applyDeskLayers\(rows, layers\)/);
   assert.match(buildingJs, /function newPaperLibraryId\(/);
   assert.match(buildingJs, /function rememberSourcePaper\(/);
+  assert.match(buildingJs, /paper\?\.contentId \|\| paper\?\.id/);
   assert.match(buildingJs, /file\.paperMeta\?\.id/);
   assert.match(buildingJs, /PaperLibraryCore\.persist\(\[upload\], \{ replace: false \}\)/);
   assert.match(buildingJs, /mode === "original" \? originalId : newPaperLibraryId\(\)/);
@@ -1298,6 +1323,7 @@ test("paper library kind filter resolves legacy entries and hides filtered cards
 
 test("terrain designs save to the paper library like building designs", () => {
   const appJs = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
+  const paperCore = fs.readFileSync(path.join(__dirname, "../web/paper-library-core.js"), "utf8");
   const terrainHtml = fs.readFileSync(path.join(__dirname, "../web/index.html"), "utf8");
   const appCss = fs.readFileSync(path.join(__dirname, "../web/app.css"), "utf8");
   assert.match(terrainHtml, /id="dlgSaveDesign"/);
@@ -1310,9 +1336,10 @@ test("terrain designs save to the paper library like building designs", () => {
   assert.match(appJs, /async function commitTerrainToPaperLibrary\(/);
   assert.match(appJs, /function newPaperLibraryId\(/);
   assert.match(appJs, /function rememberSourcePaper\(/);
+  assert.match(appJs, /paper\?\.contentId \|\| paper\?\.id/);
   assert.match(appJs, /sourcePaper: state\.sourcePaper \? \{ \.\.\.state\.sourcePaper \} : null/);
   assert.match(appJs, /state\.sourcePaper = null/);
-  assert.match(appJs, /expect === "terrain" \? \{ sourcePaper: entry \} : \{\}/);
+  assert.match(appJs, /expect === "terrain" \? \{ sourcePaper: entry, replaceProject: true \} : \{\}/);
   assert.match(appJs, /PaperLibraryCore\.persist\(\[upload\], \{ replace: false \}\)/);
   assert.match(appJs, /mode === "original" \? originalId : newPaperLibraryId\(\)/);
   assert.match(appJs, /kind: "terrain"/);
@@ -1323,6 +1350,8 @@ test("terrain designs save to the paper library like building designs", () => {
     /wireClick\("btnSaveLocal", saveLocal\)/
   );
   assert.match(appJs, /function syncSavedTerrainIntoLibrary\(/);
+  assert.match(paperCore, /terrainDocument: paper\.terrainDocument/);
+  assert.match(paperCore, /图纸项目过大，无法安全同步到图纸库/);
   assert.match(appCss, /\.save-design-actions/);
 });
 
@@ -1348,11 +1377,11 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(terrainJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(buildingJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(paperCore, /b > r \+ 8 && b >= g/);
-  assert.match(terrainHtml, /paper-library-core\.js\?v=17/);
+  assert.match(terrainHtml, /paper-library-core\.js\?v=18/);
   assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
-  assert.match(terrainHtml, /app\.js\?v=280/);
-  assert.match(buildingHtml, /paper-library-core\.js\?v=17/);
-  assert.match(buildingHtml, /building\.js\?v=260/);
+  assert.match(terrainHtml, /app\.js\?v=284/);
+  assert.match(buildingHtml, /paper-library-core\.js\?v=18/);
+  assert.match(buildingHtml, /building\.js\?v=264/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
 });
 
@@ -1364,7 +1393,7 @@ test("building desk can insert a new layer between existing rows", () => {
   const interactions = fs.readFileSync(path.join(__dirname, "../web/building-interactions.js"), "utf8");
   assert.match(buildingHtml, /id="layerInsertBanner"/);
   assert.match(buildingHtml, /id="btnClearLayerInsert"/);
-  assert.match(buildingHtml, /building-interactions\.js\?v=18/);
+  assert.match(buildingHtml, /building-interactions\.js\?v=19/);
   assert.match(interactions, /function resolveLayerInsertIndex/);
   assert.match(buildingJs, /function insertDeskRecords/);
   assert.match(buildingJs, /function appendLayerInsertSlot/);
@@ -1514,6 +1543,8 @@ test("paper library can batch-assign groups on both desks", () => {
   assert.equal(core.paperMatchesArchiveView({ archived: true }, true), true);
   assert.equal(core.countArchivedPapers([{ archived: true }, { archived: false }]), 1);
   assert.equal(core.sanitizePaperFileName("2026/8/30小围墙10"), "2026/8/30小围墙10.txt");
+  assert.match(buildingJs, /return PaperLibraryCore\.sanitizePaperFileName\(raw \|\| "build"\)/);
+  assert.match(terrainJs, /return PaperLibraryCore\.sanitizePaperFileName\(raw \|\| "map"\)/);
   assert.equal(core.sanitizePaperFileName("96房栏杆2.txt"), "96房栏杆2.txt");
   assert.equal(core.sanitizePaperFileName("a<>b|c"), "abc.txt");
   assert.equal(core.paperNameStem("花园2.txt"), "花园2");
@@ -1581,14 +1612,18 @@ test("scene preview entities persist in project v2 but stay out of game exports"
   assert.match(source, /function touchPreviewMoved/);
   assert.match(source, /movedAt: Number\(entity\.movedAt\) \|\| 0/);
   assert.match(source, /if \(!prev \|\| nextAt >= prevAt\) byId\.set\(entity\.id, entity\)/);
-  assert.match(
-    source,
-    /function preservedPreviewBuildings\(snap\) \{\s*return mergePreviewBuildingLists\(\s*readPreviewGuard\(\),\s*snap && snap\.previewBuildings/
+  assert.match(source, /function readPreviewGuardSnapshot\(/);
+  assert.match(source, /guard\.savedAt > snapSavedAt\(snap\)/);
+  assert.match(source, /guard\.savedAt > snapSavedAt\(newest\)/);
+  assert.doesNotMatch(
+    source.slice(source.indexOf("async function reconcileTerrainRemote"), source.indexOf("async function restoreDraft")),
+    /mergePreviewBuildingLists/
   );
   assert.match(source, /if \(row && !row\.movedAt\) row\.movedAt = savedAt;/);
   assert.match(source, /function vacantPreviewCenter/);
   assert.match(source, /await putTerrainDraft\(snap\)/);
   assert.match(source, /async function fetchTerrainVersion/);
+  assert.match(source, /JSON\.stringify\(\{ \.\.\.snap, _historyOnly: true \}\)/);
   assert.match(source, /const remoteSave = putTerrainVersion\(snap\)/);
   assert.doesNotMatch(
     source.slice(source.indexOf("async function saveNamedVersion"), source.indexOf("function mapHasWork")),
@@ -1598,8 +1633,12 @@ test("scene preview entities persist in project v2 but stay out of game exports"
   assert.match(source, /snap\.stampCount \?\? snap\.stamps\?\.length/);
   assert.match(source, /manor-desk-\$\{encodeURIComponent\(user\)\}/);
   assert.match(source, /function scheduleDraftSync/);
+  assert.match(source, /let terrainEditRevision = 0/);
+  assert.match(source, /if \(terrainEditRevision !== revision\) return localSnap/);
+  assert.match(source, /if \(terrainEditRevision === revision\) \{\s*state\.dirty = false/);
+  assert.match(source, /function saveAutomaticHistoryIfDue\(/);
+  assert.match(source, /TERRAIN_AUTO_HISTORY_MS = 5 \* 60 \* 1000/);
   assert.match(source, /await Promise\.race\(\[[\s\S]*reconcileTerrainRemote/);
-  assert.match(source, /const previewBuildings = mergePreviewBuildingLists\(/);
   assert.match(source, /previewBuildings = preservedPreviewBuildings\(snap\)/);
   assert.match(source, /function savePreviewGuard/);
   assert.match(source, /function mergePreviewGuardIntoState/);
@@ -1615,6 +1654,12 @@ test("scene preview entities persist in project v2 but stay out of game exports"
   assert.ok(boot.indexOf("await consumePendingPreviewBuilding()") < boot.indexOf("reconcileTerrainRemote"));
   assert.ok(boot.indexOf("reconcileTerrainRemote") < boot.indexOf("mergePreviewGuardIntoState"));
   assert.match(source, /applyProject\(full, \{ quiet: true, replace: true \}\)/);
+  assert.match(source, /terrainDocument = projectSnapshot/);
+  assert.match(source, /formatCurrentTerrainBytes\(terrainDocument, state\.terrainSource\)/);
+  assert.match(source, /const thumbPromise = view \? PaperLibraryCore\.canvasToJpegBlob\(view\)/);
+  assert.match(source, /entry\.kind === "terrain" && entry\.terrainDocument/);
+  assert.match(source, /sourcePaper: entry, replaceProject: true/);
+  assert.match(source, /saveNamedVersion\(\s*`保存图纸/);
   const terrainExport = source.slice(source.indexOf("async function exportTerrain()"), source.indexOf("async function exportBuild()"));
   const buildingExport = source.slice(source.indexOf("async function exportBuild()"));
   assert.doesNotMatch(terrainExport, /previewBuildings/);
@@ -1696,6 +1741,10 @@ test("both desks expose the shared mobile-first workspace", () => {
   assert.match(terrainJs, /function bindTerrainPaperLibrary/);
   assert.match(terrainJs, /function showTerrainPaperLibraryIndex/);
   assert.match(terrainJs, /function hydrateTerrainPaperEntry/);
+  assert.match(
+    terrainJs,
+    /entry\.file && entry\.documentData && \(!entry\.contentId \|\| entry\.serverHydrated\)/
+  );
   assert.doesNotMatch(terrainJs, /base64ToBytes\(paper\.data\)/);
   assert.match(terrainJs, /terrainLibraryAcceptsKind/);
   assert.match(terrainJs, /kind === "desk" \|\| kind === "terrain" \|\| kind === "manor"/);

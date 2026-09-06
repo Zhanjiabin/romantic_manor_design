@@ -803,14 +803,20 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._send(404, b"missing", "text/plain")
                 if not paper_exists(ident):
                     return self._send(404, b"missing", "text/plain")
-                save_paper_thumb(ident, raw, self.headers.get("Content-Type") or "")
+                save_paper_thumb(
+                    ident,
+                    raw,
+                    self.headers.get("Content-Type") or "",
+                    self.headers.get("X-Paper-Revision") or "",
+                )
                 return self._send(200, b'{"ok":true}', "application/json")
             obj = json.loads(raw.decode("utf-8") or "null")
             if path == "/api/saves/terrain/draft":
                 save_terrain_draft(obj)
                 return self._send(200, b'{"ok":true}', "application/json")
             if path == "/api/saves/terrain/version":
-                save_terrain_version(obj)
+                history_only = bool(obj.pop("_historyOnly", False)) if isinstance(obj, dict) else False
+                save_terrain_version(obj, update_draft=not history_only)
                 return self._send(200, b'{"ok":true}', "application/json")
             if path == "/api/saves/building":
                 body = json.dumps(save_building_bundle(obj), ensure_ascii=False).encode("utf-8")

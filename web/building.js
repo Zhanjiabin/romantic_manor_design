@@ -639,7 +639,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=280"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=284"]);
 }
 
 function sortThemes(packs) {
@@ -837,36 +837,29 @@ function syncDesignResetButtons() {
 }
 
 function paperFileStem() {
-  const short = String(state.designName || "").replace(/\\/g, "/").split("/").pop() || "";
-  return short.replace(/\.txt$/i, "").trim();
+  return String(state.designName || "").replace(/\.txt$/i, "").trim();
 }
 
 function updatePaperFileLabel() {
   const row = document.getElementById("paperFileRow");
   const label = document.getElementById("paperFileName");
   if (!row || !label) return;
-  const full = String(state.designName || "");
-  const short = full.replace(/\\/g, "/").split("/").pop() || "";
-  row.hidden = !short;
-  label.textContent = short;
+  const full = String(state.designName || "").trim();
+  row.hidden = !full;
+  label.textContent = full;
   label.title = full;
 }
 
 function currentPaperDownloadName(ext = "txt") {
-  const stem = paperFileStem().replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "").slice(0, 80);
+  const stem = paperFileStem()
+    .replace(/[\/\\]+/g, "-")
+    .replace(/[<>:"|?*\u0000-\u001f]+/g, "")
+    .slice(0, 80);
   return `${stem || "build"}.${ext}`;
 }
 
 function paperLibraryFileName(raw) {
-  const stem = String(raw || "")
-    .replace(/\\/g, "/")
-    .split("/")
-    .pop()
-    .replace(/\.txt$/i, "")
-    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "")
-    .trim()
-    .slice(0, 80);
-  return `${stem || "build"}.txt`;
+  return PaperLibraryCore.sanitizePaperFileName(raw || "build");
 }
 
 function sourcePaperId() {
@@ -874,7 +867,7 @@ function sourcePaperId() {
 }
 
 function rememberSourcePaper(paper) {
-  const id = String(paper?.id || paper?.contentId || "").trim();
+  const id = String(paper?.contentId || paper?.id || "").trim();
   if (!id) {
     state.sourcePaper = null;
     return;
@@ -5002,11 +4995,11 @@ async function saveDesignNow() {
   openSaveDesignDialog();
 }
 
-async function formatCurrentPaperBytes() {
+async function formatCurrentPaperBytes(records = buildExportRecords(), source = state.source) {
   const payload = {
     kind: "desk",
-    records: buildExportRecords(),
-    _source: state.source,
+    records,
+    _source: source,
   };
   const response = await fetch("/api/format-building", {
     method: "POST",
@@ -5030,12 +5023,23 @@ async function commitDesignToPaperLibrary(mode) {
   if (newBtn) newBtn.disabled = true;
   if (originalBtn) originalBtn.disabled = true;
   try {
-    const bytes = await formatCurrentPaperBytes();
+    const paperSavedAt = Date.now();
+    const deskDocument = serializeDeskDocument();
+    const paperRecords = exportRecordList(deskDocument.records);
+    const exportRecords = paperRecords.map(serializeExportRecord);
+    const source = state.source ? { ...state.source } : null;
+    const canvasEl = document.getElementById("buildingView");
+    const thumbPromise = canvasEl
+      ? PaperLibraryCore.canvasToJpegBlob(canvasEl)
+      : Promise.resolve(null);
+    const bytes = await formatCurrentPaperBytes(exportRecords, source);
     const data = bytesToBase64(bytes);
     const ident = mode === "original" ? originalId : newPaperLibraryId();
-    const report = buildingMaterialReport();
+    const report = buildingMaterialReport(deskDocument.records);
     const upload = {
       id: ident,
+      revision: newPaperLibraryId(),
+      savedAt: paperSavedAt,
       name,
       data,
       kind: "desk",
@@ -5043,8 +5047,8 @@ async function commitDesignToPaperLibrary(mode) {
       count: report.visible,
       meta: `${report.visible} 件素材 · ${report.totals.size} 种材料`,
       unresolved: report.unresolved,
-      deskLayers: serializeDeskLayers(),
-      deskDocument: serializeDeskDocument(),
+      deskLayers: serializeDeskLayers(deskDocument.records),
+      deskDocument,
     };
     await PaperLibraryCore.persist([upload], { replace: false });
     state.designName = name;
@@ -5053,16 +5057,19 @@ async function commitDesignToPaperLibrary(mode) {
     const file = new File([bytes], name);
     file.paperMeta = {
       id: ident,
+      revision: upload.revision,
       kind: "desk",
       group: upload.group,
       data,
       deskLayers: upload.deskLayers,
       deskDocument: upload.deskDocument,
     };
-    syncSavedPaperIntoLibrary(upload, file);
-    const canvasEl = document.getElementById("buildingView");
-    const blob = canvasEl ? await PaperLibraryCore.canvasToJpegBlob(canvasEl) : null;
-    if (blob) await PaperLibraryCore.putThumb(ident, blob);
+    const savedEntry = syncSavedPaperIntoLibrary(upload, file);
+    const blob = await thumbPromise;
+    if (blob) {
+      await PaperLibraryCore.putThumb(ident, blob, upload.revision);
+      refreshSavedPaperThumb(savedEntry, blob);
+    }
     if (sessionSaveTimer) {
       clearTimeout(sessionSaveTimer);
       sessionSaveTimer = null;
@@ -8764,8 +8771,7 @@ async function paintPaperThumbnail(target, documentData, options = {}) {
   c.closePath();
   c.fill();
 
-  const rows = (documentData.records || [])
-    .filter((record) => Number(record.mat))
+  const rows = BI.visiblePaperRecords(documentData.records)
     .map((record) => {
       const mat = Number(record.mat) || 0;
       const pack = previewPackForMat(mat);
@@ -9180,7 +9186,7 @@ function folderLabelFromFiles(files) {
 function paperLibraryMaterials(records) {
   const materialTotals = new Map();
   let unresolved = 0;
-  records.filter((record) => Number(record.mat)).forEach((record) => {
+  BI.visiblePaperRecords(records).forEach((record) => {
     const mat = Number(record.mat) || 0;
     const pack = previewPackForMat(mat);
     const component = componentByUid(mat, pack);
@@ -9985,8 +9991,38 @@ function bindPaperInspectControls() {
   });
 }
 
+function paperLibraryPreviewDocument(entry) {
+  if (entry?.kind === "terrain" || entry?.documentData?.kind === "terrain") {
+    return { ...(entry.documentData || {}), kind: "terrain" };
+  }
+  const desk = entry?.deskDocument;
+  if (Array.isArray(desk?.records) && desk.records.length) {
+    return {
+      ...(entry.documentData || {}),
+      kind: "desk",
+      records: BI.visiblePaperRecords(desk.records),
+    };
+  }
+  const documentData = entry?.documentData || { records: [] };
+  return {
+    ...documentData,
+    records: BI.visiblePaperRecords(documentData.records),
+  };
+}
+
+function applyVisibleDeskLibraryStats(entry) {
+  if (!entry) return entry;
+  const records = paperLibraryPreviewDocument(entry).records || [];
+  const { materialTotals, unresolved } = paperLibraryMaterials(records);
+  entry.count = records.length;
+  entry.meta = `${records.length} 件素材 · ${materialTotals.size} 种材料`;
+  entry.materials = materialTotals;
+  entry.unresolved = unresolved;
+  return entry;
+}
+
 async function paintPaperInspectBitmap(documentData) {
-  const rows = (documentData.records || []).filter((record) => Number(record.mat));
+  const rows = BI.visiblePaperRecords(documentData.records);
   if (!rows.length) {
     const empty = document.createElement("canvas");
     await paintPaperThumbnail(empty, documentData, { width: DESIGN_W, height: DESIGN_H });
@@ -10163,7 +10199,9 @@ async function openPaperInspect(entry, { focusMaterials = false } = {}) {
       : "所需材料";
   }
   fillInspectMaterialList(document.getElementById("paperInspectMaterials"), entry.materials, entry.unresolved);
-  const bitmap = entry.inspectBitmap || await paintPaperInspectBitmap(entry.documentData);
+  const bitmap = entry.inspectBitmap
+    || (entry.kind !== "desk" ? clonePaperCardThumb(entry) : null)
+    || (entry.kind === "desk" ? await paintPaperInspectBitmap(paperLibraryPreviewDocument(entry)) : null);
   if (paperInspectView.entry !== entry) return;
   entry.inspectBitmap = bitmap;
   paperInspectView.bitmap = bitmap;
@@ -10189,6 +10227,18 @@ async function persistPaperLibrary(uploads, replace) {
   return PaperLibraryCore.persist(uploads, { replace: !!replace, groups: batchLibrary.groups });
 }
 
+function refreshSavedPaperThumb(entry, blob) {
+  if (!entry || !blob) return;
+  entry.inspectBitmap = null;
+  entry.hasThumb = true;
+  entry.thumbReady = true;
+  entry.thumbAt = Date.now();
+  if (!entry.thumbImg) return;
+  const url = URL.createObjectURL(blob);
+  entry.thumbImg.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+  entry.thumbImg.src = url;
+}
+
 function syncSavedPaperIntoLibrary(payload, file) {
   const ident = String(payload?.id || "");
   if (!ident) return;
@@ -10197,6 +10247,7 @@ function syncSavedPaperIntoLibrary(payload, file) {
     entry.name = payload.name;
     entry.search = String(payload.name || "").toLowerCase();
     entry.groupId = payload.group || "";
+    entry.revision = payload.revision || entry.revision || "";
     entry.count = payload.count || 0;
     entry.meta = payload.meta || "";
     entry.unresolved = payload.unresolved || 0;
@@ -10212,9 +10263,10 @@ function syncSavedPaperIntoLibrary(payload, file) {
       entry.file.paperMeta.deskDocument = entry.deskDocument;
     }
     entry.documentData = null;
+    entry.inspectBitmap = null;
     entry._hydrate = null;
     refreshPaperLibraryCard(entry);
-    return;
+    return entry;
   }
   if (!batchLibrary.entries.length) return;
   entry = PaperLibraryCore.entryFromIndex({
@@ -10222,6 +10274,7 @@ function syncSavedPaperIntoLibrary(payload, file) {
     name: payload.name,
     kind: "desk",
     group: payload.group || "",
+    revision: payload.revision || "",
     count: payload.count || 0,
     meta: payload.meta || "",
     unresolved: payload.unresolved || 0,
@@ -10246,6 +10299,7 @@ function syncSavedPaperIntoLibrary(payload, file) {
   applyPaperLibraryFilter();
   updatePaperLibraryStatus();
   updateBatchPreviewButton();
+  return entry;
 }
 
 function paperSummaryPayload(entry) {
@@ -10284,18 +10338,21 @@ async function hydratePaperEntry(entry) {
     });
     entry.deskLayers = Array.isArray(paper.deskLayers) ? paper.deskLayers : [];
     entry.deskDocument = paper.deskDocument && typeof paper.deskDocument === "object" ? paper.deskDocument : null;
+    entry.revision = paper.revision || "";
     if (rebuilt.file?.paperMeta) {
       rebuilt.file.paperMeta.deskLayers = entry.deskLayers;
       rebuilt.file.paperMeta.deskDocument = entry.deskDocument;
     }
     entry.file = rebuilt.file;
     entry.documentData = rebuilt.documentData;
+    entry.inspectBitmap = null;
     entry.serverHydrated = true;
     entry.kind = rebuilt.kind;
     entry.count = rebuilt.count;
     entry.meta = rebuilt.meta;
     entry.materials = rebuilt.materials;
     entry.unresolved = rebuilt.unresolved;
+    if (entry.kind === "desk") applyVisibleDeskLibraryStats(entry);
     refreshPaperLibraryCard(entry);
     persistPaperLibrary([paperSummaryPayload(entry)], false).catch((error) => console.warn(error));
     return entry;
@@ -10316,7 +10373,7 @@ async function uploadPaperThumb(entry, canvas) {
       blob = await fetch(entry.thumbImg.src).then((response) => response.blob()).catch(() => null);
     }
     if (!blob) return;
-    if (await PaperLibraryCore.putThumb(entry.contentId, blob)) {
+    if (await PaperLibraryCore.putThumb(entry.contentId, blob, entry.revision || "")) {
       entry.hasThumb = true;
       entry.thumbAt = Date.now();
     }
@@ -10329,7 +10386,7 @@ async function fillMissingPaperThumb(entry) {
   if (!entry?.thumbImg || entry.thumbReady) return;
   await hydratePaperEntry(entry);
   const canvas = document.createElement("canvas");
-  await paintPaperThumbnail(canvas, entry.documentData);
+  await paintPaperThumbnail(canvas, paperLibraryPreviewDocument(entry));
   if (entry.thumbImg) entry.thumbImg.src = canvas.toDataURL("image/jpeg", 0.72);
   entry.thumbReady = true;
   uploadPaperThumb(entry, canvas);
@@ -10401,7 +10458,7 @@ async function parsePaperLibraryFile(file, existingBuffer) {
 function paperLibraryEntryMeta(documentData, materials) {
   const kind = documentData.kind;
   if (kind === "desk") {
-    const paperRows = (documentData.records || []).filter((record) => Number(record.mat));
+    const paperRows = BI.visiblePaperRecords(documentData.records);
     return `${paperRows.length} 件素材 · ${materials.size} 种材料`;
   }
   if (kind === "terrain") {
@@ -10533,6 +10590,7 @@ async function loadPaperLibraryFiles(candidates, { persist = false, append = tru
         entry.contentId = contentId;
         entry.groupId = meta.group || cached.groupId || entry.groupId || "";
         if (meta.kind) entry.kind = meta.kind;
+      if (meta.revision) entry.revision = meta.revision;
       } else {
         const parsed = await parsePaperLibraryFile(file, bytes.buffer);
         if (gen !== batchLibrary.generation) return;
@@ -10544,6 +10602,10 @@ async function loadPaperLibraryFiles(candidates, { persist = false, append = tru
         });
       }
       if (sniff === "terrain") entry.kind = "terrain";
+      if (meta.revision) entry.revision = meta.revision;
+      if (meta.deskDocument) entry.deskDocument = meta.deskDocument;
+      if (Array.isArray(meta.deskLayers)) entry.deskLayers = meta.deskLayers;
+      if (entry.kind === "desk") applyVisibleDeskLibraryStats(entry);
       if (persist && !libraryAcceptsKind(entry.kind)) {
         batchLibrary.skippedKind += 1;
         continue;
@@ -10576,7 +10638,7 @@ async function loadPaperLibraryFiles(candidates, { persist = false, append = tru
         if (!entry.hasThumb) uploadPaperThumb(entry);
       } else {
         const canvas = document.createElement("canvas");
-        await paintPaperThumbnail(canvas, entry.documentData);
+        await paintPaperThumbnail(canvas, paperLibraryPreviewDocument(entry));
         img.src = canvas.toDataURL("image/jpeg", 0.72);
         entry.thumbReady = true;
         pendingCache.push(serializePaperLibraryCache(entry, fingerprint, canvasThumbDataUrl(canvas)));
@@ -10690,7 +10752,7 @@ async function importDesign(file, options = {}) {
     ? deskDocument.records.map(hydrateRecord)
     : imported.rows;
   if (mode === "merge") {
-    const body = deskRows.filter((record) => Number(record.mat) !== 0);
+    const body = deskRows.filter((record) => Number(record.mat) !== 0 && !record.hidden);
     if (!body.length) throw new Error("这张图纸没有可合并的建筑素材。");
     const stamp = Date.now();
     const remapped = BI.remapImportedDeskGroups(body, stamp);
@@ -10750,13 +10812,12 @@ async function importDesign(file, options = {}) {
   renderBuilding();
 }
 
-function exportRecordList() {
-  const refs = state.records.filter((record) => Number(record.mat) === 0);
-  const body = state.records.filter((record) => Number(record.mat) !== 0);
-  return [...refs, ...body];
+function exportRecordList(records = state.records) {
+  const refs = records.filter((record) => Number(record.mat) === 0);
+  return [...refs, ...BI.visiblePaperRecords(records)];
 }
 
-function serializeDeskLayers(records = exportRecordList()) {
+function serializeDeskLayers(records = serializeSessionRecords()) {
   return records.map((record) => ({
     mat: Math.max(0, Math.round(Number(record.mat) || 0)),
     packKey: record.localPackUnknown ? "" : record.packKey || record.pack?.key || "",

@@ -185,11 +185,21 @@ def save_terrain_draft(doc: dict) -> dict:
     if not isinstance(doc, dict):
         raise ValueError("draft must be an object")
     with _LOCK:
-        _atomic_write(saves_root() / "terrain-draft.json", doc)
+        path = saves_root() / "terrain-draft.json"
+        existing = _read_json(path)
+        if isinstance(existing, dict):
+            existing_at = _int_field(existing.get("savedAt"))
+            incoming_at = _int_field(doc.get("savedAt"))
+            if existing_at > incoming_at or (
+                existing_at == incoming_at
+                and str(existing.get("id") or "") != str(doc.get("id") or "")
+            ):
+                return existing
+        _atomic_write(path, doc)
     return doc
 
 
-def save_terrain_version(doc: dict) -> dict:
+def save_terrain_version(doc: dict, *, update_draft: bool = True) -> dict:
     if not isinstance(doc, dict):
         raise ValueError("version must be an object")
     ident = safe_save_id(str(doc.get("id") or ""))
@@ -198,7 +208,20 @@ def save_terrain_version(doc: dict) -> dict:
     with _LOCK:
         root = saves_root()
         _atomic_write(root / "terrain-versions" / f"{ident}.json", doc)
-        _atomic_write(root / "terrain-draft.json", doc)
+        if update_draft:
+            draft_path = root / "terrain-draft.json"
+            existing = _read_json(draft_path)
+            existing_at = _int_field(existing.get("savedAt")) if isinstance(existing, dict) else -1
+            incoming_at = _int_field(doc.get("savedAt"))
+            if (
+                existing_at < incoming_at
+                or (
+                    isinstance(existing, dict)
+                    and existing_at == incoming_at
+                    and str(existing.get("id") or "") == str(doc.get("id") or "")
+                )
+            ):
+                _atomic_write(draft_path, doc)
         versions = sorted(
             (root / "terrain-versions").glob("*.json"),
             key=lambda path: path.stat().st_mtime,
@@ -435,6 +458,27 @@ def sanitize_desk_document(value) -> dict | None:
     return document
 
 
+def sanitize_terrain_document(value) -> dict | None:
+    """Keep the exact terrain-desk project paired with its native terrain paper."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    # The shared request limit is 8 MiB. Leave room for the native paper,
+    # metadata, and JSON framing instead of accepting an unusable project.
+    if len(encoded) > 6 * 1024 * 1024:
+        return None
+    document = json.loads(encoded.decode("utf-8"))
+    if not isinstance(document.get("stamps"), list):
+        return None
+    document["v"] = 2
+    document.pop("terrainSource", None)
+    document.pop("buildingSource", None)
+    return document
+
+
 def _paper_thumb_names(ident: str) -> tuple[str, str]:
     return f"{ident}.thumb.jpg", f"{ident}.thumb.png"
 
@@ -481,6 +525,7 @@ def paper_public_meta(item: dict, *, has_thumb: bool = False, thumb_at: int = 0)
     data = item.get("data") if isinstance(item.get("data"), str) else ""
     return {
         "id": str(item.get("id") or ""),
+        "revision": str(item.get("revision") or ""),
         "name": str(item.get("name") or ""),
         "kind": str(item.get("kind") or ""),
         "group": str(item.get("group") or ""),
@@ -518,12 +563,15 @@ def load_paper_thumb(ident: str) -> tuple[bytes, str] | None:
     return payload, ctype
 
 
-def save_paper_thumb(ident: str, payload: bytes, content_type: str = "") -> None:
+def save_paper_thumb(
+    ident: str,
+    payload: bytes,
+    content_type: str = "",
+    expected_revision: str = "",
+) -> None:
     ident = safe_save_id(ident)
     if not ident:
         raise ValueError("invalid paper id")
-    if not paper_exists(ident):
-        raise ValueError("missing paper")
     if not isinstance(payload, (bytes, bytearray)) or not payload:
         raise ValueError("thumb must not be empty")
     raw = bytes(payload)
@@ -540,6 +588,11 @@ def save_paper_thumb(ident: str, payload: bytes, content_type: str = "") -> None
     dest = root / f"{ident}{suffix}"
     other = root / f"{ident}{'.thumb.jpg' if suffix == '.thumb.png' else '.thumb.png'}"
     with _LOCK:
+        paper = _read_json(root / f"{ident}.json")
+        if not isinstance(paper, dict) or not paper.get("data") or not paper.get("name"):
+            raise ValueError("missing paper")
+        if expected_revision and str(paper.get("revision") or "") != expected_revision:
+            raise ValueError("paper changed before thumbnail upload")
         fd, tmp = tempfile.mkstemp(prefix=".thumb-", dir=str(root))
         try:
             with os.fdopen(fd, "wb") as handle:
@@ -621,6 +674,28 @@ def save_building_papers(items) -> int:
             existing_saved = _int_field(existing.get("savedAt"))
             existing_data = existing.get("data") if isinstance(existing.get("data"), str) else ""
             data_changed = data != existing_data
+            incoming_revision = safe_save_id(str(item.get("revision") or ""))
+            existing_revision = safe_save_id(str(existing.get("revision") or ""))
+            incoming_visual = (
+                data_changed
+                or "deskDocument" in item
+                or "terrainDocument" in item
+            )
+            if (
+                incoming_visual
+                and incoming_saved > 0
+                and existing_saved > 0
+                and (
+                    incoming_saved < existing_saved
+                    or (
+                        incoming_saved == existing_saved
+                        and incoming_revision
+                        and existing_revision
+                        and incoming_revision != existing_revision
+                    )
+                )
+            ):
+                continue
             if incoming_saved > 0 and (data_changed or not existing_saved):
                 saved_at = incoming_saved
             elif data_changed or not existing_saved:
@@ -664,6 +739,15 @@ def save_building_papers(items) -> int:
                 document = sanitize_desk_document(existing.get("deskDocument"))
                 if document:
                     payload["deskDocument"] = document
+            if "terrainDocument" in item:
+                document = sanitize_terrain_document(item.get("terrainDocument"))
+                if not document:
+                    raise ValueError("invalid terrain project snapshot")
+                payload["terrainDocument"] = document
+            elif isinstance(existing.get("terrainDocument"), dict):
+                document = sanitize_terrain_document(existing.get("terrainDocument"))
+                if document:
+                    payload["terrainDocument"] = document
             if "archived" in item:
                 archived = bool(item.get("archived"))
             else:
@@ -675,7 +759,20 @@ def save_building_papers(items) -> int:
                     or _int_field(existing.get("archivedAt"))
                     or now
                 )
+            visual_changed = (
+                data_changed
+                or payload.get("deskDocument") != existing.get("deskDocument")
+                or payload.get("terrainDocument") != existing.get("terrainDocument")
+            )
+            if visual_changed or not existing_revision:
+                payload["revision"] = incoming_revision or hashlib.sha1(
+                    f"{now}:{ident}:{data}".encode("utf-8")
+                ).hexdigest()[:24]
+            else:
+                payload["revision"] = existing_revision
             _atomic_write(path, payload)
+            if visual_changed:
+                _unlink_paper_thumbs(ident)
             saved += 1
     return saved
 

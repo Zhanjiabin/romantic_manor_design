@@ -436,7 +436,7 @@
         <button type="button" class="icon-x" data-close="dlgHistory" aria-label="关闭"></button>
       </div>
       <div class="modal-body">
-        <p class="dlg-desc">自动保存约每 20 秒一次，并写到服务器。「新地形」会再留一个可恢复的快照（最多 30 份）。点下方按钮也可单独存一份历史版本。</p>
+        <p class="dlg-desc">草稿约每 20 秒同步一次；持续编辑时约每 5 分钟留一份自动历史。保存到图纸库和「新地形」也会留可恢复快照（最多 30 份）。</p>
         <label class="field">
           <span>快照名称</span>
           <input class="input" id="snapName" maxlength="40" placeholder="例如 828庄园" />
@@ -579,13 +579,13 @@
   <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
 
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/paper-library-core.js?v=17"></script>
+  <script src="/web/paper-library-core.js?v=18"></script>
   <script src="/web/app-dialog.js?v=2"></script>
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/building-preview.js?v=9"></script>
   <script src="/web/material-ledger.js?v=3"></script>
   <script src="/web/image-terrain-core.js?v=8"></script>
-  <script src="/web/app.js?v=280"></script>
+  <script src="/web/app.js?v=284"></script>
 </body>
 </html>

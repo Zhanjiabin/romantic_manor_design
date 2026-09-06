@@ -1054,6 +1054,10 @@
     return indices;
   }
 
+  function visiblePaperRecords(records) {
+    return (records || []).filter((record) => Number(record.mat) && !record.hidden);
+  }
+
   function expandGroupedIndices(records, indices, isolatedGroup = "") {
     const set = new Set(indices);
     const groups = new Set();
@@ -1206,6 +1210,7 @@
     intersects,
     expandGroupedIndices,
     groupMemberIndices,
+    visiblePaperRecords,
     layerInsertGroupHint,
     normalizeRect,
     outermostFullySelectedGroups,

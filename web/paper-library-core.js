@@ -127,7 +127,22 @@
     let batch = [];
     let batchBytes = 32;
     papers.forEach((paper) => {
-      const paperBytes = String(paper.name || "").length * 3 + String(paper.data || "").length + 64;
+      const extras = JSON.stringify({
+        deskLayers: paper.deskLayers,
+        deskDocument: paper.deskDocument,
+        terrainDocument: paper.terrainDocument,
+      });
+      const extrasBytes = global.TextEncoder
+        ? new TextEncoder().encode(extras).byteLength
+        : extras.length * 3;
+      const paperBytes =
+        String(paper.name || "").length * 3
+        + String(paper.data || "").length
+        + extrasBytes
+        + 256;
+      if (paperBytes > MAX_BATCH_BYTES) {
+        throw new Error("图纸项目过大，无法安全同步到图纸库。");
+      }
       if (batch.length && batchBytes + paperBytes > MAX_BATCH_BYTES) {
         batches.push(batch);
         batch = [];
@@ -184,24 +199,41 @@
     return `${API}/${encodeURIComponent(id)}/thumb${query}`;
   }
 
-  async function putThumb(id, blob) {
+  async function putThumb(id, blob, revision = "") {
     if (!id || !blob) return false;
+    const headers = { "Content-Type": blob.type || "image/jpeg" };
+    if (revision) headers["X-Paper-Revision"] = revision;
     const response = await fetch(`${API}/${encodeURIComponent(id)}/thumb`, {
       method: "PUT",
       credentials: "same-origin",
-      headers: { "Content-Type": blob.type || "image/jpeg" },
+      headers,
       body: blob,
     });
     return response.ok;
   }
 
-  function canvasToJpegBlob(canvas, quality = 0.72) {
+  function canvasToJpegBlob(canvas, quality = 0.72, maxWidth = 480, maxHeight = 320) {
     return new Promise((resolve) => {
       if (!canvas?.toBlob) {
         resolve(null);
         return;
       }
-      canvas.toBlob((blob) => resolve(blob), "image/jpeg", quality);
+      let output = canvas;
+      const scale = Math.min(
+        1,
+        maxWidth / Math.max(1, Number(canvas.width) || 1),
+        maxHeight / Math.max(1, Number(canvas.height) || 1)
+      );
+      if (scale < 1 && global.document?.createElement) {
+        output = global.document.createElement("canvas");
+        output.width = Math.max(1, Math.round(canvas.width * scale));
+        output.height = Math.max(1, Math.round(canvas.height * scale));
+        const context = output.getContext("2d");
+        context.imageSmoothingEnabled = true;
+        if (context.imageSmoothingQuality) context.imageSmoothingQuality = "high";
+        context.drawImage(canvas, 0, 0, output.width, output.height);
+      }
+      output.toBlob((blob) => resolve(blob), "image/jpeg", quality);
     });
   }
 
@@ -476,6 +508,7 @@
     const kind = resolvePaperKind(paper);
     return {
       id: paper?.id || "",
+      revision: paper?.revision || "",
       contentId: paper?.id || "",
       file: null,
       documentData: null,
@@ -501,11 +534,13 @@
     const file = new File([bytes], String(paper.name || "图纸.txt"));
     file.paperMeta = {
       id: paper.id,
+      revision: paper.revision || "",
       kind: paper.kind,
       group: paper.group || "",
       data: paper.data,
       deskLayers: Array.isArray(paper.deskLayers) ? paper.deskLayers : [],
       deskDocument: paper.deskDocument && typeof paper.deskDocument === "object" ? paper.deskDocument : null,
+      terrainDocument: paper.terrainDocument && typeof paper.terrainDocument === "object" ? paper.terrainDocument : null,
     };
     return { file, bytes, data: paper.data };
   }

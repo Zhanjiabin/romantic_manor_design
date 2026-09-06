@@ -66,8 +66,11 @@ PUBLIC_PATHS = frozenset({
     "/api/login",
     "/api/logout",
     "/login",
+    "/favicon.ico",
+    "/favicon.svg",
+    "/apple-touch-icon.png",
 })
-PUBLIC_PREFIXES = ("/web/login.",)
+PUBLIC_PREFIXES = ("/web/login.", "/web/favicon.", "/web/apple-touch-icon")
 SESSION_COOKIE = "manor_session"
 SESSION_MAX_AGE = 30 * 24 * 3600
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -538,6 +541,8 @@ class Handler(SimpleHTTPRequestHandler):
         request = urlsplit(self.path)
         path = unquote(request.path)
         query = parse_qs(request.query)
+        if path in {"/favicon.ico", "/favicon.svg", "/apple-touch-icon.png"}:
+            return self._file(WEB / path.lstrip("/"), guess=True)
         if path == "/login":
             nxt = safe_next_path((query.get("next") or [""])[0])
             if not auth_accounts() or self._current_user():
@@ -1005,6 +1010,8 @@ def _ctype(path: Path) -> str:
         ".jpeg": "image/jpeg",
         ".gif": "image/gif",
         ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
         ".cur": "application/octet-stream",
         ".ale": "application/octet-stream",
     }.get(ext, "application/octet-stream")

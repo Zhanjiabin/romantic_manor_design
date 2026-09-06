@@ -1654,6 +1654,14 @@ test("both desks expose the shared mobile-first workspace", () => {
   const loginHtml = fs.readFileSync(path.join(__dirname, "../web/login.html"), "utf8");
   const loginJs = fs.readFileSync(path.join(__dirname, "../web/login.js"), "utf8");
   const loginCss = fs.readFileSync(path.join(__dirname, "../web/login.css"), "utf8");
+  const serverPy = fs.readFileSync(path.join(__dirname, "../server.py"), "utf8");
+  assert.match(loginHtml, /rel="icon" href="\/favicon\.svg"/);
+  assert.match(terrainHtml, /rel="icon" href="\/favicon\.svg"/);
+  assert.match(buildingHtml, /rel="icon" href="\/favicon\.svg"/);
+  assert.match(serverPy, /"\/favicon\.svg"/);
+  assert.ok(fs.existsSync(path.join(__dirname, "../web/favicon.svg")));
+  assert.ok(fs.existsSync(path.join(__dirname, "../web/favicon.ico")));
+  assert.ok(fs.existsSync(path.join(__dirname, "../web/apple-touch-icon.png")));
   assert.match(loginHtml, /viewport-fit=cover/);
   assert.doesNotMatch(loginHtml, /maximum-scale|user-scalable=no/);
   assert.match(loginJs, /\/api\/login/);

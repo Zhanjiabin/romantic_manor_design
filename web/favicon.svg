@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Manor Desk">
+  <defs>
+    <linearGradient id="bg" x1="4" y1="1" x2="28" y2="31" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5aaa78"/>
+      <stop offset=".48" stop-color="#2f7a54"/>
+      <stop offset="1" stop-color="#163d2c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="10" cy="8" r="15" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d7f3e2" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#d7f3e2" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#bg)"/>
+  <rect width="32" height="32" rx="8" fill="url(#glow)"/>
+  <path fill="#fff6e6" d="M6.2 16.6 16 8.2l9.8 8.4H6.2z"/>
+  <path fill="#fffdf8" d="M9.1 15.5h13.8v10.6H9.1z"/>
+  <path fill="#245e44" d="M14.15 20.35h3.7V26.1h-3.7z"/>
+  <rect x="19.35" y="18.2" width="2.55" height="2.55" rx=".45" fill="#f3cf63"/>
+</svg>

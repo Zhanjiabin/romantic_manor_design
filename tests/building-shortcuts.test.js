@@ -226,6 +226,7 @@ test("building desk uses in-app dialogs instead of window.alert", () => {
   assert.doesNotMatch(terrainJs, /\bconfirm\s*\(/);
   assert.doesNotMatch(terrainJs, /\bprompt\s*\(/);
   assert.match(dialog, /function openAppDialog/);
+  assert.match(dialog, /input\.maxLength/);
   assert.match(html, /id="dlgApp"/);
   assert.match(html, /id="dlgAppInput"/);
   assert.match(html, /app-dialog\.js/);

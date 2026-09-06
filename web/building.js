@@ -156,7 +156,6 @@ const state = {
   activePointers: new Map(),
   pointerGesture: null,
   pointerPending: null,
-  groupIsolateTap: null,
   groupIsolate: null,
   paletteDrag: null,
   interaction: null,
@@ -308,6 +307,11 @@ function workspaceMode() {
 
 function isCoarsePointer() {
   return !!workspaceMode().coarse;
+}
+
+function layerListUsesMultiSelect() {
+  const mode = workspaceMode();
+  return !!(mode.mobile || mode.tablet || mode.coarse);
 }
 
 function buildingFloatingHud() {
@@ -635,7 +639,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=275"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=279"]);
 }
 
 function sortThemes(packs) {
@@ -4446,33 +4450,32 @@ function rememberGroupIsolate(indices) {
   state.groupIsolate = group ? { group, index: indices[0] } : null;
 }
 
-/** 画布双击 / 双击点 / Alt+点击：选中成组里的单件，不扩成整组。 */
+/** 画布双击 / Alt+点击：选中成组里的单件，不扩成整组。再次单击仍选整组。 */
 function wantsIsolateGroupMember(event, hit) {
   if (hit < 0 || !state.records[hit]?.group) return false;
-  if (recordBelongsToIsolatedGroup(hit)) {
-    state.groupIsolateTap = null;
-    return true;
-  }
-  if (Number(event.detail) >= 2 || event.altKey) {
-    state.groupIsolateTap = null;
-    return true;
-  }
-  const now = performance.now();
-  const prev = state.groupIsolateTap;
-  const near =
-    prev &&
-    now - prev.t <= 450 &&
-    Math.hypot(event.clientX - prev.x, event.clientY - prev.y) <= 36 &&
-    (prev.hit === hit || state.records[prev.hit]?.group === state.records[hit]?.group);
-  state.groupIsolateTap = {
-    t: now,
-    x: event.clientX,
-    y: event.clientY,
-    hit,
-  };
-  if (!near) return false;
-  state.groupIsolateTap = null;
-  return true;
+  if (recordBelongsToIsolatedGroup(hit)) return true;
+  return Number(event.detail) >= 2 || !!event.altKey;
+}
+
+function canvasHitChunk(hit, { isolate = false } = {}) {
+  if (hit < 0) return [];
+  if (isolate || recordBelongsToIsolatedGroup(hit) || !state.records[hit]?.group) return [hit];
+  return expandGroupSelection([hit]);
+}
+
+function canvasUsesAdditiveSelect(event, hit, baseSelection) {
+  if (event.ctrlKey || event.metaKey) return true;
+  if (!layerListUsesMultiSelect() || hit < 0) return false;
+  return baseSelection.length > 0 && !baseSelection.includes(hit);
+}
+
+function toggleCanvasHitSelection(baseSelection, hit, { isolate = false } = {}) {
+  const chunk = canvasHitChunk(hit, { isolate });
+  const next = new Set(baseSelection);
+  const allIn = chunk.length && chunk.every((index) => next.has(index));
+  if (allIn) chunk.forEach((index) => next.delete(index));
+  else chunk.forEach((index) => next.add(index));
+  return [...next];
 }
 
 function setSelection(indices, { expandGroup = false, layers = true, isolate = false } = {}) {
@@ -6175,7 +6178,8 @@ function finishMarquee() {
     return;
   }
   const hits = collectMarqueeHits(marquee);
-  setSelection(BI.applySelection(marquee.baseSelection || [], hits, marquee.operation));
+  const chunk = state.groupIsolate ? hits : expandGroupSelection(hits);
+  setSelection(BI.applySelection(marquee.baseSelection || [], chunk, marquee.operation));
   renderBuilding();
 }
 
@@ -6447,17 +6451,15 @@ function beginCanvasPointer(event, shell) {
       return;
     }
   }
-  // Ctrl（Mac 上 Cmd）承担累加多选；Shift 保留给拖动轴向锁定与画笔约束。
-  const operation = event.ctrlKey || event.metaKey ? "add" : "replace";
+  // Ctrl/Cmd 累加整组；手机/平板点到未选中的组也叠加整组。Shift 仍只用于轴向锁定。
+  const isolate = hit >= 0 ? wantsIsolateGroupMember(event, hit) : false;
+  const operation = canvasUsesAdditiveSelect(event, hit, baseSelection) ? "add" : "replace";
   if (hit >= 0) {
     clearBrushHighlight();
     if (operation !== "replace") {
-      const selected = new Set(baseSelection);
-      selected.add(hit);
-      setSelection([...selected]);
+      setSelection(toggleCanvasHitSelection(baseSelection, hit, { isolate }), { isolate });
       interaction.mode = "select";
     } else {
-      const isolate = wantsIsolateGroupMember(event, hit);
       if (isolate || !baseSelection.includes(hit)) {
         setSelection([hit], { expandGroup: !isolate, isolate });
       }
@@ -7057,22 +7059,32 @@ function selectLayerIndex(index, event) {
   // Layer-list clicks always target this row. Group expansion is only for the
   // group header and for canvas single-clicks — canvas double-click / Alt+click
   // isolates one grouped member (same as picking a child row here).
-  if (event.ctrlKey || event.metaKey) {
+  applyLayerListSelection([index], event, { isolate: !!record.group });
+}
+
+function applyLayerListSelection(indices, event, { isolate = false } = {}) {
+  const rows = (indices || []).filter((index) => state.records[index]);
+  if (!rows.length) return;
+  const additive = !!(event?.ctrlKey || event?.metaKey || layerListUsesMultiSelect());
+  if (additive) {
     const set = new Set(state.selected);
-    if (set.has(index)) set.delete(index);
-    else set.add(index);
+    const allIn = rows.every((index) => set.has(index));
+    if (allIn) rows.forEach((index) => set.delete(index));
+    else rows.forEach((index) => set.add(index));
     setSelection([...set]);
-  } else if (event.shiftKey && state.selected.length) {
+  } else if (event?.shiftKey && rows.length === 1 && state.selected.length) {
     const anchor = state.selected[state.selected.length - 1];
-    const lo = Math.min(anchor, index);
-    const hi = Math.max(anchor, index);
+    const lo = Math.min(anchor, rows[0]);
+    const hi = Math.max(anchor, rows[0]);
     const range = [];
     for (let i = lo; i <= hi; i++) {
       if (!state.records[i]?.hidden) range.push(i);
     }
     setSelection(range);
+  } else if (rows.length === 1) {
+    setSelection(rows, { isolate });
   } else {
-    setSelection([index], { isolate: !!record.group });
+    setSelection(rows);
   }
   state.component = null;
   state.customBrush = null;
@@ -7080,6 +7092,43 @@ function selectLayerIndex(index, event) {
   fillCustoms();
   renderBuilding();
   revealSelection();
+}
+
+function createLayerSelectControl({ checked, partial, label, onChange }) {
+  const wrap = document.createElement("label");
+  wrap.className = "layer-select" + (partial ? " is-partial" : "");
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.className = "layer-select-input";
+  input.checked = !!checked;
+  input.indeterminate = !!partial && !checked;
+  input.setAttribute("aria-label", label);
+  const mark = document.createElement("span");
+  mark.className = "layer-select-mark";
+  mark.setAttribute("aria-hidden", "true");
+  const stop = (event) => event.stopPropagation();
+  wrap.addEventListener("click", stop);
+  wrap.addEventListener("pointerdown", stop);
+  input.addEventListener("change", (event) => {
+    event.stopPropagation();
+    if (typeof onChange === "function") onChange(!!input.checked);
+  });
+  wrap.append(input, mark);
+  return wrap;
+}
+
+function appendLayerSelectControl(row, { checked, partial, label, indices }) {
+  if (!layerListUsesMultiSelect()) return;
+  row.classList.add("has-select");
+  const control = createLayerSelectControl({
+    checked,
+    partial,
+    label,
+    onChange: () => applyLayerListSelection(indices, { ctrlKey: true }),
+  });
+  const indent = row.querySelector(".layer-indent");
+  if (indent) indent.after(control);
+  else row.prepend(control);
 }
 
 async function renameLayer(index) {
@@ -7280,7 +7329,9 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
   row.dataset.group = groupId;
   row.setAttribute("role", "option");
   row.setAttribute("aria-selected", allSelected ? "true" : "false");
-  row.title = "点击选中整组 · 点下面的素材可选中单件";
+  row.title = layerListUsesMultiSelect()
+    ? "点选可加减整组 · 点下面的素材可选中单件"
+    : "点击选中整组 · 点下面的素材可选中单件";
 
   const twist = document.createElement("button");
   twist.type = "button";
@@ -7304,29 +7355,23 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
   applyLayerDepth(
     row,
     depth,
-    isCoarsePointer()
-      ? (depth ? "14px 44px 44px 40px minmax(0,1fr) 44px" : "44px 44px 40px minmax(0,1fr) 44px")
-      : (depth ? "16px 22px 24px 36px minmax(0,1fr) 28px" : "22px 24px 36px minmax(0,1fr) 28px")
+    layerListUsesMultiSelect()
+      ? (depth ? "14px 44px 44px 44px 40px minmax(0,1fr) 44px" : "44px 44px 44px 40px minmax(0,1fr) 44px")
+      : isCoarsePointer()
+        ? (depth ? "14px 44px 44px 40px minmax(0,1fr) 44px" : "44px 44px 40px minmax(0,1fr) 44px")
+        : (depth ? "16px 22px 24px 36px minmax(0,1fr) 28px" : "22px 24px 36px minmax(0,1fr) 28px")
   );
   row.append(twist, eye, thumb, name, lock);
+  appendLayerSelectControl(row, {
+    checked: allSelected,
+    partial: someSelected,
+    label: allSelected ? `取消选择 ${groupName}` : `加选 ${groupName}`,
+    indices: memberIndices,
+  });
 
   row.onclick = (event) => {
-    if (event.target.closest("button")) return;
-    if (event.ctrlKey || event.metaKey) {
-      const set = new Set(state.selected);
-      const allIn = memberIndices.every((index) => set.has(index));
-      if (allIn) memberIndices.forEach((index) => set.delete(index));
-      else memberIndices.forEach((index) => set.add(index));
-      setSelection([...set]);
-    } else {
-      setSelection(memberIndices);
-    }
-    state.component = null;
-    state.customBrush = null;
-    fillComponents();
-    fillCustoms();
-    renderBuilding();
-    revealSelection();
+    if (event.target.closest("button, .layer-select")) return;
+    applyLayerListSelection(memberIndices, event);
   };
   bindLayerContextMenu(row, memberIndices);
   row.ondblclick = async (event) => {
@@ -7407,9 +7452,16 @@ function appendLayerRow(list, index, selectedSet, filterText, asChild, depth = 0
   });
 
   row.append(eye, thumb, name, lock);
-  row.title = "点击选中并定位到画布 · 方向键微调（Shift 大步 10px）· Ctrl+点击多选";
+  appendLayerSelectControl(row, {
+    checked: selectedSet.has(index),
+    label: selectedSet.has(index) ? `取消选择 ${label}` : `加选 ${label}`,
+    indices: [index],
+  });
+  row.title = layerListUsesMultiSelect()
+    ? "点选可加减图层 · 再点取消 · 方向键微调"
+    : "点击选中并定位到画布 · 方向键微调（Shift 大步 10px）· Ctrl+点击多选";
   row.onclick = (event) => {
-    if (event.target.closest("button")) return;
+    if (event.target.closest("button, .layer-select")) return;
     event.stopPropagation();
     selectLayerIndex(index, event);
   };
@@ -8781,6 +8833,7 @@ const batchLibrary = {
   skippedDup: 0,
   skippedKind: 0,
   selectedIds: new Set(),
+  archiveView: false,
 };
 
 const PAPER_LIBRARY_DESK = "building";
@@ -8986,18 +9039,51 @@ function updateBatchPreviewButton() {
   btn.classList.toggle("on", isPaperLibraryOpen());
 }
 
+function paperLibraryVisibleEntries() {
+  return batchLibrary.entries.filter((entry) => (
+    PaperLibraryCore.paperMatchesArchiveView(entry, batchLibrary.archiveView)
+  ));
+}
+
+function syncPaperArchiveUi() {
+  const count = PaperLibraryCore.countArchivedPapers(batchLibrary.entries);
+  PaperLibraryCore.syncPaperArchiveDoor({
+    archiveView: batchLibrary.archiveView,
+    count,
+  });
+  const title = document.getElementById("paperLibraryTitle");
+  if (title) title.textContent = batchLibrary.archiveView ? "归档柜" : "图纸库";
+  const empty = document.getElementById("paperLibraryEmpty");
+  if (empty) {
+    const heading = empty.querySelector("strong");
+    const copy = empty.querySelector("p");
+    if (batchLibrary.archiveView) {
+      if (heading) heading.textContent = "归档柜是空的";
+      if (copy) copy.textContent = "主列表里点「归档」的图纸会出现在这里，可以随时恢复。";
+    } else {
+      if (heading) heading.textContent = "还没有图纸";
+      if (copy) copy.textContent = "导入文件夹或文件。建筑图纸可在本桌打开，地形图纸会收入库并转到地形桌查看；已有图纸会按内容去重后叠加。";
+    }
+  }
+}
+
 function syncPaperLibraryEmpty() {
   const empty = document.getElementById("paperLibraryEmpty");
   const grid = document.getElementById("paperPreviewGrid");
-  const hasCards = batchLibrary.entries.length > 0 || batchLibrary.loading;
+  const visible = paperLibraryVisibleEntries().length;
+  const hasCards = visible > 0 || batchLibrary.loading;
   if (empty) empty.hidden = hasCards;
-  if (grid) grid.hidden = !batchLibrary.entries.length && !batchLibrary.loading;
+  if (grid) grid.hidden = !visible && !batchLibrary.loading;
+  syncPaperArchiveUi();
 }
 
 function setPaperLibraryOpen(open) {
   const panel = document.getElementById("paperLibrary");
   if (!panel) return;
-  if (!open) closePaperInspect();
+  if (!open) {
+    closePaperInspect();
+    batchLibrary.archiveView = false;
+  }
   panel.hidden = !open;
   window.MobileWorkspace?.setInert(document.querySelector(".building-stage"), open);
   window.MobileWorkspace?.setInert(document.querySelector(".building-app .topbar"), open);
@@ -9097,29 +9183,30 @@ function paperLibrarySkipNote() {
 
 function updatePaperLibraryStatus(message = "") {
   const status = document.getElementById("paperBatchStatus");
-  const title = document.getElementById("paperLibraryTitle");
-  if (title) title.textContent = "图纸库";
+  syncPaperArchiveUi();
   if (!status) return;
   if (message) {
     status.textContent = message;
     return;
   }
-  const total = batchLibrary.entries.length;
-  const unresolved = batchLibrary.entries.reduce((sum, entry) => sum + Number(entry.unresolved || 0), 0);
+  const visible = paperLibraryVisibleEntries();
+  const total = visible.length;
+  const unresolved = visible.reduce((sum, entry) => sum + Number(entry.unresolved || 0), 0);
   const shown = [...(document.getElementById("paperPreviewGrid")?.children || [])].filter((card) => !card.hidden).length;
   if (batchLibrary.loading) {
-    status.textContent = `正在载入… 已载入 ${total} 张`
+    status.textContent = `正在载入… 已载入 ${batchLibrary.entries.length} 张`
       + (unresolved ? ` · ${unresolved} 件素材未解析` : "")
       + paperLibrarySkipNote();
     return;
   }
   if (!total) {
-    status.textContent = paperLibrarySkipNote().replace(/^ · /, "") || "还没有图纸。导入文件夹或文件即可叠加。";
+    status.textContent = paperLibrarySkipNote().replace(/^ · /, "")
+      || (batchLibrary.archiveView ? "归档柜是空的。" : "还没有图纸。导入文件夹或文件即可叠加。");
     return;
   }
   const filtered = batchLibrary.query || batchLibrary.kindFilter !== "all" || batchLibrary.groupFilter !== "all";
   const filterNote = filtered && shown !== total ? ` · 显示 ${shown} 张` : "";
-  status.textContent = `${total} 张图纸${filterNote}`
+  status.textContent = `${total} 张${batchLibrary.archiveView ? "归档" : "图纸"}${filterNote}`
     + (unresolved ? ` · ${unresolved} 件素材未解析` : "")
     + paperLibrarySkipNote();
 }
@@ -9129,7 +9216,7 @@ function paperEntryVisible(entry, query) {
   const kind = PaperLibraryCore.resolvePaperKind(entry);
   const kindOk = PaperLibraryCore.kindMatchesFilter(kind, batchLibrary.kindFilter);
   const groupOk = batchLibrary.groupFilter === "all" || String(entry.groupId || "") === batchLibrary.groupFilter;
-  return queryOk && kindOk && groupOk;
+  return queryOk && kindOk && groupOk && PaperLibraryCore.paperMatchesArchiveView(entry, batchLibrary.archiveView);
 }
 
 function paperCardKindFromDom(card) {
@@ -9152,9 +9239,11 @@ function applyPaperLibraryFilter() {
     const queryOk = !query || String(card.dataset.search || "").includes(query);
     const kindOk = PaperLibraryCore.kindMatchesFilter(paperCardKindFromDom(card), batchLibrary.kindFilter);
     const groupOk = batchLibrary.groupFilter === "all" || String(card.dataset.group || "") === batchLibrary.groupFilter;
-    card.hidden = !(queryOk && kindOk && groupOk);
+    const archiveOk = PaperLibraryCore.paperMatchesArchiveView({ archived: card.dataset.archived === "1" }, batchLibrary.archiveView);
+    card.hidden = !(queryOk && kindOk && groupOk && archiveOk);
   });
   PaperLibraryCore.reorderPaperCards(grid, batchLibrary.entries, PaperLibraryCore.loadPaperSort());
+  syncPaperLibraryEmpty();
   updatePaperLibraryStatus();
 }
 
@@ -9318,6 +9407,103 @@ async function createPaperLibraryGroup() {
   refreshPaperGroupControls();
 }
 
+function applyPaperLibraryName(entry, rawName) {
+  const next = PaperLibraryCore.sanitizePaperFileName(rawName);
+  if (!entry || !next || next === entry.name) return false;
+  entry.name = next;
+  entry.search = next.toLowerCase();
+  refreshPaperLibraryCard(entry);
+  if (paperInspectView.entry === entry) {
+    const title = document.getElementById("paperInspectName");
+    if (title) title.textContent = next;
+  }
+  if (state.sourcePaper?.id && state.sourcePaper.id === entry.contentId) {
+    state.sourcePaper.name = next;
+  }
+  applyPaperLibraryFilter();
+  return true;
+}
+
+async function renamePaperLibraryEntry(entry) {
+  if (!entry) return;
+  const next = await appPrompt("给这张图纸起个新文件名。可以写 2026/8/30 这样的日期。", {
+    title: "修改文件名",
+    fieldLabel: "文件名",
+    value: PaperLibraryCore.paperNameStem(entry.name),
+    maxLength: 220,
+    okLabel: "保存",
+  });
+  if (next == null) return;
+  if (!applyPaperLibraryName(entry, next)) return;
+  if (!entry.contentId) return;
+  try {
+    await persistPaperLibrary([{
+      id: entry.contentId,
+      name: entry.name,
+      kind: entry.kind,
+      group: entry.groupId || "",
+    }], false);
+  } catch (error) {
+    console.warn(error);
+    await appAlert("文件名已改，但同步失败，可稍后再试。", { title: "同步失败" });
+  }
+}
+
+function setPaperLibraryArchiveView(open) {
+  batchLibrary.archiveView = !!open;
+  applyPaperLibraryFilter();
+}
+
+function persistPaperArchivePayload(entry) {
+  return {
+    id: entry.contentId,
+    name: entry.name,
+    kind: entry.kind,
+    group: entry.groupId || "",
+    archived: !!entry.archived,
+    archivedAt: Number(entry.archivedAt) || 0,
+  };
+}
+
+async function setPaperLibraryArchived(entry, archived) {
+  if (!entry) return;
+  const next = !!archived;
+  if (!!entry.archived === next) return;
+  entry.archived = next;
+  entry.archivedAt = next ? Date.now() : 0;
+  if (entry.card) entry.card.dataset.archived = next ? "1" : "0";
+  PaperLibraryCore.syncPaperArchiveButton(entry.card?.querySelector(".paper-card-archive"), entry);
+  const inspectBtn = document.getElementById("btnPaperInspectArchive");
+  if (paperInspectView.entry === entry && inspectBtn) {
+    PaperLibraryCore.syncPaperArchiveButton(inspectBtn, entry);
+  }
+  if (paperInspectView.entry === entry && next && !batchLibrary.archiveView) {
+    closePaperInspect();
+  }
+  applyPaperLibraryFilter();
+  if (!entry.contentId) return;
+  try {
+    await persistPaperLibrary([persistPaperArchivePayload(entry)], false);
+  } catch (error) {
+    console.warn(error);
+    await appAlert("归档状态已改，但同步失败，可稍后再试。", { title: "同步失败" });
+  }
+}
+
+async function togglePaperLibraryArchived(entry) {
+  await setPaperLibraryArchived(entry, !entry?.archived);
+}
+
+async function applyPaperLibraryBatchArchive() {
+  const selected = paperLibrarySelectedEntries();
+  if (!selected.length) return;
+  const archived = !batchLibrary.archiveView;
+  for (const entry of selected) {
+    await setPaperLibraryArchived(entry, archived);
+  }
+  clearPaperLibrarySelection();
+}
+
 async function assignPaperGroup(entry, groupId) {
   if (!entry) return;
   entry.groupId = String(groupId || "");
@@ -9387,6 +9573,7 @@ function renderPaperLibraryCard(entry) {
   card.dataset.id = String(entry.id);
   card.dataset.kind = entry.kind || "";
   card.dataset.group = entry.groupId || "";
+  card.dataset.archived = entry.archived ? "1" : "0";
   const selected = batchLibrary.selectedIds.has(paperLibrarySelectKey(entry));
   if (selected) card.classList.add("is-selected");
   const { label: selectCtrl } = PaperLibraryCore.createPaperSelectControl(entry, {
@@ -9417,9 +9604,10 @@ function renderPaperLibraryCard(entry) {
   visual.onclick = () => openPaperInspect(entry);
   const copy = document.createElement("div");
   copy.className = "paper-preview-copy";
-  const name = document.createElement("strong");
-  name.textContent = entry.name;
-  name.title = entry.name;
+  const { row: nameRow, name } = PaperLibraryCore.createPaperNameRow(entry, {
+    onRename: (row) => renamePaperLibraryEntry(row).catch((error) => console.warn(error)),
+    onArchive: (row) => togglePaperLibraryArchived(row).catch((error) => console.warn(error)),
+  });
   name.onclick = () => openPaperInspect(entry);
   const meta = document.createElement("small");
   meta.textContent = entry.meta;
@@ -9431,7 +9619,7 @@ function renderPaperLibraryCard(entry) {
   group.addEventListener("change", () => {
     assignPaperGroup(entry, group.value).catch((error) => console.warn(error));
   });
-  copy.append(name, meta, group);
+  copy.append(nameRow, meta, group);
   const materials = document.createElement("div");
   materials.className = "paper-preview-item-materials";
   fillPaperCardMaterials(materials, entry.materials, entry.unresolved, entry.kind, () => {
@@ -9472,11 +9660,15 @@ function refreshPaperLibraryCard(entry) {
   card.dataset.kind = entry.kind || "";
   card.dataset.search = entry.search || String(entry.name || "").toLowerCase();
   card.dataset.group = entry.groupId || "";
+  card.dataset.archived = entry.archived ? "1" : "0";
   const title = card.querySelector(".paper-preview-copy strong");
   if (title) {
     title.textContent = entry.name;
     title.title = entry.name;
   }
+  const rename = card.querySelector(".paper-card-rename");
+  if (rename) rename.setAttribute("aria-label", `重命名 ${entry.name}`);
+  PaperLibraryCore.syncPaperArchiveButton(card.querySelector(".paper-card-archive"), entry);
   const meta = card.querySelector(".paper-preview-copy small");
   if (meta) meta.textContent = entry.meta;
   const badge = card.querySelector(".paper-preview-badge");
@@ -9840,6 +10032,7 @@ async function openPaperInspect(entry, { focusMaterials = false } = {}) {
   const name = document.getElementById("paperInspectName");
   const summary = document.getElementById("paperInspectSummary");
   if (name) name.textContent = entry.name;
+  PaperLibraryCore.syncPaperArchiveButton(document.getElementById("btnPaperInspectArchive"), entry);
   if (summary) {
     summary.textContent = [
       paperKindLabel(entry.kind),
@@ -10012,6 +10205,8 @@ function paperSummaryPayload(entry) {
     count: entry.count || 0,
     meta: entry.meta || "",
     unresolved: entry.unresolved || 0,
+    archived: !!entry.archived,
+    archivedAt: Number(entry.archivedAt) || 0,
   };
   if (Array.isArray(entry.deskLayers)) payload.deskLayers = entry.deskLayers;
   if (entry.deskDocument) payload.deskDocument = entry.deskDocument;
@@ -11387,6 +11582,12 @@ function bindBuilding() {
   document.getElementById("btnPaperLibraryBatchClear")?.addEventListener("click", () => {
     clearPaperLibrarySelection();
   });
+  document.getElementById("btnPaperLibraryBatchArchive")?.addEventListener("click", () => {
+    applyPaperLibraryBatchArchive().catch((error) => console.warn(error));
+  });
+  document.getElementById("btnPaperLibraryArchive")?.addEventListener("click", () => {
+    setPaperLibraryArchiveView(!batchLibrary.archiveView);
+  });
   document.querySelectorAll("[data-paper-kind]").forEach((button) => {
     button.addEventListener("click", () => {
       batchLibrary.kindFilter = button.dataset.paperKind || "all";
@@ -11403,6 +11604,16 @@ function bindBuilding() {
   document.getElementById("paperInspectGroup")?.addEventListener("change", (event) => {
     if (paperInspectView.entry) {
       assignPaperGroup(paperInspectView.entry, event.target.value).catch((error) => console.warn(error));
+    }
+  });
+  document.getElementById("btnPaperInspectRename")?.addEventListener("click", () => {
+    if (paperInspectView.entry) {
+      renamePaperLibraryEntry(paperInspectView.entry).catch((error) => console.warn(error));
+    }
+  });
+  document.getElementById("btnPaperInspectArchive")?.addEventListener("click", () => {
+    if (paperInspectView.entry) {
+      togglePaperLibraryArchived(paperInspectView.entry).catch((error) => console.warn(error));
     }
   });
   document.getElementById("btnPaperInspectBack")?.addEventListener("click", () => closePaperInspect());

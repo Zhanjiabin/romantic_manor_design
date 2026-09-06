@@ -1026,23 +1026,28 @@ test("layer list clicks a grouped child without expanding the whole group", () =
     buildingJs.indexOf("function selectLayerIndex"),
     buildingJs.indexOf("async function renameLayer")
   );
-  assert.match(selectLayer, /setSelection\(\[index\], \{ isolate: !!record\.group \}\)/);
+  assert.match(selectLayer, /applyLayerListSelection\(\[index\], event, \{ isolate: !!record\.group \}\)/);
   assert.doesNotMatch(selectLayer, /expandGroup/);
-  assert.match(selectLayer, /revealSelection\(\)/);
+  assert.match(buildingJs, /function applyLayerListSelection/);
+  assert.match(buildingJs, /layerListUsesMultiSelect\(\)/);
+  assert.match(buildingJs, /function createLayerSelectControl/);
+  assert.match(buildingJs, /setSelection\(rows, \{ isolate \}\)/);
   const groupHeader = buildingJs.slice(
     buildingJs.indexOf("function appendGroupHeader"),
     buildingJs.indexOf("function appendLayerRow")
   );
-  assert.match(groupHeader, /setSelection\(memberIndices\)/);
+  assert.match(groupHeader, /applyLayerListSelection\(memberIndices, event\)/);
   assert.match(groupHeader, /点下面的素材可选中单件/);
-  // Canvas single-click still takes the whole group; double-click / Alt isolates one member.
+  // Canvas click takes the whole group; double-click / Alt isolates one member.
   assert.match(buildingJs, /function wantsIsolateGroupMember\(/);
+  assert.match(buildingJs, /function canvasUsesAdditiveSelect\(/);
+  assert.match(buildingJs, /function toggleCanvasHitSelection\(/);
   assert.match(buildingJs, /setSelection\(\[hit\], \{ expandGroup: !isolate, isolate \}\)/);
   assert.match(buildingJs, /const dragIndices = isolate/);
   assert.match(buildingJs, /beginRecordDrag\(startScene\.x, startScene\.y, dragIndices, transform\)/);
   assert.match(buildingJs, /function rememberGroupIsolate\(/);
   assert.match(buildingJs, /recordBelongsToIsolatedGroup\(hit\)/);
-  assert.match(buildingJs, /setSelection\(\[index\], \{ isolate: !!record\.group \}\)/);
+  assert.match(buildingJs, /applyLayerListSelection\(\[index\], event, \{ isolate: !!record\.group \}\)/);
   const nudge = buildingJs.slice(
     buildingJs.indexOf("function nudgeSelected"),
     buildingJs.indexOf("const NUDGE_HOLD_DELAY")
@@ -1054,12 +1059,13 @@ test("layer list clicks a grouped child without expanding the whole group", () =
 
 test("building desk selection, line brush, and guide affordances follow the ctrl-first workflow", () => {
   const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
-  // Canvas multi-select rides on Ctrl/Cmd only; Shift stays reserved for
-  // axis-lock and brush constraints.
+  // Desktop Ctrl/Cmd and phone/tablet tap-add both accumulate whole groups.
+  // Shift stays reserved for axis-lock and brush constraints.
   assert.match(
     buildingJs,
-    /const operation = event\.ctrlKey \|\| event\.metaKey \? "add" : "replace";/
+    /const operation = canvasUsesAdditiveSelect\(event, hit, baseSelection\) \? "add" : "replace";/
   );
+  assert.match(buildingJs, /function canvasHitChunk\(/);
   // Picking a palette asset keeps the select tool armed instead of switching
   // to the continuous paint brush.
   const arm = buildingJs.slice(
@@ -1326,11 +1332,11 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(terrainJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(buildingJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(paperCore, /b > r \+ 8 && b >= g/);
-  assert.match(terrainHtml, /paper-library-core\.js\?v=13/);
+  assert.match(terrainHtml, /paper-library-core\.js\?v=16/);
   assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
-  assert.match(terrainHtml, /app\.js\?v=275/);
-  assert.match(buildingHtml, /paper-library-core\.js\?v=13/);
-  assert.match(buildingHtml, /building\.js\?v=252/);
+  assert.match(terrainHtml, /app\.js\?v=279/);
+  assert.match(buildingHtml, /paper-library-core\.js\?v=16/);
+  assert.match(buildingHtml, /building\.js\?v=256/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
 });
 
@@ -1412,6 +1418,27 @@ test("paper library sorts by save date or name", () => {
   assert.deepEqual(ids({ key: "savedAt", dir: "asc" }), ["a", "c", "b"]);
   assert.deepEqual(names({ key: "name", dir: "asc" }), ["alpha.txt", "bravo.txt", "charlie.txt"]);
   assert.deepEqual(names({ key: "name", dir: "desc" }), ["charlie.txt", "bravo.txt", "alpha.txt"]);
+  assert.equal(core.parsePaperNameDate("2026/8/30小围墙10.txt"), Date.UTC(2026, 7, 30));
+  assert.equal(core.parsePaperNameDate("2026/7/14花园2转角.txt"), Date.UTC(2026, 6, 14));
+  assert.equal(core.parsePaperNameDate("2026/714花园2合并.txt"), Date.UTC(2026, 6, 14));
+  assert.equal(core.parsePaperNameDate("2026年8月30日围墙.txt"), Date.UTC(2026, 7, 30));
+  assert.equal(core.parsePaperNameDate("96房栏杆2.txt"), 0);
+  assert.equal(core.parsePaperNameDate("94房S.txt"), 0);
+  const dated = [
+    { id: "rail96", name: "96房栏杆2.txt", savedAt: 9000 },
+    { id: "jul", name: "2026/7/14花园2转角.txt", savedAt: 100 },
+    { id: "aug", name: "2026/8/30小围墙10.txt", savedAt: 50 },
+    { id: "house94", name: "94房S.txt", savedAt: 8000 },
+    { id: "jul1", name: "2026/7/1花园1.txt", savedAt: 80 },
+  ];
+  assert.deepEqual(
+    Array.from(core.sortedPaperEntries(dated, { key: "savedAt", dir: "desc" }), (row) => row.id),
+    ["aug", "jul", "jul1", "rail96", "house94"]
+  );
+  assert.deepEqual(
+    Array.from(core.sortedPaperEntries(dated, { key: "savedAt", dir: "asc" }), (row) => row.id),
+    ["jul1", "jul", "aug", "house94", "rail96"]
+  );
   assert.equal(core.parseSortValue("").key, "savedAt");
   assert.equal(core.parseSortValue("").dir, "desc");
   for (const html of [buildingHtml, terrainHtml]) {
@@ -1441,11 +1468,34 @@ test("paper library can batch-assign groups on both desks", () => {
     assert.match(html, /id="btnPaperLibraryBatchApply"/);
     assert.match(html, /id="btnPaperLibrarySelectVisible"/);
     assert.match(html, /id="btnPaperLibraryBatchClear"/);
-    assert.match(html, /paper-library\.css\?v=12/);
-    assert.match(html, /mobile-workspace\.css\?v=106/);
+    assert.match(html, /paper-library\.css\?v=14/);
+    assert.match(html, /mobile-workspace\.css\?v=109/);
+    assert.match(html, /id="btnPaperLibraryArchive"/);
+    assert.match(html, /id="btnPaperLibraryBatchArchive"/);
   }
   assert.match(paperCoreSrc, /function createPaperSelectControl/);
   assert.match(paperCoreSrc, /function paperSelectKey/);
+  assert.match(paperCoreSrc, /function sanitizePaperFileName/);
+  assert.match(paperCoreSrc, /function createPaperNameRow/);
+  assert.match(paperCoreSrc, /function isPaperArchived/);
+  assert.match(paperCoreSrc, /function syncPaperArchiveDoor/);
+  assert.equal(core.isPaperArchived({ archived: true }), true);
+  assert.equal(core.paperMatchesArchiveView({ archived: true }, false), false);
+  assert.equal(core.paperMatchesArchiveView({ archived: true }, true), true);
+  assert.equal(core.countArchivedPapers([{ archived: true }, { archived: false }]), 1);
+  assert.equal(core.sanitizePaperFileName("2026/8/30小围墙10"), "2026/8/30小围墙10.txt");
+  assert.equal(core.sanitizePaperFileName("96房栏杆2.txt"), "96房栏杆2.txt");
+  assert.equal(core.sanitizePaperFileName("a<>b|c"), "abc.txt");
+  assert.equal(core.paperNameStem("花园2.txt"), "花园2");
+  assert.match(buildingJs, /async function renamePaperLibraryEntry/);
+  assert.match(terrainJs, /async function renameTerrainPaperLibraryEntry/);
+  assert.match(buildingJs, /async function togglePaperLibraryArchived/);
+  assert.match(terrainJs, /async function toggleTerrainPaperLibraryArchived/);
+  assert.match(buildingHtml, /id="btnPaperInspectRename"/);
+  assert.match(buildingHtml, /id="btnPaperInspectArchive"/);
+  assert.match(paperCss, /\.paper-card-rename/);
+  assert.match(paperCss, /\.paper-archive-door/);
+  assert.match(mobileCss, /html\.is-mobile-workspace \.paper-card-rename[\s\S]*min-height:\s*44px/);
   assert.match(buildingJs, /async function applyPaperLibraryBatchGroup/);
   assert.match(buildingJs, /function selectVisiblePaperLibraryCards/);
   assert.match(buildingJs, /persistPaperLibrary\(uploads, false\)/);
@@ -1699,6 +1749,8 @@ test("both desks expose the shared mobile-first workspace", () => {
   assert.match(mobileCss, /html\.is-mobile-workspace \.building-app\.phase-design \.stage-commandbar:not\(\[hidden\]\)[\s\S]*display:\s*flex/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.custom-card/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.layer-row/);
+  assert.match(mobileCss, /html\.is-mobile-workspace \.layer-select/);
+  assert.match(mobileCss, /html\.is-mobile-workspace \.layer-row\.has-select/);
   assert.match(buildingJs, /paperInspectView\.pinch/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.mobile-workspace-only\[hidden\]/);
   assert.match(mobileCss, /html\.is-tablet-workspace \.mobile-sheet-backdrop/);

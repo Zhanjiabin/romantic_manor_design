@@ -124,6 +124,7 @@ function openAppDialog(options = {}) {
   if (input) {
     input.value = options.value || "";
     input.placeholder = options.placeholder || "";
+    input.maxLength = Number(options.maxLength) > 0 ? Number(options.maxLength) : 48;
   }
   cancel.textContent = options.cancelLabel || "取消";
   ok.textContent = options.okLabel || (appDialogMode === "alert" ? "知道了" : "确定");
@@ -172,6 +173,7 @@ function appPrompt(message, options = {}) {
     fieldLabel: options.fieldLabel || "名称",
     value: options.value || "",
     placeholder: options.placeholder || "",
+    maxLength: options.maxLength,
     okLabel: options.okLabel || "确定",
     cancelLabel: options.cancelLabel || "取消",
   });

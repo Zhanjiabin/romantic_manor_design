@@ -263,6 +263,68 @@ def test_building_papers_list_newest_first():
             os.environ["MANOR_SAVES"] = prev
 
 
+def test_building_paper_rename_by_id_keeps_saved_at():
+    import time
+
+    tmp = tempfile.mkdtemp(prefix="manor-paper-rename-")
+    prev = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = tmp
+    try:
+        assert save_building_papers([{"name": "旧名字.txt", "data": "VjE7YQ=="}]) == 1
+        first = load_building_papers()["papers"][0]
+        ident = first["id"]
+        saved_at = first["savedAt"]
+        time.sleep(0.05)
+        assert save_building_papers([{
+            "id": ident,
+            "name": "2026/8/30新名字.txt",
+        }]) == 1
+        listed = load_building_papers()["papers"]
+        assert len(listed) == 1
+        assert listed[0]["id"] == ident
+        assert listed[0]["name"] == "2026/8/30新名字.txt"
+        assert listed[0]["savedAt"] == saved_at
+    finally:
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev
+
+
+def test_building_paper_archive_and_restore_keeps_id():
+    tmp = tempfile.mkdtemp(prefix="manor-paper-archive-")
+    prev = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = tmp
+    try:
+        assert save_building_papers([{"name": "花园.txt", "data": "VjE7YQ=="}]) == 1
+        first = load_building_papers()["papers"][0]
+        ident = first["id"]
+        assert first.get("archived") is False
+        assert save_building_papers([{
+            "id": ident,
+            "name": first["name"],
+            "archived": True,
+        }]) == 1
+        archived = load_building_papers()["papers"][0]
+        assert archived["id"] == ident
+        assert archived["archived"] is True
+        assert archived["archivedAt"] > 0
+        assert save_building_papers([{
+            "id": ident,
+            "name": first["name"],
+            "archived": False,
+        }]) == 1
+        restored = load_building_papers()["papers"][0]
+        assert restored["id"] == ident
+        assert restored["archived"] is False
+        assert restored["archivedAt"] == 0
+    finally:
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev
+
+
 def test_building_paper_keeps_id_when_content_changes():
     tmp = tempfile.mkdtemp(prefix="manor-paper-overwrite-")
     prev = os.environ.get("MANOR_SAVES")

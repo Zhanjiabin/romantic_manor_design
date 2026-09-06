@@ -207,6 +207,35 @@
 
   const SORT_STORAGE_KEY = "manor-paper-library-sort";
 
+  function parsePaperNameDate(name) {
+    const stem = String(name || "").replace(/\\/g, "/").replace(/\.txt$/i, "");
+    const valid = (year, month, day) => {
+      const y = Number(year);
+      const mo = Number(month);
+      const d = Number(day);
+      if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+      const stamp = Date.UTC(y, mo - 1, d);
+      const check = new Date(stamp);
+      if (check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== d) {
+        return 0;
+      }
+      return stamp;
+    };
+    const labeled = stem.match(/((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
+    if (labeled) return valid(labeled[1], labeled[2], labeled[3]);
+    const separated = stem.match(/((?:19|20)\d{2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})(?!\d)/);
+    if (separated) return valid(separated[1], separated[2], separated[3]);
+    const compactTail = stem.match(/((?:19|20)\d{2})\s*[.\-/]\s*(\d{3,4})(?!\d)/);
+    if (compactTail) {
+      const digits = compactTail[2];
+      if (digits.length === 3) return valid(compactTail[1], digits.slice(0, 1), digits.slice(1));
+      return valid(compactTail[1], digits.slice(0, 2), digits.slice(2));
+    }
+    const packed = stem.match(/((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)/);
+    if (packed) return valid(packed[1], packed[2], packed[3]);
+    return 0;
+  }
+
   function parseSortValue(value) {
     const [keyRaw, dirRaw] = String(value || "savedAt:desc").split(":");
     return {
@@ -246,6 +275,11 @@
       if (nameCmp) return nameCmp * dir;
       return timeCmp;
     }
+    const aDate = parsePaperNameDate(a?.name);
+    const bDate = parsePaperNameDate(b?.name);
+    if (aDate && bDate && aDate !== bDate) return (aDate - bDate) * dir;
+    if (aDate && !bDate) return -1;
+    if (!aDate && bDate) return 1;
     if (timeCmp) return timeCmp * dir;
     return nameCmp;
   }
@@ -280,6 +314,87 @@
       if (typeof onChange === "function") onChange();
     });
     return current;
+  }
+
+  function paperNameStem(name) {
+    return String(name || "").replace(/\.txt$/i, "");
+  }
+
+  function sanitizePaperFileName(raw) {
+    let text = String(raw || "").replace(/\\/g, "/").trim();
+    text = text.replace(/[<>:"|?*\u0000-\u001f]+/g, "");
+    text = paperNameStem(text).replace(/\.+$/g, "").replace(/\s+/g, " ").trim().slice(0, 220);
+    return `${text || "图纸"}.txt`;
+  }
+
+  function isPaperArchived(entry) {
+    return !!entry?.archived;
+  }
+
+  function paperMatchesArchiveView(entry, archiveView) {
+    return isPaperArchived(entry) === !!archiveView;
+  }
+
+  function countArchivedPapers(entries) {
+    return (entries || []).filter(isPaperArchived).length;
+  }
+
+  function syncPaperArchiveButton(button, entry) {
+    if (!button) return;
+    const archived = isPaperArchived(entry);
+    button.textContent = archived ? "恢复" : "归档";
+    button.title = archived ? "从归档柜放回图纸库" : "收到归档柜，主列表不再显示";
+    button.setAttribute("aria-label", `${button.textContent} ${entry?.name || "图纸"}`);
+  }
+
+  function syncPaperArchiveDoor({ archiveView = false, count = 0 } = {}) {
+    const panel = global.document?.getElementById("paperLibrary");
+    const door = global.document?.getElementById("btnPaperLibraryArchive");
+    const countEl = global.document?.getElementById("paperArchiveCount");
+    const label = door?.querySelector(".paper-archive-door-label");
+    if (panel) panel.classList.toggle("is-archive", !!archiveView);
+    if (countEl) {
+      countEl.textContent = String(count || 0);
+      countEl.hidden = !count;
+    }
+    if (label) label.textContent = archiveView ? "返回图纸库" : "归档柜";
+    if (door) {
+      door.hidden = !archiveView && !count;
+      door.setAttribute("aria-pressed", archiveView ? "true" : "false");
+      door.title = archiveView ? "返回图纸库" : "查看已归档图纸";
+    }
+    const batch = global.document?.getElementById("btnPaperLibraryBatchArchive");
+    if (batch) batch.textContent = archiveView ? "恢复所选" : "归档所选";
+  }
+
+  function createPaperNameRow(entry, { onRename, onArchive } = {}) {
+    const row = global.document.createElement("div");
+    row.className = "paper-card-name";
+    const name = global.document.createElement("strong");
+    name.textContent = entry?.name || "图纸.txt";
+    name.title = name.textContent;
+    const rename = global.document.createElement("button");
+    rename.type = "button";
+    rename.className = "btn paper-card-rename";
+    rename.textContent = "重命名";
+    rename.title = "修改文件名";
+    rename.setAttribute("aria-label", `重命名 ${name.textContent}`);
+    rename.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof onRename === "function") onRename(entry);
+    });
+    const archive = global.document.createElement("button");
+    archive.type = "button";
+    archive.className = "btn paper-card-archive";
+    syncPaperArchiveButton(archive, entry);
+    archive.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof onArchive === "function") onArchive(entry);
+    });
+    row.append(name, rename, archive);
+    return { row, name, rename, archive };
   }
 
   function paperSelectKey(entry) {
@@ -324,6 +439,8 @@
       materials: new Map(),
       unresolved: Number(paper?.unresolved) || 0,
       savedAt: Number(paper?.savedAt) || 0,
+      archived: !!paper?.archived,
+      archivedAt: Number(paper?.archivedAt) || 0,
       hasThumb: !!paper?.hasThumb,
       thumbAt: Number(paper?.thumbAt) || 0,
       bytes: Number(paper?.bytes) || 0,
@@ -442,6 +559,7 @@
     createLazyLoader,
     thumbLooksLikePlaceholder,
     clearLibrary,
+    parsePaperNameDate,
     parseSortValue,
     sortValue,
     loadPaperSort,
@@ -450,6 +568,14 @@
     sortedPaperEntries,
     reorderPaperCards,
     bindPaperSortSelect,
+    paperNameStem,
+    sanitizePaperFileName,
+    isPaperArchived,
+    paperMatchesArchiveView,
+    countArchivedPapers,
+    syncPaperArchiveButton,
+    syncPaperArchiveDoor,
+    createPaperNameRow,
     paperSelectKey,
     createPaperSelectControl,
   };

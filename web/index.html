@@ -11,9 +11,9 @@
   <title>设计桌</title>
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=10" />
-  <link rel="stylesheet" href="/web/paper-library.css?v=12" />
+  <link rel="stylesheet" href="/web/paper-library.css?v=14" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=106" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=109" />
 </head>
 <body>
   <div class="app" id="desk">
@@ -321,13 +321,17 @@
         <div class="paper-library-title">
           <strong id="paperLibraryTitle">图纸库</strong>
           <div class="paper-batch-status" id="paperBatchStatus">还没有图纸。</div>
+          <button type="button" class="paper-archive-door" id="btnPaperLibraryArchive" hidden aria-pressed="false" title="查看已归档图纸">
+            <span class="paper-archive-door-label">归档柜</span>
+            <em id="paperArchiveCount" hidden>0</em>
+          </button>
         </div>
         <div class="paper-library-toolbar">
           <div class="paper-library-tools">
             <input class="input" id="paperBatchSearch" type="search" placeholder="搜索文件名…" autocomplete="off" />
             <label class="paper-library-sort">
               <span class="paper-library-sort-cap">排序</span>
-              <select class="input" id="paperLibrarySort" aria-label="图纸排序">
+              <select class="input" id="paperLibrarySort" aria-label="图纸排序" title="按文件名里的日期排序，没有日期的排在后面">
                 <option value="savedAt:desc">日期 · 新→旧</option>
                 <option value="savedAt:asc">日期 · 旧→新</option>
                 <option value="name:asc">名称 · A→Z</option>
@@ -361,6 +365,7 @@
         <div class="paper-library-batch-actions">
           <button type="button" class="btn" id="btnPaperLibrarySelectVisible"><span class="btn-label-full">全选当前筛选</span><span class="btn-label-short">全选</span></button>
           <button type="button" class="btn btn-primary" id="btnPaperLibraryBatchApply">应用</button>
+          <button type="button" class="btn" id="btnPaperLibraryBatchArchive">归档所选</button>
           <button type="button" class="btn" id="btnPaperLibraryBatchClear">取消选择</button>
         </div>
       </div>
@@ -570,13 +575,13 @@
   <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
 
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/paper-library-core.js?v=13"></script>
-  <script src="/web/app-dialog.js?v=1"></script>
+  <script src="/web/paper-library-core.js?v=16"></script>
+  <script src="/web/app-dialog.js?v=2"></script>
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/building-preview.js?v=9"></script>
   <script src="/web/material-ledger.js?v=3"></script>
   <script src="/web/image-terrain-core.js?v=8"></script>
-  <script src="/web/app.js?v=275"></script>
+  <script src="/web/app.js?v=279"></script>
 </body>
 </html>

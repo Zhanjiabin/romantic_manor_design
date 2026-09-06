@@ -253,7 +253,7 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
-  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=245"]);
+  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=256"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
     if (terrainInteractionBusy()) return;
@@ -7179,6 +7179,7 @@ const terrainPaperLibrary = {
   failed: 0,
   skippedDup: 0,
   selectedIds: new Set(),
+  archiveView: false,
 };
 
 function isTerrainPaperLibraryOpen() {
@@ -7387,29 +7388,59 @@ function terrainPaperMeta(documentData) {
   return `${(documentData.records || []).length} 个庄园建筑点`;
 }
 
+function terrainPaperVisibleEntries() {
+  return terrainPaperLibrary.entries.filter((entry) => (
+    PaperLibraryCore.paperMatchesArchiveView(entry, terrainPaperLibrary.archiveView)
+  ));
+}
+
+function syncTerrainPaperArchiveUi() {
+  PaperLibraryCore.syncPaperArchiveDoor({
+    archiveView: terrainPaperLibrary.archiveView,
+    count: PaperLibraryCore.countArchivedPapers(terrainPaperLibrary.entries),
+  });
+  const title = document.getElementById("paperLibraryTitle");
+  if (title) title.textContent = terrainPaperLibrary.archiveView ? "归档柜" : "图纸库";
+  const empty = document.getElementById("paperLibraryEmpty");
+  if (empty) {
+    const heading = empty.querySelector("strong");
+    const copy = empty.querySelector("p");
+    if (terrainPaperLibrary.archiveView) {
+      if (heading) heading.textContent = "归档柜是空的";
+      if (copy) copy.textContent = "主列表里点「归档」的图纸会出现在这里，可以随时恢复。";
+    } else {
+      if (heading) heading.textContent = "还没有图纸";
+      if (copy) copy.textContent = "导入文件夹或文件。地形桌可收入建筑图纸和地形图纸；已有图纸会按内容去重后叠加。";
+    }
+  }
+}
+
 function updateTerrainPaperLibraryStatus(message = "") {
   const status = document.getElementById("paperBatchStatus");
+  syncTerrainPaperArchiveUi();
   if (!status) return;
   if (message) {
     status.textContent = message;
     return;
   }
-  const total = terrainPaperLibrary.entries.length;
+  const visible = terrainPaperVisibleEntries();
+  const total = visible.length;
   const shown = [...(document.getElementById("paperPreviewGrid")?.children || [])].filter((card) => !card.hidden).length;
   const notes = [];
   if (terrainPaperLibrary.skippedDup) notes.push(`跳过 ${terrainPaperLibrary.skippedDup} 张重复`);
   if (terrainPaperLibrary.failed) notes.push(`${terrainPaperLibrary.failed} 张无法读取`);
   const skip = notes.length ? ` · ${notes.join(" · ")}` : "";
   if (terrainPaperLibrary.loading) {
-    status.textContent = `正在载入… 已载入 ${total} 张${skip}`;
+    status.textContent = `正在载入… 已载入 ${terrainPaperLibrary.entries.length} 张${skip}`;
     return;
   }
   if (!total) {
-    status.textContent = skip.replace(/^ · /, "") || "还没有图纸。导入文件夹或文件即可叠加。";
+    status.textContent = skip.replace(/^ · /, "")
+      || (terrainPaperLibrary.archiveView ? "归档柜是空的。" : "还没有图纸。导入文件夹或文件即可叠加。");
     return;
   }
   const filtered = terrainPaperLibrary.query || terrainPaperLibrary.kindFilter !== "all" || terrainPaperLibrary.groupFilter !== "all";
-  status.textContent = `${total} 张图纸${filtered && shown !== total ? ` · 显示 ${shown} 张` : ""}${skip}`;
+  status.textContent = `${total} 张${terrainPaperLibrary.archiveView ? "归档" : "图纸"}${filtered && shown !== total ? ` · 显示 ${shown} 张` : ""}${skip}`;
 }
 
 function applyTerrainPaperLibraryFilter() {
@@ -7423,13 +7454,18 @@ function applyTerrainPaperLibraryFilter() {
     const kind = PaperLibraryCore.resolvePaperKind({ kind: card.dataset.kind, meta });
     const kindOk = PaperLibraryCore.kindMatchesFilter(kind, terrainPaperLibrary.kindFilter);
     const groupOk = terrainPaperLibrary.groupFilter === "all" || String(card.dataset.group || "") === terrainPaperLibrary.groupFilter;
-    card.hidden = !(queryOk && kindOk && groupOk);
+    const archiveOk = PaperLibraryCore.paperMatchesArchiveView(
+      { archived: card.dataset.archived === "1" },
+      terrainPaperLibrary.archiveView
+    );
+    card.hidden = !(queryOk && kindOk && groupOk && archiveOk);
   });
   PaperLibraryCore.reorderPaperCards(
     grid,
     terrainPaperLibrary.entries,
     PaperLibraryCore.loadPaperSort()
   );
+  syncTerrainPaperLibraryEmpty();
   updateTerrainPaperLibraryStatus();
 }
 
@@ -7566,14 +7602,17 @@ function renderTerrainPaperGroupTabs() {
 function syncTerrainPaperLibraryEmpty() {
   const empty = document.getElementById("paperLibraryEmpty");
   const grid = document.getElementById("paperPreviewGrid");
-  const hasCards = terrainPaperLibrary.entries.length > 0 || terrainPaperLibrary.loading;
+  const visible = terrainPaperVisibleEntries().length;
+  const hasCards = visible > 0 || terrainPaperLibrary.loading;
   if (empty) empty.hidden = hasCards;
-  if (grid) grid.hidden = !terrainPaperLibrary.entries.length && !terrainPaperLibrary.loading;
+  if (grid) grid.hidden = !visible && !terrainPaperLibrary.loading;
+  syncTerrainPaperArchiveUi();
 }
 
 function setTerrainPaperLibraryOpen(open) {
   const panel = document.getElementById("paperLibrary");
   if (!panel) return;
+  if (!open) terrainPaperLibrary.archiveView = false;
   panel.hidden = !open;
   document.getElementById("desk")?.classList.toggle("library-open", open);
   window.MobileWorkspace?.setInert(document.querySelector(".workspace"), open);
@@ -7658,11 +7697,15 @@ function refreshTerrainPaperLibraryCard(entry) {
   if (!card) return;
   card.dataset.search = entry.search;
   card.dataset.group = entry.groupId || "";
+  card.dataset.archived = entry.archived ? "1" : "0";
   const name = card.querySelector(".paper-preview-copy strong");
   if (name) {
     name.textContent = entry.name;
     name.title = entry.name;
   }
+  const rename = card.querySelector(".paper-card-rename");
+  if (rename) rename.setAttribute("aria-label", `重命名 ${entry.name}`);
+  PaperLibraryCore.syncPaperArchiveButton(card.querySelector(".paper-card-archive"), entry);
   const meta = card.querySelector(".paper-preview-copy small");
   if (meta) meta.textContent = entry.meta;
 }
@@ -7873,6 +7916,88 @@ function showTerrainPaperLibraryIndex(papers) {
   updateTerrainPaperLibraryStatus();
 }
 
+function applyTerrainPaperLibraryName(entry, rawName) {
+  const next = PaperLibraryCore.sanitizePaperFileName(rawName);
+  if (!entry || !next || next === entry.name) return false;
+  entry.name = next;
+  entry.search = next.toLowerCase();
+  refreshTerrainPaperLibraryCard(entry);
+  if (state.sourcePaper?.id && state.sourcePaper.id === entry.contentId) {
+    state.sourcePaper.name = next;
+  }
+  applyTerrainPaperLibraryFilter();
+  return true;
+}
+
+async function renameTerrainPaperLibraryEntry(entry) {
+  if (!entry) return;
+  const next = await appPrompt("给这张图纸起个新文件名。可以写 2026/8/30 这样的日期。", {
+    title: "修改文件名",
+    fieldLabel: "文件名",
+    value: PaperLibraryCore.paperNameStem(entry.name),
+    maxLength: 220,
+    okLabel: "保存",
+  });
+  if (next == null) return;
+  if (!applyTerrainPaperLibraryName(entry, next)) return;
+  if (!entry.contentId) return;
+  try {
+    await persistTerrainPaperLibrary([{
+      id: entry.contentId,
+      name: entry.name,
+      kind: entry.kind,
+      group: entry.groupId || "",
+    }], false);
+  } catch (error) {
+    console.warn(error);
+    await appAlert("文件名已改，但同步失败，可稍后再试。", { title: "同步失败" });
+  }
+}
+
+function setTerrainPaperLibraryArchiveView(open) {
+  terrainPaperLibrary.archiveView = !!open;
+  applyTerrainPaperLibraryFilter();
+}
+
+async function setTerrainPaperLibraryArchived(entry, archived) {
+  if (!entry) return;
+  const next = !!archived;
+  if (!!entry.archived === next) return;
+  entry.archived = next;
+  entry.archivedAt = next ? Date.now() : 0;
+  if (entry.card) entry.card.dataset.archived = next ? "1" : "0";
+  PaperLibraryCore.syncPaperArchiveButton(entry.card?.querySelector(".paper-card-archive"), entry);
+  applyTerrainPaperLibraryFilter();
+  if (!entry.contentId) return;
+  try {
+    await persistTerrainPaperLibrary([{
+      id: entry.contentId,
+      name: entry.name,
+      kind: entry.kind,
+      group: entry.groupId || "",
+      archived: next,
+      archivedAt: Number(entry.archivedAt) || 0,
+    }], false);
+  } catch (error) {
+    console.warn(error);
+    await appAlert("归档状态已改，但同步失败，可稍后再试。", { title: "同步失败" });
+  }
+}
+
+async function toggleTerrainPaperLibraryArchived(entry) {
+  await setTerrainPaperLibraryArchived(entry, !entry?.archived);
+}
+
+async function applyTerrainPaperLibraryBatchArchive() {
+  const selected = terrainPaperSelectedEntries();
+  if (!selected.length) return;
+  const archived = !terrainPaperLibrary.archiveView;
+  for (const entry of selected) {
+    await setTerrainPaperLibraryArchived(entry, archived);
+  }
+  clearTerrainPaperLibrarySelection();
+}
+
 async function assignTerrainPaperGroup(entry, groupId) {
   entry.groupId = String(groupId || "");
   const card = document.querySelector(`.paper-preview-item[data-id="${CSS.escape(String(entry.id))}"]`);
@@ -7904,6 +8029,7 @@ function renderTerrainPaperLibraryCard(entry, { paint = true } = {}) {
   card.dataset.id = String(entry.id);
   card.dataset.kind = entry.kind || "";
   card.dataset.group = entry.groupId || "";
+  card.dataset.archived = entry.archived ? "1" : "0";
   const selected = terrainPaperLibrary.selectedIds.has(terrainPaperSelectKey(entry));
   if (selected) card.classList.add("is-selected");
   const { label: selectCtrl } = PaperLibraryCore.createPaperSelectControl(entry, {
@@ -7929,9 +8055,10 @@ function renderTerrainPaperLibraryCard(entry, { paint = true } = {}) {
   visual.onclick = () => applyTerrainLibraryPaper(entry);
   const copy = document.createElement("div");
   copy.className = "paper-preview-copy";
-  const name = document.createElement("strong");
-  name.textContent = entry.name;
-  name.title = entry.name;
+  const { row: nameRow, name } = PaperLibraryCore.createPaperNameRow(entry, {
+    onRename: (row) => renameTerrainPaperLibraryEntry(row).catch((error) => console.warn(error)),
+    onArchive: (row) => toggleTerrainPaperLibraryArchived(row).catch((error) => console.warn(error)),
+  });
   const meta = document.createElement("small");
   meta.textContent = entry.meta;
   const group = document.createElement("select");
@@ -7941,7 +8068,7 @@ function renderTerrainPaperLibraryCard(entry, { paint = true } = {}) {
   group.addEventListener("change", () => {
     assignTerrainPaperGroup(entry, group.value).catch((error) => console.warn(error));
   });
-  copy.append(name, meta, group);
+  copy.append(nameRow, meta, group);
   const actions = document.createElement("div");
   actions.className = "paper-preview-item-actions";
   const apply = document.createElement("button");
@@ -8164,6 +8291,12 @@ function bindTerrainPaperLibrary() {
   });
   document.getElementById("btnPaperLibraryBatchClear")?.addEventListener("click", () => {
     clearTerrainPaperLibrarySelection();
+  });
+  document.getElementById("btnPaperLibraryBatchArchive")?.addEventListener("click", () => {
+    applyTerrainPaperLibraryBatchArchive().catch((error) => console.warn(error));
+  });
+  document.getElementById("btnPaperLibraryArchive")?.addEventListener("click", () => {
+    setTerrainPaperLibraryArchiveView(!terrainPaperLibrary.archiveView);
   });
   document.getElementById("btnPaperLibraryClear")?.addEventListener("click", async () => {
     const ok = await appConfirm("清空图纸库里的全部图纸？", {

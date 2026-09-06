@@ -2741,6 +2741,28 @@ html.is-mobile-workspace .paper-preview-materials-detail {
   padding: 0 8px;
 }
 
+html.is-mobile-workspace .paper-card-rename,
+html.is-mobile-workspace .paper-card-archive {
+  min-width: 44px;
+  min-height: 44px;
+  font-size: 13px;
+}
+
+html.is-mobile-workspace .paper-archive-door {
+  min-height: 44px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+html.is-mobile-workspace #btnPaperInspectArchive {
+  min-height: 44px;
+}
+
+html.is-mobile-workspace #dlgAppInput {
+  min-height: 44px;
+  font-size: 16px;
+}
+
 html.is-mobile-workspace .paper-preview-copy strong {
   font-size: 12px;
 }
@@ -2855,6 +2877,11 @@ html.is-mobile-workspace .paper-inspect-side {
 
 html.is-mobile-workspace .paper-inspect-side-head {
   padding: 10px 12px 8px;
+}
+
+html.is-mobile-workspace #btnPaperInspectRename {
+  min-width: 44px;
+  min-height: 44px;
 }
 
 html.is-mobile-workspace .paper-inspect-side h2 {
@@ -3344,12 +3371,32 @@ html.is-mobile-workspace .layer-row {
   overflow: hidden;
 }
 
+html.is-mobile-workspace .layer-row.has-select {
+  grid-template-columns: 44px 40px 36px minmax(0, 1fr) 40px;
+}
+
 html.is-mobile-workspace .layer-row.is-child {
   grid-template-columns: 14px 40px 36px minmax(0, 1fr) 40px;
 }
 
+html.is-mobile-workspace .layer-row.is-child.has-select {
+  grid-template-columns: 14px 44px 40px 36px minmax(0, 1fr) 40px;
+}
+
+html.is-mobile-workspace .layer-row.is-group.has-select {
+  grid-template-columns: 44px 44px 44px 40px minmax(0, 1fr) 44px;
+}
+
 html.is-mobile-workspace .layer-row.is-group.is-nested {
   grid-template-columns: 14px 40px 40px 36px minmax(0, 1fr) 40px;
+}
+
+html.is-mobile-workspace .layer-row.is-group.is-nested.has-select {
+  grid-template-columns: 14px 44px 44px 44px 40px minmax(0, 1fr) 44px;
+}
+
+html.is-mobile-workspace .layer-select {
+  display: grid;
 }
 
 html.is-mobile-workspace .layer-eye,
@@ -3429,7 +3476,7 @@ html.is-mobile-workspace .layer-foot-btn {
   border-radius: 6px;
 }
 
-html.is-mobile-workspace:not(.is-tablet-workspace) #btnClearSel {
+html.is-mobile-workspace:not(.is-tablet-workspace) #btnClearSel:not(.layer-foot-btn) {
   display: none;
 }
 

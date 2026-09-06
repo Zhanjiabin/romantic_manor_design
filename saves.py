@@ -489,6 +489,8 @@ def paper_public_meta(item: dict, *, has_thumb: bool = False, thumb_at: int = 0)
         "count": max(0, _int_field(item.get("count"))),
         "meta": str(item.get("meta") or "")[:80],
         "unresolved": max(0, _int_field(item.get("unresolved"))),
+        "archived": bool(item.get("archived")),
+        "archivedAt": _int_field(item.get("archivedAt")) if item.get("archived") else 0,
         "hasThumb": bool(has_thumb),
         "thumbAt": thumb_at if has_thumb else 0,
     }
@@ -615,11 +617,21 @@ def save_building_papers(items) -> int:
                 continue
             if len(data) > 4 * 1024 * 1024:
                 continue
+            incoming_saved = _int_field(item.get("savedAt"))
+            existing_saved = _int_field(existing.get("savedAt"))
+            existing_data = existing.get("data") if isinstance(existing.get("data"), str) else ""
+            data_changed = data != existing_data
+            if incoming_saved > 0 and (data_changed or not existing_saved):
+                saved_at = incoming_saved
+            elif data_changed or not existing_saved:
+                saved_at = now
+            else:
+                saved_at = existing_saved
             payload = {
                 "id": ident,
                 "name": name,
                 "data": data,
-                "savedAt": now,
+                "savedAt": saved_at,
             }
             kind = str(item.get("kind") or existing.get("kind") or "").strip()
             if kind in ("desk", "terrain", "manor"):
@@ -652,6 +664,17 @@ def save_building_papers(items) -> int:
                 document = sanitize_desk_document(existing.get("deskDocument"))
                 if document:
                     payload["deskDocument"] = document
+            if "archived" in item:
+                archived = bool(item.get("archived"))
+            else:
+                archived = bool(existing.get("archived"))
+            payload["archived"] = archived
+            if archived:
+                payload["archivedAt"] = (
+                    _int_field(item.get("archivedAt"))
+                    or _int_field(existing.get("archivedAt"))
+                    or now
+                )
             _atomic_write(path, payload)
             saved += 1
     return saved

@@ -1994,6 +1994,55 @@ button.current-materials:disabled {
   background: #e8eee6;
   box-shadow: inset 3px 0 0 rgba(47, 107, 79, 0.45);
 }
+.layer-select {
+  position: relative;
+  display: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  cursor: pointer;
+}
+.layer-select-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.layer-select-mark {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(47, 107, 79, 0.55);
+  border-radius: 6px;
+  background: #fff;
+  box-sizing: border-box;
+}
+.layer-select-input:checked + .layer-select-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.2 8.2 6.4 11.4 12.8 4.6'/></svg>");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 12px 12px;
+}
+.layer-select.is-partial .layer-select-mark {
+  border-color: var(--accent);
+  background: rgba(47, 107, 79, 0.18);
+}
+.layer-select.is-partial .layer-select-mark::after {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 2px;
+  margin: 8px auto 0;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.layer-select-input:focus-visible + .layer-select-mark {
+  box-shadow: var(--focus-ring);
+}
 .layer-eye,
 .layer-lock,
 .layer-twist {
@@ -3445,6 +3494,16 @@ html:not(.is-mobile-workspace) #btnPaperLibraryNewGroup {
   border-bottom: 1px solid rgba(183, 200, 178, 0.45);
   background: linear-gradient(180deg, #f7fbf5 0%, var(--panel) 100%);
 }
+.paper-inspect-name-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.paper-inspect-name-row .btn {
+  min-height: 32px;
+}
 .paper-inspect-side h2 {
   margin: 0;
   font-size: 15px;
@@ -3555,6 +3614,9 @@ html:not(.is-mobile-workspace) #btnPaperLibraryNewGroup {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+.paper-inspect-actions #btnPaperInspectArchive {
+  grid-column: 1 / -1;
 }
 .paper-inspect-actions .btn {
   min-height: 40px;

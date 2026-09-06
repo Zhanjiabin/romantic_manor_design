@@ -2123,6 +2123,20 @@ function panGutter(sw, sh) {
   };
 }
 
+function canvasFrameSize() {
+  const { w: sw, h: sh } = shellViewSize();
+  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(state.zoom) || 1));
+  const gutter = panGutter(sw, sh);
+  return {
+    sw,
+    sh,
+    zoom,
+    gutter,
+    width: Math.max(sw, Math.round(sw * zoom)) + gutter.x * 2,
+    height: Math.max(sh, Math.round(sh * zoom)) + gutter.y * 2,
+  };
+}
+
 function applyZoom() {
   const frame = document.getElementById("canvasFrame");
   const inner = document.getElementById("canvasZoomInner");
@@ -2130,17 +2144,14 @@ function applyZoom() {
   const label = document.getElementById("btnZoomReset");
   if (!frame || !shell) return;
   state.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(state.zoom) || 1));
-  const { w: sw, h: sh } = shellViewSize();
   // The workspace is the canvas. Never letterbox a smaller rectangle of grass.
-  const width = Math.max(sw, Math.round(sw * state.zoom));
-  const height = Math.max(sh, Math.round(sh * state.zoom));
-  const gutter = panGutter(sw, sh);
+  const { width, height } = canvasFrameSize();
   frame.style.width = `${width}px`;
   frame.style.height = `${height}px`;
   frame.style.aspectRatio = `${width} / ${height}`;
   if (inner) {
-    inner.style.width = `${width + gutter.x * 2}px`;
-    inner.style.height = `${height + gutter.y * 2}px`;
+    inner.style.width = `${width}px`;
+    inner.style.height = `${height}px`;
   }
   shell.style.overflow = "auto";
   if (label) label.textContent = `${Math.round(state.zoom * 100)}%`;
@@ -2551,13 +2562,11 @@ function attachFloorFront(layout, floor) {
   return layout;
 }
 
-/** Grow grass+veil to the whole workspace. Do not move the locked 570×550 house frame. */
+/** Grow grass to the zoomed frame, including pan room. Do not move the locked 570×550 house frame. */
 function expandPlaneToShell(layout) {
-  const { w: cssW, h: cssH } = shellViewSize();
-  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(state.zoom) || 1));
-  const fit = houseFitScale(cssW, cssH);
-  // Zooming out grows grass around the house instead of shrinking a rectangle.
-  const scale = fit * Math.min(1, zoom);
+  const frame = canvasFrameSize();
+  const fit = houseFitScale(frame.sw, frame.sh);
+  const scale = fit * frame.zoom;
   const curW = Math.max(DESIGN_W, layout.planeW || DESIGN_W);
   const curH = Math.max(DESIGN_H, layout.planeH || DESIGN_H);
   if (!(scale > 0.001)) {
@@ -2565,9 +2574,9 @@ function expandPlaneToShell(layout) {
     layout.planeH = curH;
     return layout;
   }
-  let needW = Math.min(MAX_PLANE, Math.max(curW, Math.ceil(cssW / scale)));
-  let needH = Math.min(MAX_PLANE, Math.max(curH, Math.ceil(cssH / scale)));
-  const aspect = cssW / cssH;
+  let needW = Math.min(MAX_PLANE, Math.max(curW, Math.ceil(frame.width / scale)));
+  let needH = Math.min(MAX_PLANE, Math.max(curH, Math.ceil(frame.height / scale)));
+  const aspect = frame.width / frame.height;
   if (needW / needH < aspect - 0.001) {
     needW = Math.min(MAX_PLANE, Math.ceil(needH * aspect));
   } else if (needW / needH > aspect + 0.001) {
@@ -4442,24 +4451,28 @@ function recordBelongsToIsolatedGroup(index) {
 }
 
 function rememberGroupIsolate(indices) {
-  if (indices.length !== 1) {
+  if (!indices.length) {
     state.groupIsolate = null;
     return;
   }
   const group = state.records[indices[0]]?.group;
-  state.groupIsolate = group ? { group, index: indices[0] } : null;
+  if (!group || !indices.every((index) => state.records[index]?.group === group)) {
+    state.groupIsolate = null;
+    return;
+  }
+  state.groupIsolate = { group, index: indices[0] };
 }
 
-/** 画布双击 / Alt+点击：选中成组里的单件，不扩成整组。再次单击仍选整组。 */
+/** 画布双击 / Alt+点击：选中成组里的单件。Ctrl/Cmd 继续加选单件微调。 */
 function wantsIsolateGroupMember(event, hit) {
   if (hit < 0 || !state.records[hit]?.group) return false;
   if (recordBelongsToIsolatedGroup(hit)) return true;
   return Number(event.detail) >= 2 || !!event.altKey;
 }
 
-function canvasHitChunk(hit, { isolate = false } = {}) {
+function canvasHitChunk(hit, { isolate = false, member = false } = {}) {
   if (hit < 0) return [];
-  if (isolate || recordBelongsToIsolatedGroup(hit) || !state.records[hit]?.group) return [hit];
+  if (member || isolate || recordBelongsToIsolatedGroup(hit) || !state.records[hit]?.group) return [hit];
   return expandGroupSelection([hit]);
 }
 
@@ -4469,13 +4482,28 @@ function canvasUsesAdditiveSelect(event, hit, baseSelection) {
   return baseSelection.length > 0 && !baseSelection.includes(hit);
 }
 
-function toggleCanvasHitSelection(baseSelection, hit, { isolate = false } = {}) {
-  const chunk = canvasHitChunk(hit, { isolate });
+function toggleCanvasHitSelection(baseSelection, hit, { isolate = false, member = false } = {}) {
+  const chunk = canvasHitChunk(hit, { isolate, member });
   const next = new Set(baseSelection);
   const allIn = chunk.length && chunk.every((index) => next.has(index));
   if (allIn) chunk.forEach((index) => next.delete(index));
   else chunk.forEach((index) => next.add(index));
   return [...next];
+}
+
+function isolateCanvasGroupMember(clientX, clientY) {
+  if (state.phase !== "design") return false;
+  const transform = viewportTransform(layoutContentOffset());
+  const scene = transform.clientToScene(clientX, clientY);
+  const hit = hitRecord(scene.x, scene.y, {
+    solid: !isCoarsePointer(),
+    includeLocked: true,
+  });
+  if (hit < 0 || !state.records[hit]?.group) return false;
+  setSelection([hit], { expandGroup: false, isolate: true });
+  updateSelectionCaption();
+  renderBuilding();
+  return true;
 }
 
 function setSelection(indices, { expandGroup = false, layers = true, isolate = false } = {}) {
@@ -6451,13 +6479,17 @@ function beginCanvasPointer(event, shell) {
       return;
     }
   }
-  // Ctrl/Cmd 累加整组；手机/平板点到未选中的组也叠加整组。Shift 仍只用于轴向锁定。
+  // 单击整组；双击/Alt 拆成单件；Ctrl/Cmd 加选单件。手机/平板点到未选中的组仍叠加整组。
   const isolate = hit >= 0 ? wantsIsolateGroupMember(event, hit) : false;
+  const additiveMember = !!(event.ctrlKey || event.metaKey);
   const operation = canvasUsesAdditiveSelect(event, hit, baseSelection) ? "add" : "replace";
   if (hit >= 0) {
     clearBrushHighlight();
     if (operation !== "replace") {
-      setSelection(toggleCanvasHitSelection(baseSelection, hit, { isolate }), { isolate });
+      setSelection(
+        toggleCanvasHitSelection(baseSelection, hit, { isolate, member: additiveMember }),
+        { isolate: isolate || additiveMember }
+      );
       interaction.mode = "select";
     } else {
       if (isolate || !baseSelection.includes(hit)) {
@@ -12020,6 +12052,10 @@ function bindBuilding() {
 
   if (canvasShell) {
     canvasShell.addEventListener("pointerdown", (event) => beginCanvasPointer(event, canvasShell));
+    canvasShell.addEventListener("dblclick", (event) => {
+      if (event.button !== 0 || state.spacePan || state.mobilePan) return;
+      if (isolateCanvasGroupMember(event.clientX, event.clientY)) event.preventDefault();
+    });
     canvasShell.addEventListener("pointermove", (event) => moveCanvasPointer(event, canvasShell));
     canvasShell.addEventListener("pointerup", (event) => finishCanvasPointer(event, canvasShell));
     canvasShell.addEventListener("pointercancel", (event) =>

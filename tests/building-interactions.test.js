@@ -506,7 +506,10 @@ test("locked rendering invariants stay explicit in building.js", () => {
   const source = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
   assert.match(source, /function expandPlaneToShell/);
   assert.match(source, /Never letterbox a smaller rectangle of grass/);
+  assert.match(source, /function canvasFrameSize/);
   assert.match(source, /function panGutter/);
+  assert.doesNotMatch(source, /fit \* Math.min\(1, zoom\)/);
+  assert.match(source, /const scale = fit \* frame\.zoom/);
   assert.match(source, /function keepSceneUnderClient/);
   assert.match(source, /pendingZoomAnchor/);
   assert.match(source, /shell.style.overflow = "auto"/);
@@ -1040,8 +1043,12 @@ test("layer list clicks a grouped child without expanding the whole group", () =
   assert.match(groupHeader, /点下面的素材可选中单件/);
   // Canvas click takes the whole group; double-click / Alt isolates one member.
   assert.match(buildingJs, /function wantsIsolateGroupMember\(/);
+  assert.match(buildingJs, /function isolateCanvasGroupMember\(/);
+  assert.match(buildingJs, /canvasShell\.addEventListener\("dblclick"/);
   assert.match(buildingJs, /function canvasUsesAdditiveSelect\(/);
   assert.match(buildingJs, /function toggleCanvasHitSelection\(/);
+  assert.match(buildingJs, /member: additiveMember/);
+  assert.match(buildingJs, /indices\.every\(\(index\) => state\.records\[index\]\?\.group === group\)/);
   assert.match(buildingJs, /setSelection\(\[hit\], \{ expandGroup: !isolate, isolate \}\)/);
   assert.match(buildingJs, /const dragIndices = isolate/);
   assert.match(buildingJs, /beginRecordDrag\(startScene\.x, startScene\.y, dragIndices, transform\)/);
@@ -1059,13 +1066,15 @@ test("layer list clicks a grouped child without expanding the whole group", () =
 
 test("building desk selection, line brush, and guide affordances follow the ctrl-first workflow", () => {
   const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
-  // Desktop Ctrl/Cmd and phone/tablet tap-add both accumulate whole groups.
-  // Shift stays reserved for axis-lock and brush constraints.
+  // Desktop Ctrl/Cmd adds individual sprites; phone/tablet tap-add still
+  // accumulates whole groups. Shift stays reserved for axis-lock.
+
   assert.match(
     buildingJs,
     /const operation = canvasUsesAdditiveSelect\(event, hit, baseSelection\) \? "add" : "replace";/
   );
   assert.match(buildingJs, /function canvasHitChunk\(/);
+  assert.match(buildingJs, /const additiveMember = !!\(event\.ctrlKey \|\| event\.metaKey\)/);
   // Picking a palette asset keeps the select tool armed instead of switching
   // to the continuous paint brush.
   const arm = buildingJs.slice(
@@ -1337,7 +1346,7 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
   assert.match(terrainHtml, /app\.js\?v=280/);
   assert.match(buildingHtml, /paper-library-core\.js\?v=17/);
-  assert.match(buildingHtml, /building\.js\?v=257/);
+  assert.match(buildingHtml, /building\.js\?v=259/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
 });
 

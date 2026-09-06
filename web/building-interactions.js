@@ -1054,6 +1054,26 @@
     return indices;
   }
 
+  function expandGroupedIndices(records, indices, isolatedGroup = "") {
+    const set = new Set(indices);
+    const groups = new Set();
+    const isolated = String(isolatedGroup || "");
+    (indices || []).forEach((index) => {
+      const stack = recordGroupStack(records[index]);
+      if (!stack.length) return;
+      if (isolated && stack.some((entry) => entry.id === isolated)) {
+        groups.add(isolated);
+        return;
+      }
+      groups.add(stack[0].id);
+    });
+    if (!groups.size) return [...set].sort((a, b) => a - b);
+    (records || []).forEach((record, index) => {
+      if (recordGroupStack(record).some((entry) => groups.has(entry.id))) set.add(index);
+    });
+    return [...set].sort((a, b) => a - b);
+  }
+
   function outermostFullySelectedGroups(records, selectedIndices) {
     const selected = new Set(selectedIndices);
     const candidateIds = new Set();
@@ -1184,6 +1204,7 @@
     createViewportTransform,
     insertSpecsEqual,
     intersects,
+    expandGroupedIndices,
     groupMemberIndices,
     layerInsertGroupHint,
     normalizeRect,

@@ -18,6 +18,7 @@ const {
   recordGroupStack,
   remapImportedDeskGroups,
   wrapRecordsInGroup,
+  expandGroupedIndices,
   remapIndicesAfterInsert,
   resolveLayerInsertIndex,
   selectFromRect,
@@ -164,6 +165,10 @@ test("grouping two complete groups nests them without flattening", () => {
   const remapped = remapImportedDeskGroups(nested, 7);
   assert.equal(remapped[0].groupParents[0].id, remapped[2].groupParents[0].id);
   assert.notEqual(remapped[0].group, remapped[2].group);
+  assert.deepEqual(expandGroupedIndices(nested, [0]), [0, 1, 2, 3]);
+  assert.deepEqual(expandGroupedIndices(nested, [2]), [0, 1, 2, 3]);
+  assert.deepEqual(expandGroupedIndices(nested, [0], "a"), [0, 1]);
+  assert.deepEqual(expandGroupedIndices(nested, [2], "b"), [2, 3]);
 });
 
 test("layer insert between grouped neighbors inherits that group", () => {
@@ -1041,7 +1046,8 @@ test("layer list clicks a grouped child without expanding the whole group", () =
   );
   assert.match(groupHeader, /applyLayerListSelection\(memberIndices, event\)/);
   assert.match(groupHeader, /点下面的素材可选中单件/);
-  // Canvas click takes the whole group; double-click / Alt isolates one member.
+  // Canvas click takes the outermost parent group; double-click / Alt isolates one member.
+  assert.match(buildingJs, /BI\.expandGroupedIndices\(state\.records, indices, isolatedGroupId\(\)\)/);
   assert.match(buildingJs, /function wantsIsolateGroupMember\(/);
   assert.match(buildingJs, /function isolateCanvasGroupMember\(/);
   assert.match(buildingJs, /canvasShell\.addEventListener\("dblclick"/);
@@ -1346,7 +1352,7 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
   assert.match(terrainHtml, /app\.js\?v=280/);
   assert.match(buildingHtml, /paper-library-core\.js\?v=17/);
-  assert.match(buildingHtml, /building\.js\?v=259/);
+  assert.match(buildingHtml, /building\.js\?v=260/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
 });
 
@@ -1358,7 +1364,7 @@ test("building desk can insert a new layer between existing rows", () => {
   const interactions = fs.readFileSync(path.join(__dirname, "../web/building-interactions.js"), "utf8");
   assert.match(buildingHtml, /id="layerInsertBanner"/);
   assert.match(buildingHtml, /id="btnClearLayerInsert"/);
-  assert.match(buildingHtml, /building-interactions\.js\?v=17/);
+  assert.match(buildingHtml, /building-interactions\.js\?v=18/);
   assert.match(interactions, /function resolveLayerInsertIndex/);
   assert.match(buildingJs, /function insertDeskRecords/);
   assert.match(buildingJs, /function appendLayerInsertSlot/);

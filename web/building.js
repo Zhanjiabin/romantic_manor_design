@@ -4428,17 +4428,7 @@ function updateMarqueePointer(clientX, clientY) {
 }
 
 function expandGroupSelection(indices) {
-  const set = new Set(indices);
-  const groups = new Set();
-  indices.forEach((index) => {
-    const group = state.records[index]?.group;
-    if (group) groups.add(group);
-  });
-  if (!groups.size) return [...set].sort((a, b) => a - b);
-  state.records.forEach((record, index) => {
-    if (record.group && groups.has(record.group)) set.add(index);
-  });
-  return [...set].sort((a, b) => a - b);
+  return BI.expandGroupedIndices(state.records, indices, isolatedGroupId());
 }
 
 function isolatedGroupId() {

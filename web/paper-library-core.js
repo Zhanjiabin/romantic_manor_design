@@ -327,6 +327,55 @@
     return `${text || "图纸"}.txt`;
   }
 
+  function sanitizePaperGroupName(raw) {
+    return String(raw || "").replace(/\s+/g, " ").trim().slice(0, 40);
+  }
+
+  function paperGroupById(groups, groupId) {
+    const ident = String(groupId || "");
+    if (!ident || ident === "all") return null;
+    return (groups || []).find((group) => group && group.id === ident) || null;
+  }
+
+  function renamePaperGroup(groups, groupId, rawName) {
+    const name = sanitizePaperGroupName(rawName);
+    const current = paperGroupById(groups, groupId);
+    if (!current || !name) return null;
+    return (groups || []).map((group) => (group && group.id === current.id ? { ...group, name } : group));
+  }
+
+  function bindPaperGroupTab(button, tab, { selected = false, onSelect, onRename } = {}) {
+    button.type = "button";
+    button.textContent = tab.name;
+    button.classList.toggle("on", !!selected);
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+    const canRename = tab.id !== "all" && typeof onRename === "function";
+    if (canRename) {
+      button.title = "点选筛选 · 双击重命名";
+      button.setAttribute("aria-label", `${tab.name}，双击重命名`);
+      button.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onRename(tab.id);
+      });
+    }
+    button.addEventListener("click", () => {
+      if (typeof onSelect === "function") onSelect(tab.id);
+    });
+    return button;
+  }
+
+  function syncPaperGroupRenameButton(groupFilter, groups) {
+    const button = global.document?.getElementById("btnPaperLibraryRenameGroup");
+    if (!button) return;
+    const group = paperGroupById(groups, groupFilter);
+    button.hidden = !group;
+    if (group) {
+      button.title = `重命名「${group.name}」`;
+      button.setAttribute("aria-label", `重命名分组 ${group.name}`);
+    }
+  }
+
   function isPaperArchived(entry) {
     return !!entry?.archived;
   }
@@ -570,6 +619,11 @@
     bindPaperSortSelect,
     paperNameStem,
     sanitizePaperFileName,
+    sanitizePaperGroupName,
+    paperGroupById,
+    renamePaperGroup,
+    bindPaperGroupTab,
+    syncPaperGroupRenameButton,
     isPaperArchived,
     paperMatchesArchiveView,
     countArchivedPapers,

@@ -151,6 +151,7 @@
 }
 .paper-library.is-archive .paper-library-tool-actions,
 .paper-library.is-archive #btnPaperLibraryNewGroup,
+.paper-library.is-archive #btnPaperLibraryRenameGroup,
 .paper-library.is-archive #btnPaperLibraryPick {
   display: none;
 }
@@ -317,7 +318,8 @@ html:not(.is-mobile-workspace) .library-open .top-actions {
 .paper-library-empty p { margin: 0 auto; max-width: 36em; }
 .paper-library-empty .btn { justify-self: center; min-width: 140px; }
 
-#btnPaperLibraryNewGroup {
+#btnPaperLibraryNewGroup,
+#btnPaperLibraryRenameGroup {
   min-height: 32px;
   padding: 0 10px;
   border: 0;
@@ -396,7 +398,8 @@ html:not(.is-mobile-workspace) #btnPaperLibraryClose {
 }
 html:not(.is-mobile-workspace) .paper-kind-tabs button,
 html:not(.is-mobile-workspace) .paper-group-tabs button,
-html:not(.is-mobile-workspace) #btnPaperLibraryNewGroup {
+html:not(.is-mobile-workspace) #btnPaperLibraryNewGroup,
+html:not(.is-mobile-workspace) #btnPaperLibraryRenameGroup {
   min-height: 30px;
   padding: 0 11px;
   font-size: 12px;

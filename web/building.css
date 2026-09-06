@@ -3299,7 +3299,8 @@ body.is-palette-dragging * { cursor: grabbing !important; }
   padding-left: 8px;
   border-left: 1px solid rgba(168, 188, 174, 0.72);
 }
-#btnPaperLibraryNewGroup {
+#btnPaperLibraryNewGroup,
+#btnPaperLibraryRenameGroup {
   min-height: 32px;
   padding: 0 10px;
   border: 0;
@@ -3316,7 +3317,8 @@ html:not(.is-mobile-workspace) .library-open .top-actions {
 }
 html:not(.is-mobile-workspace) .paper-kind-tabs button,
 html:not(.is-mobile-workspace) .paper-group-tabs button,
-html:not(.is-mobile-workspace) #btnPaperLibraryNewGroup {
+html:not(.is-mobile-workspace) #btnPaperLibraryNewGroup,
+html:not(.is-mobile-workspace) #btnPaperLibraryRenameGroup {
   min-height: 30px;
   padding: 0 11px;
   font-size: 12px;

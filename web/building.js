@@ -639,7 +639,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=279"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=280"]);
 }
 
 function sortThemes(packs) {
@@ -9254,18 +9254,20 @@ function renderPaperGroupTabs() {
   const tabs = [{ id: "all", name: "全部分组" }, ...batchLibrary.groups];
   tabs.forEach((tab) => {
     const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = tab.name;
-    const on = batchLibrary.groupFilter === tab.id;
-    button.classList.toggle("on", on);
-    button.setAttribute("aria-selected", on ? "true" : "false");
-    button.onclick = () => {
-      batchLibrary.groupFilter = tab.id;
-      renderPaperGroupTabs();
-      applyPaperLibraryFilter();
-    };
+    PaperLibraryCore.bindPaperGroupTab(button, tab, {
+      selected: batchLibrary.groupFilter === tab.id,
+      onSelect: (id) => {
+        batchLibrary.groupFilter = id;
+        renderPaperGroupTabs();
+        applyPaperLibraryFilter();
+      },
+      onRename: (id) => {
+        renamePaperLibraryGroup(id).catch((error) => console.warn(error));
+      },
+    });
     host.appendChild(button);
   });
+  PaperLibraryCore.syncPaperGroupRenameButton(batchLibrary.groupFilter, batchLibrary.groups);
 }
 
 function fillPaperGroupSelect(select, value) {
@@ -9393,12 +9395,40 @@ async function createPaperLibraryGroup() {
     title: "新建分组",
     fieldLabel: "分组名称",
     placeholder: "例如 咖啡馆",
+    maxLength: 40,
   });
   if (name == null) return;
-  const trimmed = String(name).trim().slice(0, 40);
+  const trimmed = PaperLibraryCore.sanitizePaperGroupName(name);
   if (!trimmed) return;
   const id = `g${Date.now().toString(36)}`;
   batchLibrary.groups = [...batchLibrary.groups, { id, name: trimmed }];
+  try {
+    await persistPaperLibraryGroups();
+  } catch (error) {
+    console.warn(error);
+  }
+  refreshPaperGroupControls();
+}
+
+async function renamePaperLibraryGroup(groupId) {
+  const current = PaperLibraryCore.paperGroupById(batchLibrary.groups, groupId || batchLibrary.groupFilter);
+  if (!current) {
+    await appAlert("请先点一个要改名的分组。", { title: "重命名分组" });
+    return;
+  }
+  const name = await appPrompt("修改这个分组的名字。图纸还在原来的组里。", {
+    title: "重命名分组",
+    fieldLabel: "分组名称",
+    value: current.name,
+    placeholder: current.name,
+    maxLength: 40,
+    okLabel: "保存",
+  });
+  if (name == null) return;
+  const next = PaperLibraryCore.renamePaperGroup(batchLibrary.groups, current.id, name);
+  const renamed = PaperLibraryCore.paperGroupById(next, current.id);
+  if (!renamed || renamed.name === current.name) return;
+  batchLibrary.groups = next;
   try {
     await persistPaperLibraryGroups();
   } catch (error) {
@@ -11572,6 +11602,9 @@ function bindBuilding() {
   });
   document.getElementById("btnPaperLibraryNewGroup")?.addEventListener("click", () => {
     createPaperLibraryGroup().catch((error) => console.warn(error));
+  });
+  document.getElementById("btnPaperLibraryRenameGroup")?.addEventListener("click", () => {
+    renamePaperLibraryGroup(batchLibrary.groupFilter).catch((error) => console.warn(error));
   });
   document.getElementById("btnPaperLibrarySelectVisible")?.addEventListener("click", () => {
     selectVisiblePaperLibraryCards();

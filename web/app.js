@@ -253,7 +253,7 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
-  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=256"]);
+  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=257"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
     if (terrainInteractionBusy()) return;
@@ -7585,18 +7585,20 @@ function renderTerrainPaperGroupTabs() {
   host.replaceChildren();
   [{ id: "all", name: "全部分组" }, ...terrainPaperLibrary.groups].forEach((tab) => {
     const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = tab.name;
-    const on = terrainPaperLibrary.groupFilter === tab.id;
-    button.classList.toggle("on", on);
-    button.setAttribute("aria-selected", on ? "true" : "false");
-    button.onclick = () => {
-      terrainPaperLibrary.groupFilter = tab.id;
-      renderTerrainPaperGroupTabs();
-      applyTerrainPaperLibraryFilter();
-    };
+    PaperLibraryCore.bindPaperGroupTab(button, tab, {
+      selected: terrainPaperLibrary.groupFilter === tab.id,
+      onSelect: (id) => {
+        terrainPaperLibrary.groupFilter = id;
+        renderTerrainPaperGroupTabs();
+        applyTerrainPaperLibraryFilter();
+      },
+      onRename: (id) => {
+        renameTerrainPaperLibraryGroup(id).catch((error) => console.warn(error));
+      },
+    });
     host.appendChild(button);
   });
+  PaperLibraryCore.syncPaperGroupRenameButton(terrainPaperLibrary.groupFilter, terrainPaperLibrary.groups);
 }
 
 function syncTerrainPaperLibraryEmpty() {
@@ -7629,6 +7631,52 @@ function setTerrainPaperLibraryOpen(open) {
 
 async function persistTerrainPaperLibrary(uploads, replace) {
   return PaperLibraryCore.persist(uploads, { replace: !!replace, groups: terrainPaperLibrary.groups });
+}
+
+async function createTerrainPaperLibraryGroup() {
+  const name = await appPrompt("给这组图纸起个名字。", {
+    title: "新建分组",
+    fieldLabel: "分组名称",
+    placeholder: "例如 咖啡馆",
+    maxLength: 40,
+  });
+  if (name == null) return;
+  const trimmed = PaperLibraryCore.sanitizePaperGroupName(name);
+  if (!trimmed) return;
+  terrainPaperLibrary.groups = [...terrainPaperLibrary.groups, { id: `g${Date.now().toString(36)}`, name: trimmed }];
+  try {
+    await persistTerrainPaperLibrary([], false);
+  } catch (error) {
+    console.warn(error);
+  }
+  refreshTerrainPaperGroupControls();
+}
+
+async function renameTerrainPaperLibraryGroup(groupId) {
+  const current = PaperLibraryCore.paperGroupById(terrainPaperLibrary.groups, groupId || terrainPaperLibrary.groupFilter);
+  if (!current) {
+    await appAlert("请先点一个要改名的分组。", { title: "重命名分组" });
+    return;
+  }
+  const name = await appPrompt("修改这个分组的名字。图纸还在原来的组里。", {
+    title: "重命名分组",
+    fieldLabel: "分组名称",
+    value: current.name,
+    placeholder: current.name,
+    maxLength: 40,
+    okLabel: "保存",
+  });
+  if (name == null) return;
+  const next = PaperLibraryCore.renamePaperGroup(terrainPaperLibrary.groups, current.id, name);
+  const renamed = PaperLibraryCore.paperGroupById(next, current.id);
+  if (!renamed || renamed.name === current.name) return;
+  terrainPaperLibrary.groups = next;
+  try {
+    await persistTerrainPaperLibrary([], false);
+  } catch (error) {
+    console.warn(error);
+  }
+  refreshTerrainPaperGroupControls();
 }
 
 function flashSaveTerrainButton(ok) {
@@ -8266,22 +8314,11 @@ function bindTerrainPaperLibrary() {
       applyTerrainPaperLibraryFilter();
     });
   });
-  document.getElementById("btnPaperLibraryNewGroup")?.addEventListener("click", async () => {
-    const name = await appPrompt("给这组图纸起个名字。", {
-      title: "新建分组",
-      fieldLabel: "分组名称",
-      placeholder: "例如 咖啡馆",
-    });
-    if (name == null) return;
-    const trimmed = String(name).trim().slice(0, 40);
-    if (!trimmed) return;
-    terrainPaperLibrary.groups = [...terrainPaperLibrary.groups, { id: `g${Date.now().toString(36)}`, name: trimmed }];
-    try {
-      await persistTerrainPaperLibrary([], false);
-    } catch (error) {
-      console.warn(error);
-    }
-    refreshTerrainPaperGroupControls();
+  document.getElementById("btnPaperLibraryNewGroup")?.addEventListener("click", () => {
+    createTerrainPaperLibraryGroup().catch((error) => console.warn(error));
+  });
+  document.getElementById("btnPaperLibraryRenameGroup")?.addEventListener("click", () => {
+    renameTerrainPaperLibraryGroup(terrainPaperLibrary.groupFilter).catch((error) => console.warn(error));
   });
   document.getElementById("btnPaperLibrarySelectVisible")?.addEventListener("click", () => {
     selectVisibleTerrainPaperLibraryCards();

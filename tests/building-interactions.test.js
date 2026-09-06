@@ -1224,6 +1224,7 @@ test("building designs and uploaded paper libraries persist explicitly", () => {
   assert.match(buildingHtml, />导入</);
   assert.match(buildingHtml, /data-paper-kind="desk"/);
   assert.match(buildingHtml, /id="btnPaperLibraryNewGroup"/);
+  assert.match(buildingHtml, /id="btnPaperLibraryRenameGroup"/);
   assert.match(buildingHtml, /id="paperLibraryTitle">图纸库</);
   assert.ok(buildingHtml.indexOf('id="paperLibraryTitle"') < buildingHtml.indexOf('id="btnPaperLibraryClose"'));
   assert.doesNotMatch(buildingHtml, /paper-library-heading/);
@@ -1332,11 +1333,11 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(terrainJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(buildingJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(paperCore, /b > r \+ 8 && b >= g/);
-  assert.match(terrainHtml, /paper-library-core\.js\?v=16/);
+  assert.match(terrainHtml, /paper-library-core\.js\?v=17/);
   assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
-  assert.match(terrainHtml, /app\.js\?v=279/);
-  assert.match(buildingHtml, /paper-library-core\.js\?v=16/);
-  assert.match(buildingHtml, /building\.js\?v=256/);
+  assert.match(terrainHtml, /app\.js\?v=280/);
+  assert.match(buildingHtml, /paper-library-core\.js\?v=17/);
+  assert.match(buildingHtml, /building\.js\?v=257/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
 });
 
@@ -1468,15 +1469,29 @@ test("paper library can batch-assign groups on both desks", () => {
     assert.match(html, /id="btnPaperLibraryBatchApply"/);
     assert.match(html, /id="btnPaperLibrarySelectVisible"/);
     assert.match(html, /id="btnPaperLibraryBatchClear"/);
-    assert.match(html, /paper-library\.css\?v=14/);
-    assert.match(html, /mobile-workspace\.css\?v=109/);
+    assert.match(html, /paper-library\.css\?v=15/);
+    assert.match(html, /mobile-workspace\.css\?v=110/);
     assert.match(html, /id="btnPaperLibraryArchive"/);
     assert.match(html, /id="btnPaperLibraryBatchArchive"/);
+    assert.match(html, /id="btnPaperLibraryRenameGroup"/);
   }
   assert.match(paperCoreSrc, /function createPaperSelectControl/);
   assert.match(paperCoreSrc, /function paperSelectKey/);
   assert.match(paperCoreSrc, /function sanitizePaperFileName/);
+  assert.match(paperCoreSrc, /function sanitizePaperGroupName/);
+  assert.match(paperCoreSrc, /function renamePaperGroup/);
+  assert.match(paperCoreSrc, /function bindPaperGroupTab/);
   assert.match(paperCoreSrc, /function createPaperNameRow/);
+  assert.equal(core.sanitizePaperGroupName("  童话镇  "), "童话镇");
+  assert.equal(core.sanitizePaperGroupName("x".repeat(50)).length, 40);
+  const renamed = core.renamePaperGroup([{ id: "g1", name: "NEW" }, { id: "g2", name: "童话镇" }], "g1", "咖啡馆");
+  assert.equal(renamed[0].id, "g1");
+  assert.equal(renamed[0].name, "咖啡馆");
+  assert.equal(renamed[1].id, "g2");
+  assert.equal(renamed[1].name, "童话镇");
+  assert.equal(core.renamePaperGroup([{ id: "g1", name: "NEW" }], "all", "咖啡馆"), null);
+  assert.match(buildingJs, /async function renamePaperLibraryGroup/);
+  assert.match(terrainJs, /async function renameTerrainPaperLibraryGroup/);
   assert.match(paperCoreSrc, /function isPaperArchived/);
   assert.match(paperCoreSrc, /function syncPaperArchiveDoor/);
   assert.equal(core.isPaperArchived({ archived: true }), true);
@@ -1496,6 +1511,7 @@ test("paper library can batch-assign groups on both desks", () => {
   assert.match(paperCss, /\.paper-card-rename/);
   assert.match(paperCss, /\.paper-archive-door/);
   assert.match(mobileCss, /html\.is-mobile-workspace \.paper-card-rename[\s\S]*min-height:\s*44px/);
+  assert.match(mobileCss, /html\.is-mobile-workspace #btnPaperLibraryRenameGroup[\s\S]*min-height:\s*44px/);
   assert.match(buildingJs, /async function applyPaperLibraryBatchGroup/);
   assert.match(buildingJs, /function selectVisiblePaperLibraryCards/);
   assert.match(buildingJs, /persistPaperLibrary\(uploads, false\)/);
@@ -1705,6 +1721,7 @@ test("both desks expose the shared mobile-first workspace", () => {
   assert.match(mobileCss, /html\.is-tablet-workspace \.paper-library-bar[\s\S]*grid-template-columns:\s*auto minmax\(0,\s*1fr\) auto/);
   assert.match(mobileCss, /html\.is-tablet-workspace \.paper-library-filters[\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(mobileCss, /html\.is-tablet-workspace #btnPaperLibraryNewGroup[\s\S]*border:\s*0/);
+  assert.match(mobileCss, /html\.is-tablet-workspace #btnPaperLibraryRenameGroup[\s\S]*min-height:\s*44px/);
   assert.doesNotMatch(paperCss, /#btnPaperLibraryNewGroup[\s\S]*border:\s*1px dashed/);
   assert.doesNotMatch(buildingCss, /#btnPaperLibraryNewGroup[\s\S]*border:\s*1px dashed/);
   assert.match(buildingCss, /\.paper-library-bar[\s\S]*grid-template-columns:\s*auto minmax\(0,\s*1fr\) auto/);

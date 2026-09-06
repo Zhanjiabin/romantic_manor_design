@@ -81,6 +81,13 @@ html.is-mobile-workspace .desktop-only { display: none !important; }
 html.is-mobile-workspace .drawer-cap.mobile-only,
 html.is-mobile-workspace .drawer-cap.mobile-workspace-only { display: flex !important; }
 
+html.is-mobile-workspace .mobile-bottom-dock,
+html.is-mobile-workspace .mobile-dock-button,
+html.is-mobile-workspace .stage-commandbar,
+html.is-mobile-workspace .stage-commandbar .tool-btn {
+  -webkit-tap-highlight-color: transparent;
+}
+
 html.is-mobile-workspace .mobile-bottom-dock .mobile-dock-button,
 html.is-mobile-workspace .top-actions .btn,
 html.is-mobile-workspace .modal-card .btn,
@@ -138,6 +145,14 @@ html.is-mobile-workspace .mobile-dock-button {
   white-space: nowrap;
 }
 
+html.is-mobile-workspace .mobile-dock-button:hover {
+  color: #526158;
+  background: transparent;
+}
+html.is-mobile-workspace .mobile-dock-button:active {
+  color: #16553a;
+  background: rgba(42, 106, 76, 0.14);
+}
 html.is-mobile-workspace .mobile-dock-button.on,
 html.is-mobile-workspace .mobile-dock-button[aria-pressed="true"],
 html.is-mobile-workspace .mobile-dock-button[aria-expanded="true"] {
@@ -442,17 +457,82 @@ html.is-mobile-workspace #dlgImageTerrain #imageTerrainPreview {
 }
 
 html.is-mobile-workspace #dlgImageTerrain .image-color-map {
-  max-height: min(30vh, 240px);
+  max-height: none;
+  overflow: visible;
 }
 
 html.is-mobile-workspace #dlgImageTerrain .field .input,
 html.is-mobile-workspace #dlgImageTerrain .image-color-row select,
+html.is-mobile-workspace #dlgImageTerrain .image-edit-tools .btn,
+html.is-mobile-workspace #dlgImageTerrain .image-edit-actions .btn,
 html.is-mobile-workspace #dlgImageTerrain #btnApplyImageTerrain {
   min-height: 44px;
   font-size: 16px;
 }
 
+html.is-mobile-workspace #dlgImageTerrain .image-terrain-editor {
+  padding: 8px;
+}
+
+html.is-mobile-workspace #dlgImageTerrain .image-edit-tools .btn {
+  flex: 1 1 30%;
+}
+
+html.is-mobile-workspace #dlgSaveDesign .field .input,
+html.is-mobile-workspace #dlgSaveDesign .save-design-actions .btn {
+  min-height: 44px;
+  font-size: 16px;
+}
+
 html.is-tablet-workspace #dlgImageTerrain .image-terrain-body {
+  grid-template-columns: minmax(220px, 0.9fr) minmax(280px, 1.1fr);
+}
+
+html.is-mobile-workspace .base-current-actions .btn {
+  min-width: 44px;
+  min-height: 44px;
+  font-size: 16px;
+}
+
+html.is-mobile-workspace #dlgImageBuilding .image-building-card,
+html.is-mobile-workspace #dlgImageBuilding .image-terrain-card {
+  width: 100%;
+}
+
+html.is-mobile-workspace #dlgImageBuilding .image-building-body,
+html.is-mobile-workspace #dlgImageBuilding .image-terrain-body {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+html.is-mobile-workspace #dlgImageBuilding .image-building-previews {
+  grid-template-columns: 1fr;
+}
+
+html.is-mobile-workspace #dlgImageBuilding #imageBuildingSource,
+html.is-mobile-workspace #dlgImageBuilding #imageBuildingPreview {
+  max-height: min(28vh, 220px);
+}
+
+html.is-mobile-workspace #dlgImageBuilding .image-building-sketch-tools .btn,
+html.is-mobile-workspace #dlgImageBuilding .image-building-piece,
+html.is-mobile-workspace #dlgImageBuilding .image-building-piece .btn {
+  min-height: 44px;
+}
+
+html.is-mobile-workspace #dlgImageBuilding .image-color-map {
+  max-height: min(30vh, 240px);
+}
+
+html.is-mobile-workspace #dlgImageBuilding .field .input,
+html.is-mobile-workspace #dlgImageBuilding .image-color-row select,
+html.is-mobile-workspace #dlgImageBuilding #btnApplyImageBuilding {
+  min-height: 44px;
+  font-size: 16px;
+}
+
+html.is-tablet-workspace #dlgImageBuilding .image-building-previews,
+html.is-tablet-workspace #dlgImageBuilding .image-terrain-body {
   grid-template-columns: minmax(220px, 0.9fr) minmax(280px, 1.1fr);
 }
 
@@ -504,7 +584,8 @@ html.is-mobile-workspace #terrainProjectSheet > [data-project-pane] {
 }
 
 html.is-mobile-workspace #terrainProjectSheet > [data-project-pane="files"] {
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 html.is-mobile-workspace #terrainProjectSheet .project-files-pane {
@@ -513,7 +594,8 @@ html.is-mobile-workspace #terrainProjectSheet .project-files-pane {
   border: 0;
   background: transparent;
   box-shadow: none;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -544,9 +626,13 @@ html.is-mobile-workspace #terrainProjectSheet .project-preview {
 }
 
 html.is-mobile-workspace #terrainProjectSheet .project-preview {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace).mobile-portrait #terrainProjectSheet {
+  max-height: min(82dvh, calc(var(--visual-vh) - var(--mobile-dock-stack) - 8px)) !important;
 }
 
 html.is-mobile-workspace #terrainProjectSheet .project-strip-actions {
@@ -767,18 +853,6 @@ html.is-mobile-workspace #terrainProjectSheet .terrain-overview-pane #btnTerrain
   font-size: 12px;
 }
 
-html.is-tablet-workspace #terrainProjectSheet .project-strip,
-html.is-tablet-workspace #terrainProjectSheet .project-preview {
-  padding: 8px;
-}
-
-html.is-tablet-workspace #terrainProjectSheet .project-strip-actions .btn,
-html.is-tablet-workspace #terrainProjectSheet .project-io-slot .top-io-group .btn,
-html.is-tablet-workspace #terrainProjectSheet .preview-row-actions .btn {
-  min-height: 32px;
-  font-size: 12px;
-}
-
 /* iPad terrain: keep game IO in the top-right like desktop. */
 html.is-tablet-workspace #desk .topbar {
   display: flex;
@@ -863,24 +937,48 @@ html.is-tablet-workspace #terrainProjectSheet .preview-building-list {
   min-height: 0;
 }
 
+html.is-tablet-workspace #terrainProjectSheet .preview-building-row,
 html.is-tablet-workspace #terrainProjectSheet .preview-building-row.is-selected {
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr);
+  min-height: 44px;
+  padding: 4px 2px;
 }
 
 html.is-tablet-workspace #terrainProjectSheet .preview-row-actions {
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  display: inline-flex;
+  justify-content: flex-end;
   gap: 4px;
   width: 100%;
   padding: 4px 0 2px;
 }
 
 html.is-tablet-workspace #terrainProjectSheet .preview-row-actions .btn {
-  min-width: 0;
-  min-height: 44px;
-  width: 100%;
+  min-width: 40px;
+  min-height: 28px;
+  width: auto;
   padding: 0 6px;
+  font-size: 11px;
+}
+
+html.is-tablet-workspace #terrainProjectSheet .preview-building-thumb {
+  width: 40px;
+  height: 32px;
+}
+
+html.is-tablet-workspace #terrainProjectSheet .preview-building-copy strong {
+  font-size: 12px;
+}
+
+html.is-tablet-workspace #terrainProjectSheet .preview-building-copy small {
+  font-size: 10px;
+}
+
+html.is-tablet-workspace #terrainProjectSheet .preview-toggle-row .check {
+  min-height: 28px;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
 }
 
 html.is-mobile-workspace .mobile-pane-tabs button {
@@ -1184,8 +1282,8 @@ html.is-mobile-workspace .building-app.phase-design .canvas-tool-dock .mobile-to
 }
 
 html.is-mobile-workspace .building-app.phase-design .canvas-tool-dock .mobile-tool-tabs button {
-  min-height: 28px;
-  height: 28px;
+  min-height: 44px;
+  height: 44px;
   padding: 0 4px;
   border: 1px solid rgba(210, 230, 215, 0.18);
   border-radius: 7px;
@@ -1529,6 +1627,21 @@ html.is-mobile-workspace .stage-commandbar .facing-control strong {
 }
 
 html.is-mobile-workspace .stage-commandbar .tool-btn,
+html.is-mobile-workspace .stage-commandbar .facing-control .tool-btn,
+html.is-touch-workspace .stage-commandbar .tool-btn {
+  -webkit-tap-highlight-color: transparent;
+}
+html.is-mobile-workspace .stage-commandbar .tool-btn:hover,
+html.is-touch-workspace .stage-commandbar .tool-btn:hover {
+  background: transparent;
+  border-color: transparent;
+}
+html.is-mobile-workspace .stage-commandbar .tool-btn:active,
+html.is-touch-workspace .stage-commandbar .tool-btn:active {
+  background: var(--accent-soft);
+  border-color: rgba(42, 106, 76, 0.22);
+}
+html.is-mobile-workspace .stage-commandbar .tool-btn,
 html.is-mobile-workspace .stage-commandbar .facing-control .tool-btn {
   min-width: 30px;
   width: 30px;
@@ -1850,9 +1963,14 @@ html.is-mobile-workspace .nudge-btn {
   color: rgba(255, 255, 255, 0.36);
 }
 
+html.is-mobile-workspace .nudge-copy,
+html.is-mobile-workspace .nudge-paste {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+}
 html.is-mobile-workspace .nudge-btn:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.36);
+  color: inherit;
 }
 
 html.is-mobile-workspace .nudge-btn:active {
@@ -2004,9 +2122,58 @@ html.is-mobile-workspace .paper-group-tabs button {
 }
 
 html.is-mobile-workspace .paper-card-group,
-html.is-mobile-workspace #paperInspectGroup {
+html.is-mobile-workspace #paperInspectGroup,
+html.is-mobile-workspace #paperLibraryBatchGroup {
   min-height: 34px;
-  font-size: 14px;
+  font-size: 16px;
+}
+html.is-mobile-workspace .paper-library-batch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+}
+html.is-mobile-workspace .paper-library-batch[hidden] { display: none !important; }
+html.is-mobile-workspace .paper-library-batch-count {
+  font-size: 13px;
+  line-height: 44px;
+}
+html.is-mobile-workspace .paper-library-batch-group {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+html.is-mobile-workspace .paper-library-batch-group .input {
+  width: 100%;
+  max-width: none;
+  min-height: 44px;
+  font-size: 16px;
+}
+html.is-mobile-workspace .paper-library-batch-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+  margin-left: 0;
+}
+html.is-mobile-workspace .paper-library-batch-actions .btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+html.is-mobile-workspace .paper-card-select {
+  width: 44px;
+  height: 44px;
+  left: 4px;
+  top: 4px;
+}
+html.is-mobile-workspace .paper-card-select-mark {
+  width: 22px;
+  height: 22px;
+}
+html.is-mobile-workspace .paper-kind-badge {
+  left: 52px;
 }
 
 html.is-mobile-workspace .paper-library-tool-actions {
@@ -3066,6 +3233,10 @@ html.is-tablet-workspace #canvasToolDock[data-mobile-tool-family="brush"] .tool-
   display: none !important;
 }
 
+html.is-tablet-workspace .building-app.phase-design .canvas-toolrail .tool-item {
+  min-height: 44px;
+}
+
 html.is-tablet-workspace #desk .map-toolbar {
   display: flex !important;
   flex-wrap: nowrap;
@@ -3177,6 +3348,10 @@ html.is-mobile-workspace .layer-row.is-child {
   grid-template-columns: 14px 40px 36px minmax(0, 1fr) 40px;
 }
 
+html.is-mobile-workspace .layer-row.is-group.is-nested {
+  grid-template-columns: 14px 40px 40px 36px minmax(0, 1fr) 40px;
+}
+
 html.is-mobile-workspace .layer-eye,
 html.is-mobile-workspace .layer-lock,
 html.is-mobile-workspace .layer-twist {
@@ -3196,6 +3371,49 @@ html.is-mobile-workspace .layer-group-thumb {
 
 html.is-mobile-workspace .layer-name {
   font-size: 13px;
+}
+
+html.is-mobile-workspace .layer-insert-banner {
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+html.is-mobile-workspace .layer-insert-cancel {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+html.is-mobile-workspace .layer-list {
+  padding-top: 22px;
+  padding-bottom: 22px;
+}
+
+html.is-mobile-workspace .layer-insert-hit {
+  left: 50%;
+  right: auto;
+  width: 44px;
+  height: 44px;
+  top: -22px;
+  transform: translateX(-50%);
+}
+
+html.is-mobile-workspace .layer-insert-hit::before {
+  display: none;
+}
+
+html.is-mobile-workspace .layer-insert-hit::after {
+  opacity: 0.72;
+  width: 28px;
+  height: 28px;
+  line-height: 28px;
+  font-size: 18px;
+  transform: none;
+}
+
+html.is-mobile-workspace .layer-insert-hit:hover::after,
+html.is-mobile-workspace .layer-insert.is-on .layer-insert-hit::after,
+html.is-mobile-workspace .layer-insert-hit:focus-visible::after {
+  opacity: 1;
 }
 
 html.is-mobile-workspace .layer-footer {
@@ -3358,13 +3576,13 @@ html.is-tablet-workspace #desk.app {
 
 html.is-tablet-workspace #desk .workspace {
   display: grid;
-  grid-template-columns: 186px minmax(0, 1fr) 196px;
+  grid-template-columns: 228px minmax(0, 1fr) 268px;
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
 html.is-tablet-workspace.mobile-landscape #desk .workspace {
-  grid-template-columns: 198px minmax(0, 1fr) 208px;
+  grid-template-columns: 228px minmax(0, 1fr) 268px;
 }
 
 html.is-tablet-workspace #desk .map-host,

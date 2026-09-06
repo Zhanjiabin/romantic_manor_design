@@ -499,15 +499,16 @@
     scene.width = Math.max(1, Math.ceil(right) - originX + margin);
     scene.height = Math.max(1, Math.ceil(bottom) - originY + margin);
     const ctx = scene.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
     if (includeMaskGrass) drawMaskGrass(ctx, mask, grass, -originX, -originY);
     if (includeFloor) ctx.drawImage(floor, snug.x - originX, snug.y - originY, floorWidth, floorHeight);
     visible.forEach((row) => {
       ctx.drawImage(
         row.image,
-        Number(row.record.x) + contentDx - originX,
-        Number(row.record.y) + contentDy - originY,
-        row.width,
-        row.height
+        Math.round(Number(row.record.x) + contentDx - originX),
+        Math.round(Number(row.record.y) + contentDy - originY),
+        Math.round(row.width),
+        Math.round(row.height)
       );
     });
 

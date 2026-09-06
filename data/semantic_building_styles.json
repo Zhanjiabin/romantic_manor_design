@@ -1,0 +1,252 @@
+{
+  "schema": 1,
+  "styles": {
+    "bazaar-bookshop": {
+      "label": "商业建筑·经典书店",
+      "spacing": {
+        "x": 64,
+        "y": 32,
+        "z": 24
+      },
+      "offset": {
+        "x": 0,
+        "y": 0
+      },
+      "roles": {
+        "ground": {
+          "label": "灰地砖",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "bazaar",
+              "local": 301,
+              "states": [
+                0
+              ]
+            }
+          ]
+        },
+        "back-wall": {
+          "label": "左侧书店墙",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "bazaar",
+              "local": 501,
+              "states": [
+                1
+              ]
+            }
+          ]
+        },
+        "front-wall": {
+          "label": "右侧书店墙",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "bazaar",
+              "local": 508,
+              "states": [
+                0
+              ]
+            }
+          ]
+        },
+        "window": {
+          "label": "书店窗台",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "bazaar",
+              "local": 201,
+              "states": [
+                1
+              ]
+            }
+          ]
+        },
+        "sign": {
+          "label": "书店招牌",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "bazaar",
+              "local": 101,
+              "states": [
+                0
+              ]
+            }
+          ]
+        },
+        "door": {
+          "label": "入口",
+          "optional": true,
+          "fallback": "window",
+          "candidates": []
+        },
+        "roof": {
+          "label": "屋顶",
+          "optional": true,
+          "fallback": null,
+          "candidates": []
+        }
+      },
+      "facade": {
+        "layers": [
+          {
+            "role": "back-wall",
+            "offset": {
+              "x": -60,
+              "y": -40
+            }
+          },
+          {
+            "role": "front-wall",
+            "offset": {
+              "x": 60,
+              "y": -30
+            }
+          },
+          {
+            "role": "window",
+            "offset": {
+              "x": -30,
+              "y": -12
+            }
+          },
+          {
+            "role": "sign",
+            "offset": {
+              "x": 45,
+              "y": -60
+            }
+          }
+        ]
+      }
+    },
+    "europe-classic": {
+      "label": "欧洲风格·经典立面",
+      "spacing": {
+        "x": 64,
+        "y": 32,
+        "z": 24
+      },
+      "offset": {
+        "x": 0,
+        "y": 0
+      },
+      "roles": {
+        "ground": {
+          "label": "欧式地面",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "europe",
+              "local": 301,
+              "states": [
+                0
+              ]
+            }
+          ]
+        },
+        "wall": {
+          "label": "欧式墙体",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "europe",
+              "local": 501,
+              "states": [
+                0,
+                1
+              ]
+            }
+          ]
+        },
+        "opening": {
+          "label": "欧式门窗",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "europe",
+              "local": 201,
+              "states": [
+                0,
+                1
+              ]
+            }
+          ]
+        },
+        "ornament": {
+          "label": "欧式装饰",
+          "optional": true,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "europe",
+              "local": 101,
+              "states": [
+                0,
+                1
+              ]
+            }
+          ]
+        },
+        "roof": {
+          "label": "欧式屋顶",
+          "optional": false,
+          "fallback": null,
+          "candidates": [
+            {
+              "pack": "europe",
+              "local": 401,
+              "states": [
+                0
+              ]
+            }
+          ]
+        }
+      },
+      "facade": {
+        "layers": [
+          {
+            "role": "wall",
+            "offset": {
+              "x": 0,
+              "y": -32
+            }
+          },
+          {
+            "role": "opening",
+            "offset": {
+              "x": 0,
+              "y": -18
+            }
+          },
+          {
+            "role": "ornament",
+            "offset": {
+              "x": 0,
+              "y": -52
+            }
+          },
+          {
+            "role": "roof",
+            "offset": {
+              "x": 0,
+              "y": -76
+            }
+          }
+        ]
+      }
+    }
+  }
+}

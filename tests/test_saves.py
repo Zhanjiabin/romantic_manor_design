@@ -18,6 +18,8 @@ from saves import (
     load_building_papers,
     load_paper_thumb,
     load_terrain_bundle,
+    load_terrain_index,
+    load_terrain_version,
     save_building_bundle,
     save_building_papers,
     save_paper_library_meta,
@@ -47,6 +49,11 @@ def test_terrain_and_building_roundtrip():
         bundle = load_terrain_bundle()
         assert bundle["draft"]["id"] == "v-99"
         assert bundle["versions"][0]["id"] == "v-99"
+        index = load_terrain_index()
+        assert index["versions"][0]["id"] == "v-99"
+        assert index["versions"][0]["stampCount"] == 0
+        assert "stamps" not in index["versions"][0]
+        assert load_terrain_version("v-99")["name"] == "快照"
         assert delete_terrain_version("v-99")
         assert load_terrain_bundle()["versions"] == []
 
@@ -109,6 +116,87 @@ def test_building_paper_library_roundtrip_dedupes_and_deletes():
         assert {item["kind"] for item in mixed["papers"]} == {"desk", "terrain"}
         assert clear_building_papers() == 2
         assert load_building_papers()["groups"] == [{"id": "g1", "name": "咖啡馆"}]
+    finally:
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev
+
+
+def test_building_paper_keeps_desk_layers_across_upsert():
+    tmp = tempfile.mkdtemp(prefix="manor-paper-layers-")
+    prev = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = tmp
+    try:
+        layers = [
+            {"mat": 14101, "group": "g-wall", "groupName": "墙", "label": "", "locked": True, "hidden": False},
+            {"mat": 14102, "group": "g-wall", "groupName": "墙", "label": "柱", "locked": False, "hidden": False},
+        ]
+        assert save_building_papers([{
+            "name": "成组图纸.txt",
+            "data": "VjE7ZGVzaw==",
+            "kind": "desk",
+            "deskLayers": layers,
+        }]) == 1
+        ident = load_building_papers()["papers"][0]["id"]
+        paper = load_building_paper(ident)
+        assert paper["deskLayers"][0]["group"] == "g-wall"
+        assert paper["deskLayers"][0]["locked"] is True
+        assert paper["deskLayers"][1]["groupName"] == "墙"
+        assert "deskLayers" not in load_building_papers()["papers"][0]
+
+        assert save_building_papers([{
+            "id": ident,
+            "name": "成组图纸.txt",
+            "kind": "desk",
+            "count": 2,
+        }]) == 1
+        kept = load_building_paper(ident)
+        assert kept["deskLayers"][0]["group"] == "g-wall"
+        assert kept["deskLayers"][1]["label"] == "柱"
+        assert save_building_papers([{
+            "id": ident,
+            "name": "成组图纸.txt",
+            "kind": "desk",
+            "deskDocument": {
+                "v": 1,
+                "records": [
+                    {"x": 10, "y": 20, "mat": 14101, "state": 1, "packKey": "bazaar", "group": "g-wall", "groupName": "墙", "locked": True},
+                    {"x": 11, "y": 21, "mat": 14102, "state": 0, "group": "g-wall", "groupName": "墙"},
+                ],
+                "baseNo": 212,
+                "baseName": "巨型建筑",
+                "paperLayout": False,
+                "keepFoundation": True,
+                "layerCollapsed": ["g-wall"],
+                "smartBuilder": {
+                    "styleId": "bazaar-bookshop",
+                    "mode": "door",
+                    "walls": [{
+                        "a": {"x": 100, "y": 120},
+                        "b": {"x": 220, "y": 180},
+                        "openings": [{"kind": "door", "t": 0.5, "width": 30}],
+                    }],
+                    "props": [{"role": "sign", "x": 160, "y": 110}],
+                },
+            },
+        }]) == 1
+        full = load_building_paper(ident)
+        assert full["deskDocument"]["baseNo"] == 212
+        assert full["deskDocument"]["paperLayout"] is False
+        assert full["deskDocument"]["records"][0]["group"] == "g-wall"
+        assert full["deskDocument"]["layerCollapsed"] == ["g-wall"]
+        assert full["deskDocument"]["smartBuilder"]["styleId"] == "bazaar-bookshop"
+        assert full["deskDocument"]["smartBuilder"]["walls"][0]["openings"][0]["kind"] == "door"
+        assert save_building_papers([{
+            "id": ident,
+            "name": "成组图纸.txt",
+            "kind": "desk",
+            "meta": "2 件素材",
+        }]) == 1
+        still = load_building_paper(ident)
+        assert still["deskDocument"]["records"][0]["packKey"] == "bazaar"
+        assert still["deskDocument"]["baseName"] == "巨型建筑"
     finally:
         if prev is None:
             os.environ.pop("MANOR_SAVES", None)

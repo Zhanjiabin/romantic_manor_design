@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "catastrophic": [
+    "empty_when_building_visible",
+    "floor_only",
+    "huge_foundation",
+    "records_in_corner",
+    "coords_out_of_range",
+    "preview_apply_foot_mismatch",
+    "cleared_design_without_replacement",
+    "illegal_uid_or_mat0"
+  ],
+  "baseline": {
+    "legacyFlag": "MANOR_IMAGE_BUILDING_LEGACY",
+    "oldScreenshotPath": "matchScreenshot + estimateStructure + mustPick entries[0]"
+  },
+  "cases": []
+}

@@ -1276,6 +1276,14 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
   box-shadow: var(--shadow);
 }
 .modal-narrow { width: min(360px, 100%); }
+.save-design-actions {
+  display: grid;
+  gap: 8px;
+}
+.save-design-actions .btn-block {
+  margin-top: 0;
+  min-height: 44px;
+}
 .modal-cap {
   display: flex;
   align-items: center;
@@ -1316,6 +1324,8 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
   image-rendering: pixelated;
   border: 1px solid rgba(183, 200, 178, 0.9);
   border-radius: 10px;
+  touch-action: none;
+  cursor: crosshair;
   background:
     linear-gradient(45deg, #e4ebe0 25%, transparent 25%) 0 0 / 16px 16px,
     linear-gradient(-45deg, #e4ebe0 25%, transparent 25%) 0 8px / 16px 16px,
@@ -1327,15 +1337,47 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
   font-size: 12px;
   line-height: 1.45;
 }
+.image-terrain-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(183, 200, 178, 0.78);
+  border-radius: 10px;
+  background: rgba(244, 248, 241, 0.88);
+}
+.image-edit-tools,
+.image-preview-mode,
+.image-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.image-edit-tools .btn.on,
+.image-preview-mode .btn.on {
+  color: #fff;
+  border-color: #2f7751;
+  background: #2f7751;
+}
+.image-preview-mode .btn { flex: 1 1 120px; }
+.image-edit-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 0.55fr);
+  gap: 8px;
+  align-items: start;
+}
+.image-edit-fields .field span { font-size: 11px; }
+.image-edit-actions .btn { flex: 1 1 92px; }
+.image-edit-help {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.4;
+}
 .image-terrain-options { display: grid; gap: 10px; min-width: 0; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .image-color-map {
   display: grid;
   gap: 6px;
-  max-height: min(36vh, 280px);
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding-right: 2px;
 }
 .image-color-row {
   display: grid;
@@ -1432,6 +1474,7 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
   grid-template-columns: 40px minmax(0, 1fr);
   gap: 6px 8px;
   align-items: center;
+  flex: 0 0 auto;
   min-height: 44px;
   padding: 4px 2px;
   border: 0;

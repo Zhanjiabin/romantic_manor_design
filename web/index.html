@@ -9,11 +9,11 @@
   <meta name="theme-color" content="#2f6b4f" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>设计桌</title>
-  <link rel="stylesheet" href="/web/app.css?v=102" />
+  <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=10" />
-  <link rel="stylesheet" href="/web/paper-library.css?v=11" />
+  <link rel="stylesheet" href="/web/paper-library.css?v=12" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=94" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=106" />
 </head>
 <body>
   <div class="app" id="desk">
@@ -44,7 +44,7 @@
           </div>
         </div>
         <button type="button" class="btn btn-compact mobile-only" id="btnDrawerLeft">工具</button>
-        <button type="button" class="btn btn-compact mobile-only" id="btnSaveMobile" title="保存到服务器">保存</button>
+        <button type="button" class="btn btn-compact mobile-only" id="btnSaveMobile" title="保存到图纸库，可新建或写回原图纸">保存</button>
         <button type="button" class="btn btn-compact mobile-only" id="btnDrawerRight">文件</button>
         <button type="button" class="btn btn-compact top-account-btn" id="btnSwitchAccount" data-account-switch hidden title="切换账号">
           <span class="top-account-kicker">账号</span>
@@ -236,7 +236,7 @@
             <section class="project-strip" aria-label="项目">
               <div class="project-strip-actions">
                 <button type="button" class="btn btn-primary btn-compact" id="btnPaperLibrary" title="打开图纸库，可叠加导入建筑和地形图纸">图纸库</button>
-                <button type="button" class="btn btn-compact" id="btnSaveLocal" title="保存到服务器，换手机也能接着做">保存</button>
+                <button type="button" class="btn btn-compact" id="btnSaveLocal" title="保存到图纸库，可新建或写回原图纸">保存</button>
                 <button type="button" class="btn btn-compact" id="btnHistory" title="查看自动保存的历史版本">历史</button>
               </div>
               <button type="button" class="btn btn-wide phone-account-btn" data-account-switch hidden title="切换账号">
@@ -352,6 +352,18 @@
           </div>
         </div>
       </header>
+      <div class="paper-library-batch" id="paperLibraryBatch" hidden>
+        <div class="paper-library-batch-count" id="paperLibraryBatchCount">已选 0 张</div>
+        <label class="paper-library-batch-group">
+          <span class="paper-library-batch-cap">改到</span>
+          <select class="input" id="paperLibraryBatchGroup" aria-label="批量修改分组"></select>
+        </label>
+        <div class="paper-library-batch-actions">
+          <button type="button" class="btn" id="btnPaperLibrarySelectVisible"><span class="btn-label-full">全选当前筛选</span><span class="btn-label-short">全选</span></button>
+          <button type="button" class="btn btn-primary" id="btnPaperLibraryBatchApply">应用</button>
+          <button type="button" class="btn" id="btnPaperLibraryBatchClear">取消选择</button>
+        </div>
+      </div>
       <div class="paper-library-empty" id="paperLibraryEmpty">
         <strong>还没有图纸</strong>
         <p>导入文件夹或文件。地形桌可收入建筑图纸和地形图纸；已有图纸会按内容去重后叠加。</p>
@@ -388,6 +400,26 @@
     <div id="recentItems" class="recent-list"></div>
   </div>
 
+  <div class="modal" id="dlgSaveDesign" hidden>
+    <div class="modal-card modal-narrow" role="dialog" aria-modal="true" aria-labelledby="saveDesignTitle" aria-describedby="saveDesignHint">
+      <div class="modal-cap">
+        <span id="saveDesignTitle">保存到图纸库</span>
+        <button type="button" class="icon-x" data-close="dlgSaveDesign" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <p class="dlg-desc" id="saveDesignHint">保存为新图纸，或写回从图纸库打开的原图纸。</p>
+        <label class="field">
+          <span>图纸名称</span>
+          <input class="input" id="saveDesignName" maxlength="80" placeholder="例如 828庄园" autocomplete="off" />
+        </label>
+        <div class="save-design-actions">
+          <button type="button" class="btn btn-primary btn-block" id="btnSaveDesignNew">保存为新图纸</button>
+          <button type="button" class="btn btn-block" id="btnSaveDesignOriginal" hidden>保存到原图纸</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="dlgHistory" hidden>
     <div class="modal-card">
       <div class="modal-cap">
@@ -395,7 +427,7 @@
         <button type="button" class="icon-x" data-close="dlgHistory" aria-label="关闭"></button>
       </div>
       <div class="modal-body">
-        <p class="dlg-desc">自动保存约每 20 秒一次，并写到服务器。点保存或「新地形」会再留一个可恢复的快照（最多 30 份）。</p>
+        <p class="dlg-desc">自动保存约每 20 秒一次，并写到服务器。「新地形」会再留一个可恢复的快照（最多 30 份）。点下方按钮也可单独存一份历史版本。</p>
         <label class="field">
           <span>快照名称</span>
           <input class="input" id="snapName" maxlength="40" placeholder="例如 828庄园" />
@@ -413,20 +445,46 @@
         <button type="button" class="icon-x" data-close="dlgImageTerrain" aria-label="关闭"></button>
       </div>
       <div class="modal-body image-terrain-body">
-        <p class="dlg-desc">默认正面投影，按当前地图每一格采样后铺满。颜色分区可改成对应地形。</p>
+        <p class="dlg-desc">可切换原始、智能增强或网格图识别；先在预览里修正，再一次铺到地图。</p>
         <div class="image-terrain-preview-wrap">
+          <div class="image-preview-mode" role="group" aria-label="预览内容">
+            <button type="button" class="btn on" data-image-preview-mode="source" aria-pressed="true">识别分色</button>
+            <button type="button" class="btn" data-image-preview-mode="terrain" aria-pressed="false">地块结果</button>
+          </div>
           <canvas id="imageTerrainPreview" width="256" height="256" aria-label="颜色预览"></canvas>
           <p class="image-terrain-status" id="imageTerrainStatus">导入图片后可预览颜色分区。</p>
+          <div class="image-terrain-editor" id="imageTerrainEditor" aria-label="预览修改工具">
+            <div class="image-edit-tools" role="group" aria-label="修改方式">
+              <button type="button" class="btn on" data-image-edit-tool="paint" aria-pressed="true">画笔</button>
+              <button type="button" class="btn" data-image-edit-tool="erase" aria-pressed="false">橡皮</button>
+              <button type="button" class="btn" data-image-edit-tool="pick" aria-pressed="false">吸色</button>
+            </div>
+            <div class="image-edit-fields">
+              <label class="field"><span>修改地块</span><select class="input" id="imageTerrainEditColor"></select></label>
+              <label class="field"><span>画笔大小</span><select class="input" id="imageTerrainEditSize"><option value="1">1 格</option><option value="3">3 格</option><option value="5">5 格</option></select></label>
+            </div>
+            <div class="image-edit-actions">
+              <button type="button" class="btn" id="btnImageTerrainEditUndo" disabled>撤销修改</button>
+              <button type="button" class="btn" id="btnImageTerrainClean">一键去孤点</button>
+              <button type="button" class="btn" id="btnImageTerrainReset">重置识别</button>
+            </div>
+            <p class="image-edit-help">直接在预览上拖动画笔；所有修改只影响待导入结果。</p>
+          </div>
         </div>
         <div class="image-terrain-options">
           <div class="field-row">
-            <label class="field"><span>落图方式</span><select class="input" id="imageTerrainProjection"><option value="front" selected>正面（屏幕横平竖直）</option><option value="iso">地形轴（斜向铺格）</option></select></label>
-            <label class="field"><span>颜色数量</span><select class="input" id="imageTerrainColors"><option value="4">4 色</option><option value="6" selected>6 色</option><option value="8">8 色</option><option value="12">12 色</option><option value="16">16 色</option></select></label>
+            <label class="field"><span>识别算法</span><select class="input" id="imageTerrainAlgorithm"><option value="enhanced" selected>智能增强（推荐）</option><option value="point">原始单点采样</option><option value="grid">网格图增强</option></select></label>
+            <label class="field"><span>近色处理</span><select class="input" id="imageTerrainDetail"><option value="merge">合并相近色</option><option value="split" selected>拆分近色（推荐）</option><option value="fine">精细拆分</option></select></label>
           </div>
           <div class="field-row">
-            <label class="field"><span>图片适配</span><select class="input" id="imageTerrainFit"><option value="stretch" selected>拉伸铺满</option><option value="cover">铺满裁切</option><option value="contain">完整显示</option></select></label>
-            <label class="field"><span>透明阈值</span><input class="input" id="imageTerrainAlpha" type="number" min="0" max="255" value="16" inputmode="numeric" /></label>
+            <label class="field"><span>自动清理</span><select class="input" id="imageTerrainCleanup"><option value="none">不清理</option><option value="light" selected>轻度去孤点</option><option value="strong">强力去杂点</option></select></label>
+            <label class="field"><span>地块数量</span><select class="input" id="imageTerrainColors"><option value="4">4 种</option><option value="6">6 种</option><option value="8">8 种</option><option value="10" selected>10 种</option><option value="12">12 种</option><option value="16">16 种</option><option value="20">20 种</option></select></label>
           </div>
+          <div class="field-row">
+            <label class="field"><span>落图方式</span><select class="input" id="imageTerrainProjection"><option value="front" selected>正面（屏幕横平竖直）</option><option value="iso">地形轴（斜向铺格）</option></select></label>
+            <label class="field"><span>图片适配</span><select class="input" id="imageTerrainFit"><option value="stretch" selected>拉伸铺满</option><option value="cover">铺满裁切</option><option value="contain">完整显示</option></select></label>
+          </div>
+          <label class="field"><span>透明阈值</span><input class="input" id="imageTerrainAlpha" type="number" min="0" max="255" value="16" inputmode="numeric" /></label>
           <label class="check"><input type="checkbox" id="imageTerrainSkipBg" /><span>跳过背景色（四角取样，那些格子不铺）</span></label>
           <label class="check"><input type="checkbox" id="imageTerrainReplace" checked /><span>生成前清空现有地形笔触</span></label>
           <div class="image-color-map" id="imageColorMap" role="list" aria-label="颜色对应地形"></div>
@@ -512,12 +570,13 @@
   <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
 
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/paper-library-core.js?v=7"></script>
+  <script src="/web/paper-library-core.js?v=13"></script>
   <script src="/web/app-dialog.js?v=1"></script>
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
-  <script src="/web/building-preview.js?v=8"></script>
+  <script src="/web/building-preview.js?v=9"></script>
   <script src="/web/material-ledger.js?v=3"></script>
-  <script src="/web/app.js?v=252"></script>
+  <script src="/web/image-terrain-core.js?v=8"></script>
+  <script src="/web/app.js?v=275"></script>
 </body>
 </html>

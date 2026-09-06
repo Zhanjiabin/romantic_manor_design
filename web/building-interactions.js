@@ -652,20 +652,557 @@
     return pts;
   }
 
+  const SMART_WALL_ROLES = ["base", "body", "cap"];
+  const SMART_WALL_LABELS = {
+    base: "墙脚",
+    body: "墙身",
+    cap: "墙顶",
+  };
+
+  function finitePoint(point) {
+    return {
+      x: Number.isFinite(Number(point?.x)) ? Number(point.x) : 0,
+      y: Number.isFinite(Number(point?.y)) ? Number(point.y) : 0,
+    };
+  }
+
+  function projectToIsoAxis(start, end) {
+    if (Number.isFinite(Number(start)) && Number.isFinite(Number(end))) {
+      start = { x: Number(start), y: Number(end) };
+      end = null;
+    }
+    const a = end == null ? { x: 0, y: 0 } : finitePoint(start);
+    const b = finitePoint(end == null ? start : end);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const axes = [
+      { axis: "u", state: 0, x: 2, y: 1 },
+      { axis: "v", state: 1, x: 2, y: -1 },
+    ];
+    let best = null;
+    axes.forEach((axis) => {
+      const scale = (dx * axis.x + dy * axis.y) / 5;
+      const px = axis.x * scale;
+      const py = axis.y * scale;
+      const error = (dx - px) ** 2 + (dy - py) ** 2;
+      if (!best || error < best.error - EPSILON) {
+        best = {
+          x: a.x + px,
+          y: a.y + py,
+          axis: axis.axis,
+          state: axis.state,
+          scale,
+          error,
+        };
+      }
+    });
+    return best;
+  }
+
+  function smartRoleConfig(style, role) {
+    const listed = Array.isArray(style?.roles)
+      ? style.roles.find((entry) => String(entry?.role ?? entry?.name) === role)
+      : null;
+    const value = listed ?? style?.roles?.[role] ?? style?.[role];
+    if (value == null || value === false) return null;
+    if (typeof value === "object" && !Array.isArray(value)) return value;
+    return { value };
+  }
+
+  function smartRoleNames(style) {
+    const requested = Array.isArray(style?.layers) && style.layers.length
+      ? style.layers
+      : SMART_WALL_ROLES;
+    return [...new Set(requested.map(String))];
+  }
+
+  function smartWallWarning(role, wallIndex) {
+    return {
+      code: "missing-role",
+      role,
+      wallIndex,
+      message: `智能墙缺少 ${role} 角色素材`,
+    };
+  }
+
+  function smartOpeningRange(opening, length) {
+    if (!opening || typeof opening !== "object") return null;
+    if (Number.isFinite(Number(opening.t0)) || Number.isFinite(Number(opening.t1))) {
+      const t0 = Number.isFinite(Number(opening.t0)) ? Number(opening.t0) : Number(opening.t1);
+      const t1 = Number.isFinite(Number(opening.t1)) ? Number(opening.t1) : Number(opening.t0);
+      return [Math.max(0, Math.min(t0, t1)), Math.min(1, Math.max(t0, t1))];
+    }
+    const t = Math.max(0, Math.min(1, Number(opening.t) || 0));
+    const width = Math.max(0, Number(opening.width ?? opening.w) || 0);
+    const half = width <= 1 && opening.normalized !== false
+      ? width / 2
+      : width / (2 * Math.max(EPSILON, length));
+    return [Math.max(0, t - half), Math.min(1, t + half)];
+  }
+
+  function smartOpeningHits(wall, role, t, length) {
+    return (Array.isArray(wall?.openings) ? wall.openings : []).some((opening) => {
+      if (Array.isArray(opening?.roles) && !opening.roles.includes(role)) return false;
+      const range = smartOpeningRange(opening, length);
+      return range && t >= range[0] - EPSILON && t <= range[1] + EPSILON;
+    });
+  }
+
+  function smartPointState(style, role, roleConfig, wall, pointIndex, pointCount, axisState) {
+    const source =
+      wall?.states ??
+      wall?.state ??
+      roleConfig?.states ??
+      roleConfig?.state ??
+      style?.states?.[axisState ? "v" : "u"] ??
+      style?.stateByAxis?.[axisState ? "v" : "u"] ??
+      axisState;
+    let value = source;
+    if (typeof source === "function") {
+      value = source({ pointIndex, pointCount, wall, axis: axisState ? "v" : "u", role });
+    } else if (Array.isArray(source)) {
+      value = source[Math.min(pointIndex, source.length - 1)];
+    }
+    const state = Number(value);
+    return Number.isFinite(state) ? ((Math.round(state) % 64) + 64) % 64 : axisState;
+  }
+
+  function solveSmartWallSegment(style, wall, options = {}) {
+    if (style?.a && (wall?.roles || wall?.layers || wall?.style)) {
+      const swap = style;
+      style = wall;
+      wall = swap;
+    } else if (wall == null && style?.wall) {
+      wall = style.wall;
+      style = style.style || style;
+    }
+    if (Number.isInteger(options)) options = { wallIndex: options };
+    const wallIndex = Number.isInteger(options.wallIndex) ? options.wallIndex : 0;
+    const warnings = [];
+    const roles = smartRoleNames(style);
+    const availableRoles = roles
+      .map((role) => ({ role, config: smartRoleConfig(style, role) }))
+      .filter(({ role, config }) => {
+        if (config) return true;
+        warnings.push(smartWallWarning(role, wallIndex));
+        return false;
+      });
+    const a = finitePoint(wall?.a ?? wall?.start);
+    const rawEnd = finitePoint(wall?.b ?? wall?.end);
+    const projected = wall?.project === false || options.project === false
+      ? {
+          x: rawEnd.x,
+          y: rawEnd.y,
+          axis: Math.abs(rawEnd.y - a.y) <= Math.abs(rawEnd.x - a.x) / 2 ? "u" : "v",
+          state: (rawEnd.x - a.x) * (rawEnd.y - a.y) < 0 ? 1 : 0,
+        }
+      : projectToIsoAxis(a, rawEnd);
+    const b = { x: projected.x, y: projected.y };
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = Math.hypot(dx, dy);
+    if (length < EPSILON) {
+      warnings.push({
+        code: "zero-length-wall",
+        wallIndex,
+        message: "智能墙线长度为零",
+      });
+      return { placements: [], warnings };
+    }
+
+    const rolePitch = availableRoles.find(({ config }) => Number(config.pitch ?? config.spacing) > 0)?.config;
+    const pitch = Math.max(
+      EPSILON,
+      Number(wall?.pitch ?? wall?.spacing ?? style?.pitch ?? style?.spacing ?? rolePitch?.pitch ?? rolePitch?.spacing) || 24
+    );
+    const pointCount = Math.max(2, Math.round(length / pitch) + 1);
+    const group = String(wall?.group ?? options.group ?? `${style?.groupPrefix || "smart-wall"}-${wallIndex}`);
+    const groupName = String(wall?.groupName ?? style?.groupName ?? "智能墙体");
+    const placements = [];
+
+    for (let pointIndex = 0; pointIndex < pointCount; pointIndex++) {
+      const t = pointIndex / (pointCount - 1);
+      availableRoles.forEach(({ role, config }, roleIndex) => {
+        if (smartOpeningHits(wall, role, t, length)) return;
+        const offset = config.offset || {};
+        const x = a.x + dx * t + (Number(config.offsetX ?? offset.x) || 0);
+        const y = a.y + dy * t + (Number(config.offsetY ?? offset.y) || 0);
+        const state = smartPointState(style, role, config, wall, pointIndex, pointCount, projected.state);
+        const labelSource = config.label ?? style?.labels?.[role] ?? SMART_WALL_LABELS[role] ?? role;
+        const label = typeof labelSource === "function"
+          ? String(labelSource({ role, pointIndex, pointCount, wallIndex }))
+          : String(labelSource);
+        placements.push({
+          role,
+          x,
+          y,
+          state,
+          group,
+          groupName,
+          label,
+          __order: placements.length,
+          __roleOrder: roleIndex,
+        });
+      });
+    }
+    return {
+      placements: placements.map(({ __order, __roleOrder, ...placement }) => placement),
+      warnings,
+    };
+  }
+
+  function smartPlacementKey(placement) {
+    const x = Math.round(Number(placement.x) * 1e6);
+    const y = Math.round(Number(placement.y) * 1e6);
+    return `${placement.role}|${x}|${y}`;
+  }
+
+  function solveSmartBuilding(style, building, options = {}) {
+    if (building == null && (Array.isArray(style?.walls) || Array.isArray(style?.structure?.walls))) {
+      building = style.structure || style;
+      style = style.style || style;
+    }
+    const walls = Array.isArray(building) ? building : Array.isArray(building?.walls) ? building.walls : [];
+    const detachedOpenings = Array.isArray(building?.openings) ? building.openings : [];
+    const warnings = [];
+    const byPosition = new Map();
+    let order = 0;
+    const addPlacement = (placement) => {
+      const row = { ...placement, __order: order++ };
+      const key = smartPlacementKey(row);
+      if (!byPosition.has(key)) byPosition.set(key, row);
+    };
+    walls.forEach((wall, wallIndex) => {
+      const openings = [
+        ...(Array.isArray(wall?.openings) ? wall.openings : []),
+        ...detachedOpenings.filter((opening) => Number(opening?.wallIndex ?? opening?.wall) === wallIndex),
+      ];
+      const solved = solveSmartWallSegment(style, { ...wall, openings }, { ...options, wallIndex });
+      warnings.push(...solved.warnings);
+      solved.placements.forEach(addPlacement);
+      const a = finitePoint(wall?.a ?? wall?.start);
+      const rawEnd = finitePoint(wall?.b ?? wall?.end);
+      const projected = wall?.project === false || options.project === false
+        ? { ...rawEnd, state: Number(wall?.state) || 0 }
+        : projectToIsoAxis(a, rawEnd);
+      openings.forEach((opening, openingIndex) => {
+        const role = opening?.kind === "door" ? "door" : "window";
+        const config = smartRoleConfig(style, role);
+        if (!config) return;
+        const t = Math.max(0, Math.min(1, Number(opening?.t) || 0));
+        const offset = config.offset || {};
+        addPlacement({
+          role,
+          x: a.x + (projected.x - a.x) * t + (Number(config.offsetX ?? offset.x) || 0),
+          y: a.y + (projected.y - a.y) * t + (Number(config.offsetY ?? offset.y) || 0),
+          state: smartPointState(style, role, config, wall, openingIndex, openings.length, projected.state),
+          group: String(opening?.group || `smart-opening-${wallIndex}`),
+          groupName: String(opening?.groupName || "门窗"),
+          label: String(config.label || (role === "door" ? "门" : "窗")),
+        });
+      });
+    });
+    const endpoints = new Map();
+    walls.forEach((wall, wallIndex) => {
+      [finitePoint(wall?.a ?? wall?.start), finitePoint(wall?.b ?? wall?.end)].forEach((point) => {
+        const key = `${Math.round(point.x * 1e6)}|${Math.round(point.y * 1e6)}`;
+        const existing = endpoints.get(key) || { point, walls: [] };
+        existing.walls.push(wallIndex);
+        endpoints.set(key, existing);
+      });
+    });
+    const cornerConfig = smartRoleConfig(style, "corner");
+    if (cornerConfig) {
+      endpoints.forEach(({ point, walls: joined }) => {
+        if (joined.length < 2) return;
+        const offset = cornerConfig.offset || {};
+        addPlacement({
+          role: "corner",
+          x: point.x + (Number(cornerConfig.offsetX ?? offset.x) || 0),
+          y: point.y + (Number(cornerConfig.offsetY ?? offset.y) || 0),
+          state: Number(cornerConfig.state) || 0,
+          group: `smart-corner-${joined[0]}`,
+          groupName: String(cornerConfig.groupName || "转角"),
+          label: String(cornerConfig.label || "转角"),
+        });
+      });
+    }
+    (Array.isArray(building?.props) ? building.props : []).forEach((prop, propIndex) => {
+      const role = prop?.role === "sign" ? "sign" : "decor";
+      const config = smartRoleConfig(style, role);
+      if (!config) {
+        warnings.push(smartWallWarning(role, -1));
+        return;
+      }
+      const offset = config.offset || {};
+      addPlacement({
+        role,
+        x: Number(prop?.x) + (Number(config.offsetX ?? offset.x) || 0),
+        y: Number(prop?.y) + (Number(config.offsetY ?? offset.y) || 0),
+        state: Number(prop?.state ?? config.state) || 0,
+        group: String(prop?.group || `smart-prop-${propIndex}`),
+        groupName: String(prop?.groupName || (role === "sign" ? "招牌" : "装饰")),
+        label: String(config.label || (role === "sign" ? "招牌" : "装饰")),
+      });
+    });
+    const placements = [...byPosition.values()]
+      .sort((a, b) => {
+        const depth = Number(a.y) - Number(b.y);
+        if (Math.abs(depth) > EPSILON) return depth;
+        return a.__order - b.__order;
+      })
+      .map(({ __order, ...placement }) => placement);
+    const warningKeys = new Set();
+    return {
+      placements,
+      warnings: warnings.filter((warning) => {
+        const key = warning.code === "missing-role"
+          ? `${warning.code}|${warning.role || ""}`
+          : `${warning.code}|${warning.role || ""}|${warning.wallIndex ?? ""}`;
+        if (warningKeys.has(key)) return false;
+        warningKeys.add(key);
+        return true;
+      }),
+    };
+  }
+
+  function clampLayerInsertIndex(index, length) {
+    const len = Math.max(0, Number(length) || 0);
+    if (!Number.isInteger(index)) return len;
+    return Math.max(0, Math.min(len, index));
+  }
+
+  function resolveLayerInsertIndex(records, insert) {
+    const list = Array.isArray(records) ? records : [];
+    if (!insert || insert.kind === "front") return list.length;
+    if (insert.kind === "before") {
+      const idx = list.indexOf(insert.record);
+      return idx < 0 ? list.length : idx;
+    }
+    return list.length;
+  }
+
+  function spliceRecordsAt(records, index, added) {
+    const list = Array.isArray(records) ? records.slice() : [];
+    const rows = Array.isArray(added) ? added : [];
+    const at = clampLayerInsertIndex(index, list.length);
+    list.splice(at, 0, ...rows);
+    return {
+      records: list,
+      at,
+      indices: rows.map((_, offset) => at + offset),
+    };
+  }
+
+  function remapIndicesAfterInsert(indices, at, count) {
+    const n = Math.max(0, Number(count) || 0);
+    return (indices || []).map((index) => (index >= at ? index + n : index));
+  }
+
+  function normalizeGroupEntry(entry) {
+    if (!entry) return null;
+    if (typeof entry === "string") {
+      const id = entry.trim();
+      return id ? { id, name: "" } : null;
+    }
+    const id = String(entry.id || entry.group || "").trim();
+    if (!id) return null;
+    return { id, name: String(entry.name || entry.groupName || "") };
+  }
+
+  function recordGroupStack(record) {
+    if (!record) return [];
+    if (Array.isArray(record.groups) && record.groups.length) {
+      return record.groups.map(normalizeGroupEntry).filter(Boolean);
+    }
+    const parents = Array.isArray(record.groupParents)
+      ? record.groupParents.map(normalizeGroupEntry).filter(Boolean)
+      : [];
+    if (!record.group) return parents;
+    return parents.concat({ id: String(record.group), name: String(record.groupName || "") });
+  }
+
+  function applyGroupStack(record, stack) {
+    const next = { ...(record || {}) };
+    const entries = (stack || []).map(normalizeGroupEntry).filter(Boolean);
+    delete next.groups;
+    if (!entries.length) {
+      delete next.group;
+      delete next.groupName;
+      delete next.groupParents;
+      return next;
+    }
+    const inner = entries[entries.length - 1];
+    const parents = entries.slice(0, -1);
+    next.group = inner.id;
+    if (inner.name) next.groupName = inner.name;
+    else delete next.groupName;
+    if (parents.length) next.groupParents = parents;
+    else delete next.groupParents;
+    return next;
+  }
+
+  function recordInGroup(record, groupId) {
+    return recordGroupStack(record).some((entry) => entry.id === groupId);
+  }
+
+  function groupMemberIndices(records, groupId) {
+    const indices = [];
+    (records || []).forEach((record, index) => {
+      if (recordInGroup(record, groupId)) indices.push(index);
+    });
+    return indices;
+  }
+
+  function outermostFullySelectedGroups(records, selectedIndices) {
+    const selected = new Set(selectedIndices);
+    const candidateIds = new Set();
+    selectedIndices.forEach((index) => {
+      recordGroupStack(records[index]).forEach((entry) => candidateIds.add(entry.id));
+    });
+    const full = [];
+    candidateIds.forEach((id) => {
+      const members = groupMemberIndices(records, id);
+      if (members.length && members.every((index) => selected.has(index))) full.push(id);
+    });
+    return full.filter((id) => {
+      const members = groupMemberIndices(records, id);
+      const stack = recordGroupStack(records[members[0]]);
+      const at = stack.findIndex((entry) => entry.id === id);
+      return at >= 0 && !stack.slice(0, at).some((entry) => full.includes(entry.id));
+    });
+  }
+
+  function wrapRecordsInGroup(records, selectedIndices, group, groupName = "") {
+    const selected = new Set(selectedIndices);
+    const outer = outermostFullySelectedGroups(records, selectedIndices);
+    const parent = { id: String(group), name: String(groupName || "") };
+    return (records || []).map((record, index) => {
+      if (!selected.has(index)) return record;
+      const stack = recordGroupStack(record);
+      const keepFrom = stack.findIndex((entry) => outer.includes(entry.id));
+      if (keepFrom >= 0) {
+        return applyGroupStack(record, stack.slice(0, keepFrom).concat([parent], stack.slice(keepFrom)));
+      }
+      return applyGroupStack(record, [parent]);
+    });
+  }
+
+  function peelGroupsFromRecords(records, groupIds) {
+    const ids = new Set(groupIds);
+    return (records || []).map((record) => {
+      const stack = recordGroupStack(record).filter((entry) => !ids.has(entry.id));
+      return applyGroupStack(record, stack);
+    });
+  }
+
+  function layerInsertGroupHint(records, insert) {
+    if (insert?.group) {
+      const hint = { group: insert.group, groupName: insert.groupName || undefined };
+      if (Array.isArray(insert.groupParents) && insert.groupParents.length) {
+        hint.groupParents = insert.groupParents;
+      }
+      return hint;
+    }
+    if (insert?.kind !== "before") return null;
+    const list = Array.isArray(records) ? records : [];
+    const at = list.indexOf(insert.record);
+    if (at < 0) return null;
+    const front = insert.record;
+    const back = at > 0 ? list[at - 1] : null;
+    if (front?.group && back?.group && front.group === back.group) {
+      const parents = recordGroupStack(front).slice(0, -1);
+      const hint = {
+        group: front.group,
+        groupName: front.groupName || back.groupName || undefined,
+      };
+      if (parents.length) hint.groupParents = parents;
+      return hint;
+    }
+    return null;
+  }
+
+  function applyDeskLayers(rows, layers) {
+    if (!Array.isArray(rows) || !Array.isArray(layers) || layers.length !== rows.length) return rows;
+    return rows.map((row, index) => {
+      const extra = layers[index];
+      if (!extra || typeof extra !== "object") return row;
+      if (Number.isFinite(Number(extra.mat)) && Number(extra.mat) !== Number(row.mat)) return row;
+      const next = {
+        ...row,
+        packKey: extra.packKey || row.packKey,
+        localPackUnknown: extra.localPackUnknown != null ? !!extra.localPackUnknown : row.localPackUnknown,
+        group: extra.group || null,
+        groupName: extra.groupName || null,
+        label: extra.label || null,
+        locked: !!extra.locked,
+        hidden: extra.hidden != null ? !!extra.hidden : row.hidden,
+      };
+      if (Array.isArray(extra.groupParents) && extra.groupParents.length) {
+        next.groupParents = extra.groupParents.map(normalizeGroupEntry).filter(Boolean);
+      }
+      return next;
+    });
+  }
+
+  function remapImportedDeskGroups(rows, stamp) {
+    const prefix = String(stamp || Date.now());
+    const groupMap = new Map();
+    const remapId = (id) => {
+      const key = String(id || "");
+      if (!key) return key;
+      if (!groupMap.has(key)) groupMap.set(key, `${prefix}-import-${groupMap.size}`);
+      return groupMap.get(key);
+    };
+    return (Array.isArray(rows) ? rows : []).map((row) => {
+      const stack = recordGroupStack(row);
+      if (!stack.length) return row;
+      return applyGroupStack(
+        row,
+        stack.map((entry) => ({ id: remapId(entry.id), name: entry.name }))
+      );
+    });
+  }
+
+  function insertSpecsEqual(a, b) {
+    if (!a || !b) return false;
+    if (a.kind !== b.kind) return false;
+    if ((a.group || "") !== (b.group || "")) return false;
+    if (a.kind === "front") return true;
+    return a.record === b.record;
+  }
+
   return {
     SpatialIndex,
+    applyDeskLayers,
+    applyGroupStack,
     applySelection,
     containRect,
     contains,
     collectStampPoints,
     constrainShapeEnd,
     createViewportTransform,
+    insertSpecsEqual,
     intersects,
+    groupMemberIndices,
+    layerInsertGroupHint,
     normalizeRect,
+    outermostFullySelectedGroups,
+    peelGroupsFromRecords,
+    recordGroupStack,
+    recordInGroup,
     rectFromPoints,
+    remapImportedDeskGroups,
+    wrapRecordsInGroup,
+    remapIndicesAfterInsert,
+    resolveLayerInsertIndex,
     selectFromRect,
+    solveSmartBuilding,
+    solveSmartWallSegment,
     snapGridPoint,
     snapMove,
+    spliceRecordsAt,
+    projectToIsoAxis,
     sceneToIso,
     isoToScene,
     union,

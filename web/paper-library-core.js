@@ -20,9 +20,25 @@
   }
 
   async function contentIdFromBase64(data) {
-    const bytes = new TextEncoder().encode(String(data || ""));
-    const digest = await crypto.subtle.digest("SHA-1", bytes);
-    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 24);
+    const text = String(data || "");
+    if (global.crypto?.subtle && global.TextEncoder) {
+      const bytes = new TextEncoder().encode(text);
+      const digest = await global.crypto.subtle.digest("SHA-1", bytes);
+      return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 24);
+    }
+    // crypto.subtle is unavailable on plain HTTP in Safari/Chrome. Keep imports
+    // working on the deployed IP with a deterministic 96-bit fallback ID.
+    const seeds = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b];
+    const hashes = seeds.map((seed, lane) => {
+      let hash = seed >>> 0;
+      for (let i = lane; i < text.length; i += 3) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+        hash ^= hash >>> 13;
+      }
+      return (hash >>> 0).toString(16).padStart(8, "0");
+    });
+    return hashes.join("");
   }
 
   function sniffKind(bytes) {
@@ -266,6 +282,31 @@
     return current;
   }
 
+  function paperSelectKey(entry) {
+    return String(entry?.contentId || entry?.id || "");
+  }
+
+  function createPaperSelectControl(entry, { checked = false, onChange } = {}) {
+    const label = global.document.createElement("label");
+    label.className = "paper-card-select";
+    const input = global.document.createElement("input");
+    input.type = "checkbox";
+    input.className = "paper-card-select-input";
+    input.checked = !!checked;
+    input.setAttribute("aria-label", `选择 ${entry?.name || "图纸"}`);
+    const mark = global.document.createElement("span");
+    mark.className = "paper-card-select-mark";
+    mark.setAttribute("aria-hidden", "true");
+    const stop = (event) => event.stopPropagation();
+    label.addEventListener("click", stop);
+    label.addEventListener("pointerdown", stop);
+    input.addEventListener("change", () => {
+      if (typeof onChange === "function") onChange(!!input.checked);
+    });
+    label.append(input, mark);
+    return { label, input };
+  }
+
   function entryFromIndex(paper) {
     const name = String(paper?.name || "图纸.txt");
     const kind = resolvePaperKind(paper);
@@ -297,6 +338,8 @@
       kind: paper.kind,
       group: paper.group || "",
       data: paper.data,
+      deskLayers: Array.isArray(paper.deskLayers) ? paper.deskLayers : [],
+      deskDocument: paper.deskDocument && typeof paper.deskDocument === "object" ? paper.deskDocument : null,
     };
     return { file, bytes, data: paper.data };
   }
@@ -341,6 +384,35 @@
     };
   }
 
+  function thumbLooksLikePlaceholder(image) {
+    if (!image || !image.naturalWidth) return false;
+    try {
+      const width = 24;
+      const height = 15;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(image, 0, 0, width, height);
+      const { data } = ctx.getImageData(0, 0, width, height);
+      let green = 0;
+      let blue = 0;
+      const seen = new Set();
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        seen.add((r >> 4 << 8) | (g >> 4 << 4) | (b >> 4));
+        if (g > r + 8 && g > b && g < 160 && r < 90) green += 1;
+        if (b > r + 8 && b >= g && b < 180 && r < 90) blue += 1;
+      }
+      const pixels = width * height;
+      return (green > pixels * 0.72 || blue > pixels * 0.72) && seen.size < 22;
+    } catch {
+      return false;
+    }
+  }
+
   async function clearLibrary() {
     const response = await fetch(API, { method: "DELETE", credentials: "same-origin" });
     if (!response.ok) throw new Error(`清空图纸库失败 (${response.status})`);
@@ -368,6 +440,7 @@
     entryFromIndex,
     fileFromPaper,
     createLazyLoader,
+    thumbLooksLikePlaceholder,
     clearLibrary,
     parseSortValue,
     sortValue,
@@ -377,5 +450,7 @@
     sortedPaperEntries,
     reorderPaperCards,
     bindPaperSortSelect,
+    paperSelectKey,
+    createPaperSelectControl,
   };
 })(window);

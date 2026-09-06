@@ -60,6 +60,7 @@ const ASSET_PREFS_KEY = "manor-building-asset-prefs-v1";
 const HUD_LAYOUT_KEY = "manor-building-hud-layout-v2";
 const SHEET_LAYOUT_KEY = "manor-building-sheet-layout-v1";
 const MATERIALS_DOCK_KEY = "manor-building-materials-dock-collapsed";
+const SMART_STYLES_KEY = "manor-building-smart-styles-v1";
 const SHEET_MIN_W = 280;
 const SHEET_MIN_H = 260;
 const OBJECT_SNAP_PX = 6;
@@ -72,15 +73,18 @@ const LAYER_ROW_H = 52;
 const LAYER_WINDOW_PAD = 10;
 const SELECTION_DETAIL_LIMIT = 12;
 const SPRITE_ALPHA_HIT = 16;
+const SELECT_LIT = 0.45;
 const MARQUEE_MIN_PX = 4;
 const DRAG_PREVIEW_MAX = 32;
 const STAMP_CAP = 360;
 const STAMP_PREVIEW_MAX = 80;
 const PLACE_TOOLS = new Set(["paint", "stamp", "tile", "rect", "line", "circle", "triangle", "diamond", "ring"]);
+const SMART_TOOLS = new Set(["smart-wall"]);
+const HIDDEN_TOOLS = new Set(["smart-wall", "tile", "rect", "line", "circle", "triangle", "ring"]);
 const TOOL_INFO = {
   select: { label: "选择", hint: "点击选中 · 双击选组内单件 · 拖动移动 · 空白处圈选 · Space/中键平移" },
-  paint: { label: "纯笔刷", hint: "只铺不选 · 按贴地点连续盖，自动避开已占格子" },
-  stamp: { label: "点刷", hint: "点击盖一枚，拖着按地块格子连续盖" },
+  paint: { label: "纯笔刷", hint: "只铺不选 · 拖选中组可移动 · 空白处按贴地点连续盖" },
+  stamp: { label: "点刷", hint: "点击盖一枚 · 拖选中组可移动 · 拖着按地块格子连续盖" },
   tile: { label: "平铺", hint: "按 2:1 地块格子铺满 · Shift 正方形区域" },
   rect: { label: "矩形", hint: "按地块格子铺满矩形 · Shift 正方形" },
   line: { label: "直线", hint: "沿线贴地排开，间距跟脚印走 · Shift 锁 45°" },
@@ -88,6 +92,7 @@ const TOOL_INFO = {
   triangle: { label: "三角", hint: "按地块格子铺三角形" },
   diamond: { label: "菱形", hint: "斜向菱形铺满，贴地块 · Shift 正菱" },
   ring: { label: "描边", hint: "沿一圈按脚印间距铺 · Shift 圆圈" },
+  "smart-wall": { label: "智能建筑", hint: "拖动画墙 · 切换门窗后点墙放置 · 双指平移缩放" },
 };
 const BI = globalThis.BuildingInteractions;
 if (!BI) throw new Error("building-interactions.js 未加载");
@@ -145,6 +150,8 @@ const state = {
   layerCollapsed: new Set(),
   layerFilter: "",
   layerSelectedOnly: false,
+  layerInsert: null,
+  lastPlaceTool: "stamp",
   mobilePan: false,
   activePointers: new Map(),
   pointerGesture: null,
@@ -167,6 +174,14 @@ const state = {
   sessionDirty: false,
   designName: "",
   sourcePaper: null,
+  smartBuilder: {
+    styles: [],
+    styleId: "",
+    mode: "wall",
+    walls: [],
+    props: [],
+    warnings: [],
+  },
 };
 
 const canvas = document.getElementById("buildingView");
@@ -476,7 +491,7 @@ async function bootBuilding() {
   loadAssetPreferences();
   loadImage("/bdesign/imgs/glsbg.gif");
   const remoteSavesPromise = fetchBuildingSaves();
-  const [catalog, uidCatalog, packUids, itemIcons] = await Promise.all([
+  const [catalog, uidCatalog, packUids, itemIcons, semanticStyles] = await Promise.all([
     fetch("/api/editor-catalog").then((response) => response.json()),
     fetch("/data/building_uid_map.json")
       .then((response) => (response.ok ? response.json() : { packs: [] }))
@@ -487,12 +502,23 @@ async function bootBuilding() {
     fetch("/api/item-icons")
       .then((response) => (response.ok ? response.json() : { icons: {} }))
       .catch(() => ({ icons: {} })),
+    fetch("/data/semantic_building_styles.json")
+      .then((response) => (response.ok ? response.json() : { styles: [] }))
+      .catch(() => ({ styles: [] })),
   ]);
   state.catalog = catalog;
   state.uidCatalog = uidCatalog;
   state.packUids = packUids.mapping || {};
   state.packUidAliases = packUids.aliases || {};
   state.itemIcons = itemIcons.icons || {};
+  state.smartBuilder.styles = [
+    ...normalizeSemanticStyles(semanticStyles),
+    ...loadCustomSemanticStyles(),
+  ];
+  state.smartBuilder.styleId =
+    state.smartBuilder.styles.find((style) => style.id === "bazaar-bookshop")?.id ||
+    state.smartBuilder.styles[0]?.id ||
+    "";
   state.packs = sortThemes(catalog.building.packs.filter((pack) => pack.kind === "theme"));
   state.indexedPacks = (catalog.building.packs || []).filter(
     (pack) => pack.kind === "theme" || pack.kind === "item"
@@ -528,6 +554,7 @@ async function bootBuilding() {
     loadCustoms();
   }
   bindBuilding();
+  syncSmartBuildingUi();
   fillThemes();
   fillCategories();
   fillComponents();
@@ -608,7 +635,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=252"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=275"]);
 }
 
 function sortThemes(packs) {
@@ -1024,6 +1051,451 @@ function isPlaceTool(tool = state.tool) {
   return PLACE_TOOLS.has(tool);
 }
 
+function isSmartTool(tool = state.tool) {
+  return SMART_TOOLS.has(tool);
+}
+
+function normalizeSemanticStyles(doc) {
+  const source = Array.isArray(doc)
+    ? doc
+    : Array.isArray(doc?.styles)
+      ? doc.styles
+      : doc?.styles && typeof doc.styles === "object"
+        ? Object.entries(doc.styles).map(([id, style]) => ({ id, ...style }))
+        : [];
+  return source
+    .filter((style) => style && typeof style === "object")
+    .map((style, index) => ({
+      ...style,
+      id: String(style.id || style.key || `style-${index + 1}`),
+      name: String(style.name || style.label || style.id || `风格 ${index + 1}`),
+      roles: style.roles && typeof style.roles === "object" ? style.roles : {},
+    }));
+}
+
+function loadCustomSemanticStyles() {
+  try {
+    return normalizeSemanticStyles(JSON.parse(deskGet(SMART_STYLES_KEY) || "[]"))
+      .map((style) => ({ ...style, custom: true }));
+  } catch {
+    return [];
+  }
+}
+
+function saveCurrentMaterialToSmartStyle() {
+  const component = state.component;
+  const packKey = component?._pack?.key || state.pack?.key || "";
+  const local = Number(component?.local ?? component?.id ?? component?.no);
+  const roleName = document.getElementById("smartCustomRole")?.value || "wall.body";
+  if (!component || component.kind !== "sprite" || !packKey || !Number.isFinite(local)) {
+    appAlert("请先在右侧素材栏选择一件素材。", { title: "自定义风格" });
+    return;
+  }
+  let custom = state.smartBuilder.styles.find((style) => style.id === "custom-slot-1");
+  if (!custom) {
+    const base = currentSmartStyle() || { roles: {} };
+    custom = {
+      ...JSON.parse(JSON.stringify(base)),
+      id: "custom-slot-1",
+      name: "我的自定义风格",
+      custom: true,
+      roles: { ...(base.roles || {}) },
+    };
+    state.smartBuilder.styles.push(custom);
+  }
+  custom.roles[roleName] = {
+    label: document.querySelector(".component-card.on .component-name")?.textContent?.trim() || roleName,
+    candidates: [{
+      pack: packKey,
+      local,
+      legalStates: Array.from({ length: Math.max(1, Math.min(4, component.frames?.length || 1)) }, (_, index) => index),
+    }],
+    spacing: roleName === "wall.body" ? 28 : 32,
+    offsets: { x: 0, y: 0 },
+  };
+  const saved = state.smartBuilder.styles.filter((style) => style.custom);
+  deskSet(SMART_STYLES_KEY, JSON.stringify(saved));
+  state.smartBuilder.styleId = custom.id;
+  const select = document.getElementById("smartBuildingStyle");
+  if (select) select.replaceChildren();
+  markBuildingDirty();
+  syncSmartBuildingUi();
+}
+
+function currentSmartStyle() {
+  return (
+    state.smartBuilder.styles.find((style) => style.id === state.smartBuilder.styleId) ||
+    state.smartBuilder.styles[0] ||
+    null
+  );
+}
+
+function semanticRole(style, name) {
+  if (!style?.roles || !name) return null;
+  if (["base", "body", "cap", "corner"].includes(name) && style.roles["front-wall"] && style.roles["back-wall"]) {
+    const primary = name === "base" ? style.roles["back-wall"] : style.roles["front-wall"];
+    return {
+      ...primary,
+      label: primary.label || name,
+      candidates: [
+        ...(style.roles["front-wall"].candidates || []),
+        ...(style.roles["back-wall"].candidates || []),
+      ],
+    };
+  }
+  if (style.roles[name]) return style.roles[name];
+  const nested = name.split(".").reduce((node, key) => node?.[key], style.roles);
+  if (nested) return nested;
+  const aliases = {
+    base: ["wall.base", "wall", "back-wall", "ground"],
+    body: ["wall.body", "wall", "front-wall", "back-wall"],
+    cap: ["wall.cap", "front-wall", "roof"],
+    corner: ["wall.corner", "wall", "front-wall"],
+    door: ["door", "opening", "window"],
+    window: ["window", "opening", "door"],
+    sign: ["sign", "ornament", "decor"],
+    decor: ["decor", "ornament", "sign"],
+  };
+  return (aliases[name] || []).map((key) => style.roles[key]).find(Boolean) || null;
+}
+
+function semanticCandidate(role, desiredState = null) {
+  if (!role) return null;
+  if (Array.isArray(role)) {
+    const matched = desiredState == null ? null : role.find((candidate) => {
+      const states = candidate?.legalStates || candidate?.states;
+      return !Array.isArray(states) || states.includes(Number(desiredState));
+    });
+    return semanticCandidate(matched || role[0], desiredState);
+  }
+  if (Array.isArray(role.candidates)) return semanticCandidate(role.candidates, desiredState);
+  if (Array.isArray(role.materials)) return semanticCandidate(role.materials, desiredState);
+  if (role.material) return semanticCandidate(role.material, desiredState);
+  return role.pack && Number.isFinite(Number(role.local))
+    ? { ...role, pack: String(role.pack), local: Number(role.local) }
+    : null;
+}
+
+function smartPackUid(packKey) {
+  const row = Object.entries(state.packUids || {}).find(([, key]) => key === packKey);
+  return row ? Number(row[0]) : 0;
+}
+
+function smartConstrainEnd(start, end) {
+  if (typeof BI.projectToIsoAxis === "function") {
+    const projected = BI.projectToIsoAxis(start, end);
+    if (projected && Number.isFinite(projected.x) && Number.isFinite(projected.y)) return projected;
+  }
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const axes = [{ x: 1, y: 0.5 }, { x: 1, y: -0.5 }];
+  let best = end;
+  let bestError = Infinity;
+  axes.forEach((axis) => {
+    const den = axis.x * axis.x + axis.y * axis.y;
+    const t = (dx * axis.x + dy * axis.y) / den;
+    const point = { x: start.x + axis.x * t, y: start.y + axis.y * t };
+    const error = Math.hypot(point.x - end.x, point.y - end.y);
+    if (error < bestError) {
+      best = point;
+      bestError = error;
+    }
+  });
+  return snapGridPoint(best.x, best.y);
+}
+
+function nearestSmartWall(point, maxDistance = 34) {
+  let best = null;
+  state.smartBuilder.walls.forEach((wall, index) => {
+    const dx = wall.b.x - wall.a.x;
+    const dy = wall.b.y - wall.a.y;
+    const length2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((point.x - wall.a.x) * dx + (point.y - wall.a.y) * dy) / length2));
+    const x = wall.a.x + dx * t;
+    const y = wall.a.y + dy * t;
+    const distance = Math.hypot(point.x - x, point.y - y);
+    if (distance <= maxDistance && (!best || distance < best.distance)) best = { wall, index, t, x, y, distance };
+  });
+  return best;
+}
+
+function addSmartWall(start, end) {
+  const b = smartConstrainEnd(start, end);
+  if (Math.hypot(b.x - start.x, b.y - start.y) < 18) return;
+  const last = state.smartBuilder.walls[state.smartBuilder.walls.length - 1];
+  const a =
+    last && Math.hypot(last.b.x - start.x, last.b.y - start.y) < 16
+      ? { ...last.b }
+      : { x: Math.round(start.x), y: Math.round(start.y) };
+  state.smartBuilder.walls.push({
+    a,
+    b: { x: Math.round(b.x), y: Math.round(b.y) },
+    openings: [],
+  });
+  markBuildingDirty();
+  syncSmartBuildingUi();
+}
+
+function addSmartMarker(point) {
+  const mode = state.smartBuilder.mode;
+  if (mode === "door" || mode === "window") {
+    const nearest = nearestSmartWall(point);
+    if (!nearest) return;
+    const width = mode === "door" ? 30 : 34;
+    const openings = nearest.wall.openings || (nearest.wall.openings = []);
+    const existing = openings.find((row) => Math.abs(Number(row.t) - nearest.t) < 0.08);
+    if (existing) {
+      existing.kind = mode;
+      existing.width = width;
+      existing.w = width;
+    } else {
+      openings.push({ kind: mode, t: Math.max(0.08, Math.min(0.92, nearest.t)), width, w: width });
+    }
+  } else if (mode === "sign") {
+    state.smartBuilder.props.push({ role: "sign", x: Math.round(point.x), y: Math.round(point.y) });
+  }
+  markBuildingDirty();
+  syncSmartBuildingUi();
+}
+
+function smartBuilderSnapshot() {
+  return {
+    v: 1,
+    styleId: state.smartBuilder.styleId || "",
+    mode: state.smartBuilder.mode || "wall",
+    walls: state.smartBuilder.walls.map((wall) => ({
+      a: { x: Number(wall.a.x) || 0, y: Number(wall.a.y) || 0 },
+      b: { x: Number(wall.b.x) || 0, y: Number(wall.b.y) || 0 },
+      openings: (wall.openings || []).map((row) => ({
+        kind: row.kind === "door" ? "door" : "window",
+        t: Math.max(0, Math.min(1, Number(row.t) || 0)),
+        width: Math.max(8, Number(row.width ?? row.w) || 24),
+      })),
+    })),
+    props: state.smartBuilder.props.map((row) => ({
+      role: row.role || "sign",
+      x: Number(row.x) || 0,
+      y: Number(row.y) || 0,
+    })),
+  };
+}
+
+function restoreSmartBuilder(value) {
+  if (!value || typeof value !== "object") return;
+  const styleId = String(value.styleId || "");
+  if (state.smartBuilder.styles.some((style) => style.id === styleId)) state.smartBuilder.styleId = styleId;
+  state.smartBuilder.mode = ["wall", "door", "window", "sign"].includes(value.mode) ? value.mode : "wall";
+  state.smartBuilder.walls = (Array.isArray(value.walls) ? value.walls : [])
+    .filter((wall) => wall?.a && wall?.b)
+    .map((wall) => ({
+      a: { x: Number(wall.a.x) || 0, y: Number(wall.a.y) || 0 },
+      b: { x: Number(wall.b.x) || 0, y: Number(wall.b.y) || 0 },
+      openings: Array.isArray(wall.openings) ? wall.openings.map((row) => ({ ...row })) : [],
+    }));
+  state.smartBuilder.props = (Array.isArray(value.props) ? value.props : []).map((row) => ({ ...row }));
+}
+
+function solveSmartDraft() {
+  const style = currentSmartStyle();
+  if (!style || !state.smartBuilder.walls.length || typeof BI.solveSmartBuilding !== "function") {
+    return { placements: [], warnings: style ? [] : ["没有可用风格"] };
+  }
+  const solverStyle = {
+    ...style,
+    pitch: Number(style.pitch) || Number(style.spacing?.wall) || 28,
+    layers: ["base", "body", "cap"],
+    roles: {
+      base: { ...(semanticRole(style, "base") || {}), offsetY: Number(semanticRole(style, "base")?.offsetY) || 2 },
+      body: { ...(semanticRole(style, "body") || {}) },
+      cap: { ...(semanticRole(style, "cap") || {}), offsetY: Number(semanticRole(style, "cap")?.offsetY) || -22 },
+      corner: { ...(semanticRole(style, "corner") || {}) },
+      door: { ...(semanticRole(style, "door") || {}) },
+      window: { ...(semanticRole(style, "window") || {}) },
+      sign: { ...(semanticRole(style, "sign") || {}) },
+      decor: { ...(semanticRole(style, "decor") || {}) },
+    },
+  };
+  const input = {
+    style: solverStyle,
+    walls: state.smartBuilder.walls,
+    props: state.smartBuilder.props,
+  };
+  const solved = BI.solveSmartBuilding(input);
+  return Array.isArray(solved)
+    ? { placements: solved, warnings: [] }
+    : {
+        placements: solved?.placements || solved?.records || [],
+        warnings: (solved?.warnings || []).map((warning) => warning?.message || String(warning)),
+      };
+}
+
+function smartRoleGroup(role) {
+  const prefix = String(role || "decor").split(".")[0];
+  return {
+    wall: "墙身",
+    base: "地基",
+    cap: "檐口",
+    roof: "屋顶",
+    door: "门窗",
+    window: "门窗",
+    sign: "招牌",
+    decor: "装饰",
+  }[prefix] || (String(role).includes("base") ? "地基" : String(role).includes("cap") ? "檐口" : "墙身");
+}
+
+function smartPlacementRecord(placement, runId) {
+  const roleName = String(placement.role || placement.semanticRole || "wall.body");
+  const role = semanticRole(currentSmartStyle(), roleName);
+  const candidate =
+    semanticCandidate(placement.material || placement.candidate || role, placement.state) ||
+    semanticCandidate(semanticRole(currentSmartStyle(), role?.fallback), placement.state);
+  if (!candidate) return null;
+  const uid = smartPackUid(candidate.pack);
+  if (!uid) return null;
+  const legalStates = candidate.legalStates || candidate.states || role?.legalStates || role?.states;
+  const requestedState = Number(placement.state ?? candidate.state ?? legalStates?.[0] ?? 0);
+  const safeState = Array.isArray(legalStates) && legalStates.length && !legalStates.includes(requestedState)
+    ? Number(legalStates[0]) || 0
+    : Math.max(0, Math.min(63, Math.round(requestedState) || 0));
+  const groupName = smartRoleGroup(roleName);
+  return hydrateRecord({
+    mode: "desk",
+    x: Math.round(Number(placement.x) || 0),
+    y: Math.round(Number(placement.y) || 0),
+    mat: uid * 1000 + Number(candidate.local),
+    state: safeState,
+    packKey: candidate.pack,
+    group: `${runId}-${groupName}`,
+    groupName,
+    label: String(placement.label || role?.label || candidate.label || groupName),
+  });
+}
+
+function applySmartBuilding() {
+  const solved = solveSmartDraft();
+  const runId = `smart-${Date.now().toString(36)}`;
+  const rows = solved.placements.map((placement) => smartPlacementRecord(placement, runId)).filter(Boolean);
+  if (!rows.length) {
+    appAlert(solved.warnings[0] || "当前风格缺少可生成的语义素材。", { title: "无法生成" });
+    return;
+  }
+  pushHistory();
+  const indices = insertDeskRecords(rows);
+  setSelection(indices, { expandGroup: false });
+  state.smartBuilder.warnings = solved.warnings;
+  fillLayers();
+  renderBuilding();
+  syncSmartBuildingUi();
+}
+
+function syncSmartBuildingOverlay() {
+  const svg = document.getElementById("smartBuildingOverlay");
+  if (!svg) return;
+  const visible = state.phase === "design" && state.smartBuilder.walls.length > 0;
+  svg.hidden = !visible;
+  svg.setAttribute("viewBox", "0 0 570 550");
+  svg.replaceChildren();
+  if (!visible) return;
+  const ns = "http://www.w3.org/2000/svg";
+  state.smartBuilder.walls.forEach((wall) => {
+    const line = document.createElementNS(ns, "line");
+    line.setAttribute("class", "smart-wall-line");
+    line.setAttribute("x1", wall.a.x);
+    line.setAttribute("y1", wall.a.y);
+    line.setAttribute("x2", wall.b.x);
+    line.setAttribute("y2", wall.b.y);
+    svg.append(line);
+    [wall.a, wall.b].forEach((point) => {
+      const node = document.createElementNS(ns, "circle");
+      node.setAttribute("class", "smart-wall-node");
+      node.setAttribute("cx", point.x);
+      node.setAttribute("cy", point.y);
+      node.setAttribute("r", "5");
+      svg.append(node);
+    });
+    (wall.openings || []).forEach((opening) => {
+      const marker = document.createElementNS(ns, opening.kind === "door" ? "rect" : "circle");
+      marker.setAttribute("class", "smart-opening");
+      const x = wall.a.x + (wall.b.x - wall.a.x) * opening.t;
+      const y = wall.a.y + (wall.b.y - wall.a.y) * opening.t;
+      if (opening.kind === "door") {
+        marker.setAttribute("x", x - 6);
+        marker.setAttribute("y", y - 8);
+        marker.setAttribute("width", "12");
+        marker.setAttribute("height", "16");
+      } else {
+        marker.setAttribute("cx", x);
+        marker.setAttribute("cy", y);
+        marker.setAttribute("r", "6");
+      }
+      svg.append(marker);
+    });
+  });
+  state.smartBuilder.props.forEach((prop) => {
+    const marker = document.createElementNS(ns, "circle");
+    marker.setAttribute("class", "smart-opening");
+    marker.setAttribute("cx", prop.x);
+    marker.setAttribute("cy", prop.y);
+    marker.setAttribute("r", "7");
+    svg.append(marker);
+  });
+}
+
+function syncSmartBuildingUi() {
+  const panel = document.getElementById("smartBuildingPanel");
+  const styleSelect = document.getElementById("smartBuildingStyle");
+  if (styleSelect && !styleSelect.options.length) {
+    state.smartBuilder.styles.forEach((style) => styleSelect.add(new Option(style.name, style.id)));
+  }
+  if (styleSelect) styleSelect.value = state.smartBuilder.styleId;
+  document.querySelectorAll("[data-smart-mode]").forEach((button) => {
+    const on = button.dataset.smartMode === state.smartBuilder.mode;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  const openings = state.smartBuilder.walls.reduce((sum, wall) => sum + (wall.openings?.length || 0), 0);
+  const summary = document.getElementById("smartBuildingSummary");
+  if (summary) {
+    const warning = state.smartBuilder.warnings[0] ? ` ${state.smartBuilder.warnings[0]}` : "";
+    const mode = state.smartBuilder.mode;
+    let next = "下一步：在草地上按住鼠标拖一条斜线";
+    if (!state.smartBuilder.walls.length) {
+      next = mode === "wall"
+        ? "下一步：在草地上按住拖一条斜线，松开后出现绿虚线"
+        : "先画至少一段墙，再点绿线放门窗";
+    } else if (mode === "door" || mode === "window") {
+      next = `已画 ${state.smartBuilder.walls.length} 段墙。点绿虚线放${mode === "door" ? "门" : "窗"}，再点「生成建筑」`;
+    } else if (mode === "sign") {
+      next = "点画布放招牌位置，再点「生成建筑」";
+    } else if (state.smartBuilder.walls.length === 1) {
+      next = "已画 1 段墙。再拖一条接成 L，或直接点「生成建筑」铺素材";
+    } else {
+      next = `已画 ${state.smartBuilder.walls.length} 段墙 · ${openings} 个门窗。点「生成建筑」铺墙/基座/檐口`;
+    }
+    summary.textContent = `${next}${warning}`;
+  }
+  const apply = document.getElementById("btnSmartBuildingApply");
+  if (apply) apply.disabled = !state.smartBuilder.walls.length || !currentSmartStyle();
+  if (panel && isSmartTool()) panel.hidden = false;
+  syncSmartBuildingOverlay();
+}
+
+function openSmartBuilder() {
+  setRailTab("assets");
+  const panel = document.getElementById("smartBuildingPanel");
+  if (panel) panel.hidden = false;
+  setActiveTool("smart-wall");
+  syncSmartBuildingUi();
+  if (workspaceMode().mobile) openBuildingRail("assets");
+}
+
+function closeSmartBuilder() {
+  const panel = document.getElementById("smartBuildingPanel");
+  if (panel) panel.hidden = true;
+  if (isSmartTool()) setActiveTool("select");
+  syncSmartBuildingOverlay();
+}
+
 function isStampLike(tool = state.tool) {
   return tool === "stamp" || tool === "paint";
 }
@@ -1033,6 +1505,26 @@ function armPaintBrush() {
   // 直接选中。连续笔刷要显式切到点刷（B）等铺放工具。
   if (isPlaceTool()) return;
   if (state.tool !== "select") setActiveTool("select");
+}
+
+function selectionAsCustomBrush() {
+  const records = selectedUnlockedIndices()
+    .map((index) => state.records[index])
+    .filter((record) => record && Number(record.mat) && !record.hidden);
+  if (records.length < 2) return null;
+  const originX = Math.min(...records.map((record) => Number(record.x) || 0));
+  const originY = Math.min(...records.map((record) => Number(record.y) || 0));
+  return {
+    id: "selection-brush",
+    name: `选中 ${records.length} 件`,
+    records: records.map((record) => ({
+      mat: record.mat,
+      packKey: record.packKey || record.pack?.key,
+      state: record.state ?? record.flip ?? 0,
+      dx: (Number(record.x) || 0) - originX,
+      dy: (Number(record.y) || 0) - originY,
+    })),
+  };
 }
 
 function stampTemplate() {
@@ -1045,6 +1537,8 @@ function stampTemplate() {
     const record = state.records[state.selected[0]];
     if (record && Number(record.mat) && !record.hidden) return { type: "record", record };
   }
+  const selection = selectionAsCustomBrush();
+  if (selection) return { type: "custom", custom: selection };
   return null;
 }
 
@@ -1154,16 +1648,29 @@ function updateToolHint() {
   if (!hint) return;
   hint.hidden = false;
   if (state.phase !== "design") return;
+  const insertNote = state.layerInsert
+    ? state.layerInsert.kind === "front"
+      ? "新素材将插到最前 · Esc 取消插入点"
+      : "新素材将插到标记的图层之间 · Esc 取消插入点"
+    : "";
   if (state.tool === "select" && hasBrush()) {
-    hint.textContent = "点空白处放一件并选中 · 连续铺放按 B 切点刷";
+    hint.textContent = insertNote
+      ? `${insertNote} · 点空白处放一件`
+      : "点空白处放一件并选中 · 连续铺放按 B 切点刷";
     return;
   }
   if (isPlaceTool() && !stampTemplate()) {
-    hint.textContent = "先点右侧素材，或先点选一件";
+    hint.textContent = insertNote || "先点右侧素材，或先选中一组再铺";
+    return;
+  }
+  if (isPlaceTool() && selectionAsCustomBrush() && !state.customBrush && !state.component) {
+    hint.textContent = insertNote
+      ? `${insertNote} · 拖选中组移动 · 点空白处按组铺放`
+      : "拖选中组移动 · 点空白处按组铺放";
     return;
   }
   const extra = state.shapeStroke ? ` · ${shapeStampPoints().length} 件` : "";
-  hint.textContent = `${info.hint}${extra}`;
+  hint.textContent = insertNote ? `${insertNote} · ${info.hint}${extra}` : `${info.hint}${extra}`;
 }
 
 function packUidOf(pack = state.pack) {
@@ -1578,6 +2085,8 @@ const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 4;
 const ZOOM_STEP = 0.1;
 const VIEW_NUDGE_Y = 20;
+let lastCanvasClient = null;
+let pendingZoomAnchor = null;
 
 function fitStageToShell() {
   applyZoom();
@@ -1645,9 +2154,39 @@ function centerCanvasInShell() {
   shell.scrollTop = Math.max(0, maxY / 2 - nudge);
 }
 
-function setZoom(next, clientX, clientY) {
+function rememberCanvasClient(clientX, clientY) {
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+  lastCanvasClient = { x: clientX, y: clientY };
+}
+
+function zoomClientPoint(clientX, clientY) {
+  if (Number.isFinite(clientX) && Number.isFinite(clientY)) {
+    return { x: clientX, y: clientY };
+  }
+  if (lastCanvasClient) return lastCanvasClient;
+  const shell = document.getElementById("canvasShell");
+  if (!shell) return null;
+  const rect = shell.getBoundingClientRect();
+  return {
+    x: rect.left + shell.clientWidth / 2,
+    y: rect.top + shell.clientHeight / 2,
+  };
+}
+
+function keepSceneUnderClient(scene, clientX, clientY) {
+  const shell = document.getElementById("canvasShell");
+  if (!shell || !scene || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+  const after = viewportTransform().sceneToClient(scene.x, scene.y);
+  if (!Number.isFinite(after.x) || !Number.isFinite(after.y)) return;
+  shell.scrollLeft += after.x - clientX;
+  shell.scrollTop += after.y - clientY;
+}
+
+function setZoom(next, clientX, clientY, options = {}) {
   const shell = document.getElementById("canvasShell");
   const clamped = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)) * 100) / 100;
+  const recenter = options.recenter === true;
+  const pin = options.pin !== false && !recenter;
   if (!shell || Math.abs(clamped - state.zoom) < 0.001) {
     state.zoom = clamped;
     applyZoom();
@@ -1655,23 +2194,25 @@ function setZoom(next, clientX, clientY) {
     renderBuilding();
     return;
   }
-  const { w: sw, h: sh } = shellViewSize();
-  const gutter = panGutter(sw, sh);
-  const oldW = Math.max(sw, Math.round(sw * state.zoom));
-  const oldH = Math.max(sh, Math.round(sh * state.zoom));
-  const rect = shell.getBoundingClientRect();
-  const anchorX = clientX != null ? clientX - rect.left : shell.clientWidth / 2;
-  const anchorY = clientY != null ? clientY - rect.top : shell.clientHeight / 2;
-  const frameX = shell.scrollLeft + anchorX - gutter.x;
-  const frameY = shell.scrollTop + anchorY - gutter.y;
+  let scene = null;
+  let point = null;
+  if (pin) {
+    point = zoomClientPoint(clientX, clientY);
+    if (point) {
+      rememberCanvasClient(point.x, point.y);
+      scene = clientToContent(point.x, point.y);
+      pendingZoomAnchor = { scene, clientX: point.x, clientY: point.y };
+    }
+  } else {
+    pendingZoomAnchor = null;
+  }
   state.zoom = clamped;
   applyZoom();
-  const newW = Math.max(sw, Math.round(sw * state.zoom));
-  const newH = Math.max(sh, Math.round(sh * state.zoom));
-  const scaleX = oldW ? newW / oldW : 1;
-  const scaleY = oldH ? newH / oldH : 1;
-  shell.scrollLeft = gutter.x + frameX * scaleX - anchorX;
-  shell.scrollTop = gutter.y + frameY * scaleY - anchorY;
+  if (recenter) {
+    centerCanvasInShell();
+  } else if (scene && point) {
+    keepSceneUnderClient(scene, point.x, point.y);
+  }
   markBuildingDirty();
   renderBuilding();
 }
@@ -2887,11 +3428,26 @@ function isInCanvasBounds(record) {
 }
 
 function drawFrameImage(target, image, x, y, width, height) {
-  if (width > 0 && height > 0) {
-    target.drawImage(image, x, y, width, height);
-    return;
-  }
-  target.drawImage(image, x, y);
+  const prev = target.imageSmoothingEnabled;
+  target.imageSmoothingEnabled = false;
+  const dx = Math.round(Number(x) || 0);
+  const dy = Math.round(Number(y) || 0);
+  const dw = Math.round(Number(width) || 0);
+  const dh = Math.round(Number(height) || 0);
+  if (dw > 0 && dh > 0) target.drawImage(image, dx, dy, dw, dh);
+  else target.drawImage(image, dx, dy);
+  target.imageSmoothingEnabled = prev;
+}
+
+function drawSpriteHighlight(target, image, x, y, width, height) {
+  if (!image?.complete || !image.naturalWidth) return;
+  const prevComp = target.globalCompositeOperation;
+  const prevAlpha = target.globalAlpha;
+  target.globalCompositeOperation = "lighter";
+  target.globalAlpha = SELECT_LIT;
+  drawFrameImage(target, image, x, y, width, height);
+  target.globalCompositeOperation = prevComp;
+  target.globalAlpha = prevAlpha;
 }
 
 function isCanvasRecord(record) {
@@ -2978,9 +3534,23 @@ function drawBase() {
 function afterBaseDrawn() {
   const key = `${state.base?.no || "?"}|${canvas.width}x${canvas.height}|${Number(state.zoom) || 1}`;
   if (key === lastSceneKey) return;
+  const prevKey = lastSceneKey;
   lastSceneKey = key;
   applyZoom();
-  requestAnimationFrame(() => centerCanvasInShell());
+  if (pendingZoomAnchor) {
+    const anchor = pendingZoomAnchor;
+    pendingZoomAnchor = null;
+    requestAnimationFrame(() => {
+      keepSceneUnderClient(anchor.scene, anchor.clientX, anchor.clientY);
+      syncViewportOverlays();
+    });
+    return;
+  }
+  const prevBase = prevKey.split("|")[0];
+  const baseNo = String(state.base?.no || "?");
+  if (!prevKey || prevBase !== baseNo) {
+    requestAnimationFrame(() => centerCanvasInShell());
+  }
 }
 
 function customBrushBounds(custom) {
@@ -3006,9 +3576,11 @@ function customBrushBounds(custom) {
 
 function drawGhost() {
   if (state.shapeStroke) return;
-  if (!state.ghost || state.phase !== "design" || !hasBrush()) return;
-  if (state.customBrush) {
-    const custom = state.customBrush;
+  if (!state.ghost || state.phase !== "design") return;
+  const template = stampTemplate();
+  if (!template) return;
+  if (template.type === "custom") {
+    const custom = template.custom;
     const bounds = customBrushBounds(custom);
     const originX = Math.round(state.ghost.x - (bounds.left + bounds.right) / 2);
     const originY = Math.round(state.ghost.y - (bounds.top + bounds.bottom) / 2);
@@ -3033,12 +3605,15 @@ function drawGhost() {
     ctx.restore();
     return;
   }
-  if (!state.component || state.component.kind !== "sprite") return;
-  const component = state.component;
-  const url = spriteUrl(component, state.pack, state.brushState);
+  const record = template.record;
+  const component = template.component || recordComponent(record);
+  if (!component || component.kind !== "sprite") return;
+  const pack = template.pack || recordPack(record) || component._pack || state.pack;
+  const face = record ? record.state ?? record.flip ?? 0 : state.brushState;
+  const url = spriteUrl(component, pack, face);
   const image = loadImage(url);
-  const geometry = frameGeometry(component, state.brushState);
-  const foot = stampFootOffset(component, state.brushState);
+  const geometry = frameGeometry(component, face);
+  const foot = stampFootOffset(component, face);
   const x = Math.round(state.ghost.x - foot.x);
   const y = Math.round(state.ghost.y - foot.y);
   ctx.save();
@@ -3134,6 +3709,7 @@ function drawGuides() {
 function paintBuilding() {
   const prevW = canvas.width;
   const prevH = canvas.height;
+  ctx.imageSmoothingEnabled = false;
   drawBase();
   const layoutReady = isBaseLayoutReady();
   const offset = state.interaction?.offset || computeLiveContentOffset();
@@ -3150,7 +3726,7 @@ function paintBuilding() {
   if (state.phase === "design" && layoutReady) {
     const drag = state.dragging;
     const movingSet = drag?.movingSet;
-    const selectedSet = null;
+    const selectedSet = new Set(state.selected);
     ctx.save();
     ctx.translate(dx, dy);
     state.records.forEach((record, index) => {
@@ -3166,6 +3742,9 @@ function paintBuilding() {
       const offsetY = moving ? drag.offsetY || 0 : 0;
       if (image?.complete && image.naturalWidth) {
         drawFrameImage(ctx, image, box.x + offsetX, box.y + offsetY, box.width, box.height);
+        if (selectedSet.has(index)) {
+          drawSpriteHighlight(ctx, image, box.x + offsetX, box.y + offsetY, box.width, box.height);
+        }
       } else {
         ctx.fillStyle = "#d75d44";
         ctx.fillRect(box.hotX + offsetX - 4, box.hotY + offsetY - 4, 8, 8);
@@ -3179,6 +3758,21 @@ function paintBuilding() {
         Math.round(drag.bounds.left + (drag.offsetX || 0)),
         Math.round(drag.bounds.top + (drag.offsetY || 0))
       );
+      state.records.forEach((record, index) => {
+        if (!movingSet?.has(index) || !selectedSet.has(index) || !isCanvasRecord(record)) return;
+        const component = recordComponent(record);
+        const pack = recordPack(record) || component?._pack;
+        const image = loadImage(spriteUrl(component, pack, record.state ?? record.flip ?? 0));
+        const box = recordBox(record);
+        drawSpriteHighlight(
+          ctx,
+          image,
+          box.x + (drag.offsetX || 0),
+          box.y + (drag.offsetY || 0),
+          box.width,
+          box.height
+        );
+      });
     }
     ctx.restore();
     drawUnlitCover();
@@ -3186,25 +3780,6 @@ function paintBuilding() {
     ctx.translate(dx, dy);
     drawGhost();
     drawShapePreview();
-    if (selectedSet) {
-      state.records.forEach((record, index) => {
-        if (record.hidden || !selectedSet.has(index)) return;
-        const moving = !!movingSet?.has(index);
-        const offsetX = moving ? drag.offsetX || 0 : 0;
-        const offsetY = moving ? drag.offsetY || 0 : 0;
-        ctx.strokeStyle = record.locked ? "#9aa7b2" : "#ffed4a";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 2]);
-        const hitBox = recordHitBox(record);
-        ctx.strokeRect(
-          hitBox.x + offsetX - 1,
-          hitBox.y + offsetY - 1,
-          Math.max(8, hitBox.width + 2),
-          Math.max(8, hitBox.height + 2)
-        );
-        ctx.setLineDash([]);
-      });
-    }
     drawGroupBounds();
     drawMarquee();
     drawGuides();
@@ -3460,7 +4035,7 @@ function syncShapeOverlay() {
   const svg = document.getElementById("shapeOverlay");
   if (!svg) return;
   const stroke = state.shapeStroke;
-  if (!stroke || !isPlaceTool(stroke.tool)) {
+  if (!stroke || (!isPlaceTool(stroke.tool) && !isSmartTool(stroke.tool))) {
     svg.hidden = true;
     svg.replaceChildren();
     return;
@@ -3489,7 +4064,7 @@ function syncShapeOverlay() {
     });
     node.setAttribute("points", pts.join(" "));
     style(node, "none");
-  } else if (stroke.tool === "line") {
+  } else if (stroke.tool === "line" || stroke.tool === "smart-wall") {
     node = document.createElementNS(ns, "line");
     node.setAttribute("x1", String(a.x));
     node.setAttribute("y1", String(a.y));
@@ -3534,6 +4109,13 @@ function setRefGuidesActive(active) {
   syncViewportOverlays();
 }
 
+function syncSelectionOverlay() {
+  const selection = document.getElementById("selectionOverlay");
+  if (!selection) return;
+  selection.hidden = true;
+  selection.replaceChildren();
+}
+
 function syncViewportOverlays() {
   syncMarqueeOverlay();
   syncShapeOverlay();
@@ -3554,30 +4136,7 @@ function syncViewportOverlays() {
     }
   }
   const transform = state.interaction?.transform || viewportTransform();
-  const bounds = state.marquee
-    ? null
-    : selectionDisplayBounds(state.selected, {
-        x: state.dragging?.offsetX || 0,
-        y: state.dragging?.offsetY || 0,
-      });
-  if (!bounds) {
-    selection.hidden = true;
-  } else {
-    const frameRect = bitmapRectToFrame(bounds, transform);
-    selection.hidden = false;
-    selection.style.left = `${frameRect.left}px`;
-    selection.style.top = `${frameRect.top}px`;
-    selection.style.width = `${Math.max(1, frameRect.width)}px`;
-    selection.style.height = `${Math.max(1, frameRect.height)}px`;
-    selection.dataset.count = `${state.selected.length} 项`;
-    const badge = selection.querySelector(".selection-count");
-    if (badge) {
-      badge.textContent = `${state.selected.length} 项`;
-      badge.style.top = "";
-      badge.style.right = "";
-      badge.style.bottom = "";
-    }
-  }
+  syncSelectionOverlay();
   layoutFloatingHuds();
 
   const frame = document.getElementById("canvasFrame");
@@ -3793,7 +4352,7 @@ function pointInSelectionUnion(x, y) {
   if (state.selected.length < 2) return false;
   const union = unionBox(selectionHitBoxes(state.selected));
   if (!union) return false;
-  const pad = 4;
+  const pad = isCoarsePointer() ? 18 : 4;
   return x >= union.left - pad && x <= union.right + pad && y >= union.top - pad && y <= union.bottom + pad;
 }
 
@@ -4298,6 +4857,7 @@ function serializeSessionRecords() {
     localPackUnknown: !!record.localPackUnknown,
     group: record.group || null,
     groupName: record.groupName || null,
+    groupParents: Array.isArray(record.groupParents) ? record.groupParents : undefined,
     label: record.label || null,
     locked: !!record.locked,
     hidden: !!record.hidden,
@@ -4340,6 +4900,7 @@ function buildingSessionSnapshot() {
     baseAnchor: state.baseAnchor ? { ...state.baseAnchor } : null,
     designName: state.designName || "",
     sourcePaper: state.sourcePaper ? { ...state.sourcePaper } : null,
+    smartBuilder: smartBuilderSnapshot(),
   };
 }
 
@@ -4461,13 +5022,22 @@ async function commitDesignToPaperLibrary(mode) {
       count: report.visible,
       meta: `${report.visible} 件素材 · ${report.totals.size} 种材料`,
       unresolved: report.unresolved,
+      deskLayers: serializeDeskLayers(),
+      deskDocument: serializeDeskDocument(),
     };
     await PaperLibraryCore.persist([upload], { replace: false });
     state.designName = name;
     rememberSourcePaper({ id: ident, name, groupId: upload.group });
     updatePaperFileLabel();
     const file = new File([bytes], name);
-    file.paperMeta = { id: ident, kind: "desk", group: upload.group, data };
+    file.paperMeta = {
+      id: ident,
+      kind: "desk",
+      group: upload.group,
+      data,
+      deskLayers: upload.deskLayers,
+      deskDocument: upload.deskDocument,
+    };
     syncSavedPaperIntoLibrary(upload, file);
     const canvasEl = document.getElementById("buildingView");
     const blob = canvasEl ? await PaperLibraryCore.canvasToJpegBlob(canvasEl) : null;
@@ -4559,6 +5129,7 @@ function restoreBuildingSession(remoteSnap) {
     state.railCollapsed = !!snap.railCollapsed;
     applyRailState();
     state.layerCollapsed = new Set(Array.isArray(snap.layerCollapsed) ? snap.layerCollapsed : []);
+    restoreSmartBuilder(snap.smartBuilder);
     const keep = document.getElementById("keepFoundation");
     if (keep) keep.checked = state.keepFoundation;
 
@@ -4636,6 +5207,7 @@ function hydrateRecord(record) {
     component: null,
     group: record.group || null,
     groupName: record.groupName || null,
+    groupParents: Array.isArray(record.groupParents) ? record.groupParents : undefined,
     label: record.label || null,
     locked: !!record.locked,
     hidden: !!record.hidden || mat === 0,
@@ -4835,6 +5407,81 @@ function commitDragPositions() {
   });
 }
 
+function syncLayerInsert() {
+  const insert = state.layerInsert;
+  if (insert?.kind === "before" && !state.records.includes(insert.record)) {
+    state.layerInsert = null;
+  }
+}
+
+function layerInsertIndex() {
+  syncLayerInsert();
+  return BI.resolveLayerInsertIndex(state.records, state.layerInsert);
+}
+
+function applyLayerInsertGroup(record) {
+  if (!record || record.group) return record;
+  const hint = BI.layerInsertGroupHint(state.records, state.layerInsert);
+  if (!hint) return record;
+  writeGroupStack(record, [...(hint.groupParents || []), { id: hint.group, name: hint.groupName || "" }]);
+  return record;
+}
+
+function insertDeskRecords(rows) {
+  if (!rows.length) return [];
+  const at = layerInsertIndex();
+  state.records.splice(at, 0, ...rows);
+  return rows.map((_, offset) => at + offset);
+}
+
+function layerInsertSpecInFrontOf(index) {
+  if (!Number.isInteger(index) || index >= state.records.length - 1) return { kind: "front" };
+  return { kind: "before", record: state.records[index + 1] };
+}
+
+function layerInsertSpecForItem(item) {
+  if (item?.kind === "row") {
+    const record = state.records[item.index];
+    return record ? { kind: "before", record } : null;
+  }
+  if (item?.kind === "group") {
+    const members = (item.members || []).filter((index) => state.records[index]);
+    if (!members.length) return null;
+    if (state.layerCollapsed.has(item.groupId)) {
+      return { kind: "before", record: state.records[Math.min(...members)] };
+    }
+    return null;
+  }
+  return null;
+}
+
+function setLayerInsert(spec, { toggle = true } = {}) {
+  if (toggle && spec && BI.insertSpecsEqual(state.layerInsert, spec)) spec = null;
+  state.layerInsert = spec || null;
+  syncLayerInsertBanner();
+  updateToolHint();
+  fillLayers();
+}
+
+function clearLayerInsert() {
+  if (!state.layerInsert) return;
+  state.layerInsert = null;
+  syncLayerInsertBanner();
+  updateToolHint();
+  fillLayers();
+}
+
+function syncLayerInsertBanner() {
+  const banner = document.getElementById("layerInsertBanner");
+  const text = document.getElementById("layerInsertBannerText");
+  if (!banner) return;
+  const insert = state.layerInsert;
+  banner.hidden = !insert;
+  if (!text || !insert) return;
+  text.textContent =
+    insert.kind === "front" ? "下次放置将加到最前" : "下次放置将插入到标记的图层之间";
+}
+
 function addComponent(x, y) {
   if (state.phase !== "design") return;
   if (state.customBrush) {
@@ -4856,17 +5503,19 @@ function addComponent(x, y) {
   const foot = stampFootOffset(state.component, state.brushState);
   const pos = clampRecordPos(world.x - foot.x, world.y - foot.y);
   pushHistory();
-  state.records.push({
-    mode: "desk",
-    x: pos.x,
-    y: pos.y,
-    mat: uid,
-    state: facingAbsolute(state.component),
-    component: state.component,
-    pack,
-    packKey: pack?.key,
-  });
-  setSelection([state.records.length - 1]);
+  const indices = insertDeskRecords([
+    applyLayerInsertGroup({
+      mode: "desk",
+      x: pos.x,
+      y: pos.y,
+      mat: uid,
+      state: facingAbsolute(state.component),
+      component: state.component,
+      pack,
+      packKey: pack?.key,
+    }),
+  ]);
+  setSelection(indices);
   renderBuilding();
 }
 
@@ -4884,17 +5533,19 @@ function appendSpriteStamp(component, pack, face, cx, cy, seen, { occupied } = {
     occupied.cells.add(cell);
   }
   seen.add(key);
-  state.records.push({
-    mode: "desk",
-    x: pos.x,
-    y: pos.y,
-    mat: uid,
-    state: face,
-    component,
-    pack: pack || component._pack || state.pack,
-    packKey: (pack || component._pack || state.pack)?.key,
-  });
-  return state.records.length - 1;
+  const [index] = insertDeskRecords([
+    applyLayerInsertGroup({
+      mode: "desk",
+      x: pos.x,
+      y: pos.y,
+      mat: uid,
+      state: face,
+      component,
+      pack: pack || component._pack || state.pack,
+      packKey: (pack || component._pack || state.pack)?.key,
+    }),
+  ]);
+  return index;
 }
 
 function placeStampBatch(points, tool = state.tool) {
@@ -4939,9 +5590,13 @@ function placeStampBatch(points, tool = state.tool) {
       const cell = isoCellKey(point.x, point.y, occupied.step);
       if (occupied.cells.has(cell)) return;
       occupied.cells.add(cell);
-      const start = state.records.length;
-      placeCustomBrush(point.x, point.y, { history: false, select: false, render: false });
-      for (let i = start; i < state.records.length; i++) indices.push(i);
+      const added = placeCustomBrush(point.x, point.y, {
+        history: false,
+        select: false,
+        render: false,
+        custom: template.custom,
+      });
+      if (added?.length) indices.push(...added);
     }
   });
   if (!indices.length) {
@@ -4989,22 +5644,20 @@ function addKitComponent(kit, x, y) {
   }
   const group = `${Date.now()}-${state.records.length}`;
   pushHistory();
-  const newIndices = [];
   records.forEach((record) => {
     const pos = clampRecordPos(record.x + dx, record.y + dy);
     record.x = pos.x;
     record.y = pos.y;
     record.group = group;
-    state.records.push(record);
-    newIndices.push(state.records.length - 1);
   });
+  const newIndices = insertDeskRecords(records);
   setSelection(newIndices);
   renderBuilding();
 }
 
 function placeCustomBrush(x, y, options = {}) {
-  const custom = state.customBrush;
-  if (!custom?.records?.length) return;
+  const custom = options.custom || state.customBrush;
+  if (!custom?.records?.length) return [];
   const bounds = customBrushBounds(custom);
   let originX = x - (bounds.left + bounds.right) / 2;
   let originY = y - (bounds.top + bounds.bottom) / 2;
@@ -5015,13 +5668,13 @@ function placeCustomBrush(x, y, options = {}) {
   }
   const group = `${Date.now()}-custom-${state.records.length}`;
   if (options.history !== false) pushHistory();
-  const newIndices = [];
+  const rows = [];
   custom.records.forEach((row) => {
     const pack = packByKey(row.packKey) || state.pack;
     const component = componentByUid(row.mat, pack);
     if (!component) return;
     const pos = clampRecordPos(originX + row.dx, originY + row.dy);
-    state.records.push({
+    rows.push({
       mode: "desk",
       x: pos.x,
       y: pos.y,
@@ -5033,14 +5686,15 @@ function placeCustomBrush(x, y, options = {}) {
       group,
       groupName: custom.name,
     });
-    newIndices.push(state.records.length - 1);
   });
+  const newIndices = insertDeskRecords(rows);
   if (!newIndices.length) {
     if (options.select !== false) appAlert("自定义组件没有可用素材。");
-    return;
+    return [];
   }
   if (options.select !== false) setSelection(newIndices);
   if (options.render !== false) renderBuilding();
+  return newIndices;
 }
 
 function selectedUnlockedIndices() {
@@ -5048,7 +5702,10 @@ function selectedUnlockedIndices() {
 }
 
 function pruneCollapsedLayerGroups() {
-  const live = new Set(state.records.map((record) => record.group).filter(Boolean));
+  const live = new Set();
+  state.records.forEach((record) => {
+    BI.recordGroupStack(record).forEach((entry) => live.add(entry.id));
+  });
   state.layerCollapsed.forEach((groupId) => {
     if (!live.has(groupId)) state.layerCollapsed.delete(groupId);
   });
@@ -5179,6 +5836,7 @@ function serializeClipboardRecords(indices) {
       packKey: record.packKey || record.pack?.key || state.pack?.key,
       group: record.group || null,
       groupName: record.groupName || null,
+      groupParents: Array.isArray(record.groupParents) ? record.groupParents : undefined,
       label: record.label || null,
     };
   });
@@ -5214,19 +5872,13 @@ function pasteClipboard(atScene) {
     originX = snapped.x;
     originY = snapped.y;
   }
-  const groupMap = new Map();
-  const newIndices = [];
+  const rows = [];
   state.clipboard.forEach((row) => {
     const pack = packByKey(row.packKey) || state.pack;
     const component = componentByUid(row.mat, pack);
     if (!component) return;
-    let group = null;
-    if (row.group) {
-      if (!groupMap.has(row.group)) groupMap.set(row.group, `${Date.now()}-paste-${groupMap.size}`);
-      group = groupMap.get(row.group);
-    }
     const pos = clampRecordPos(row.x + originX, row.y + originY);
-    state.records.push({
+    rows.push({
       mode: "desk",
       x: pos.x,
       y: pos.y,
@@ -5235,12 +5887,14 @@ function pasteClipboard(atScene) {
       component,
       pack: component._pack || pack,
       packKey: (component._pack || pack)?.key || row.packKey,
-      group: group || undefined,
+      group: row.group || undefined,
       groupName: row.groupName || undefined,
+      groupParents: Array.isArray(row.groupParents) ? row.groupParents : undefined,
       label: row.label || undefined,
     });
-    newIndices.push(state.records.length - 1);
   });
+  const remapped = BI.remapImportedDeskGroups(rows, `${Date.now()}-paste`);
+  const newIndices = insertDeskRecords(remapped);
   if (!newIndices.length) return;
   state.clipboard = serializeClipboardRecords(newIndices);
   setSelection(newIndices);
@@ -5263,12 +5917,11 @@ async function groupSelected() {
   if (name == null) return;
   const group = `${Date.now()}-grp`;
   pushHistory();
-  indices.forEach((index) => {
-    state.records[index].group = group;
-    if (name.trim()) state.records[index].groupName = name.trim();
-    else delete state.records[index].groupName;
+  const wrapped = BI.wrapRecordsInGroup(state.records, indices, group, name.trim());
+  wrapped.forEach((next, index) => {
+    if (next === state.records[index]) return;
+    writeGroupStack(state.records[index], BI.recordGroupStack(next));
   });
-  state.layerCollapsed.add(group);
   setSelection(indices, { expandGroup: true });
   updateSelectionCaption();
   fillLayers();
@@ -5281,13 +5934,18 @@ async function ungroupSelected() {
     await appAlert("当前选择里没有已分组的素材。");
     return;
   }
-  const groups = new Set(indices.map((index) => state.records[index].group));
+  const outer = BI.outermostFullySelectedGroups(state.records, indices);
+  const groups = outer.length
+    ? outer
+    : [...new Set(indices.map((index) => state.records[index].group).filter(Boolean))];
+  if (!groups.length) {
+    await appAlert("当前选择里没有已分组的素材。");
+    return;
+  }
   pushHistory();
-  state.records.forEach((record) => {
-    if (record.group && groups.has(record.group)) {
-      delete record.group;
-      delete record.groupName;
-    }
+  const peeled = BI.peelGroupsFromRecords(state.records, groups);
+  peeled.forEach((next, index) => {
+    writeGroupStack(state.records[index], BI.recordGroupStack(next));
   });
   groups.forEach((groupId) => state.layerCollapsed.delete(groupId));
   setSelection(indices);
@@ -5563,6 +6221,27 @@ function cancelCanvasInteraction() {
   return true;
 }
 
+function useSelectionAsBrush() {
+  const custom = selectionAsCustomBrush();
+  if (!custom) {
+    const index = selectedUnlockedIndices()[0];
+    if (index != null) pickRecordAsBrush(state.records[index]);
+    return;
+  }
+  state.customBrush = {
+    ...custom,
+    id: `selection-${Date.now().toString(36)}`,
+  };
+  state.component = null;
+  setActiveTool(state.lastPlaceTool && isPlaceTool(state.lastPlaceTool) ? state.lastPlaceTool : "stamp");
+  updateSelectionCaption();
+  updateFacingControl();
+  fillComponents();
+  fillCustoms();
+  fillLayers();
+  renderBuilding();
+}
+
 function pickRecordAsBrush(record) {
   if (!record || !Number(record.mat)) return;
   const component = record.component || componentByUid(record.mat, record.pack || state.pack);
@@ -5604,6 +6283,7 @@ function isTypingTarget(target) {
 }
 
 function beginCanvasPointer(event, shell) {
+  rememberCanvasClient(event.clientX, event.clientY);
   if (event.button === 2) {
     event.preventDefault();
     event.stopPropagation();
@@ -5629,7 +6309,8 @@ function beginCanvasPointer(event, shell) {
       shell.classList.add("is-panning");
       return;
     }
-    if (!state._touchArmed) {
+    const skipTouchHold = isPlaceTool() || state.mobilePan || state.selected.length > 0 || isSmartTool();
+    if (!state._touchArmed && !skipTouchHold) {
       if (state.pointerGesture) return;
       const armedEvent = {
         pointerId: event.pointerId,
@@ -5710,41 +6391,69 @@ function beginCanvasPointer(event, shell) {
     return;
   }
 
-  if (isPlaceTool() && stampTemplate()) {
-    interaction.mode = "shape";
-    const origin =
-      state.snap.enabled !== false ? snapGridPoint(startScene.x, startScene.y) : startScene;
-    const points = [{ x: origin.x, y: origin.y }];
-    state.shapeStroke = {
-      tool: state.tool,
-      start: origin,
-      end: origin,
-      points,
-      transform,
-      aligned: !!event.shiftKey,
-    };
-    updateToolHint();
-    syncShapeOverlay();
-    renderBuilding();
+  if (isSmartTool()) {
+    if (state.smartBuilder.mode === "wall") {
+      interaction.mode = "shape";
+      const origin = state.snap.enabled !== false ? snapGridPoint(startScene.x, startScene.y) : startScene;
+      state.shapeStroke = {
+        tool: "smart-wall",
+        start: origin,
+        end: origin,
+        points: [origin],
+        transform,
+        aligned: true,
+      };
+      syncShapeOverlay();
+      renderBuilding();
+    } else {
+      interaction.mode = "smart-point";
+    }
     return;
   }
 
-  if (state.tool === "paint") {
-    interaction.mode = "idle";
-    return;
+  const hit = hitRecord(startScene.x, startScene.y, {
+    solid: !isCoarsePointer(),
+    includeLocked: true,
+  });
+  if (isPlaceTool()) {
+    const onSelection =
+      (hit >= 0 && state.selected.includes(hit)) ||
+      pointInSelectionUnion(startScene.x, startScene.y);
+    if (onSelection) {
+      const movable = state.selected.filter((index) => !state.records[index]?.locked);
+      interaction.mode = beginRecordDrag(startScene.x, startScene.y, movable, transform)
+        ? "move"
+        : "select";
+      updateSelectionCaption();
+      renderBuilding();
+      return;
+    }
+    if (stampTemplate()) {
+      interaction.mode = "shape";
+      const origin =
+        state.snap.enabled !== false ? snapGridPoint(startScene.x, startScene.y) : startScene;
+      const points = [{ x: origin.x, y: origin.y }];
+      state.shapeStroke = {
+        tool: state.tool,
+        start: origin,
+        end: origin,
+        points,
+        transform,
+        aligned: !!event.shiftKey,
+      };
+      updateToolHint();
+      syncShapeOverlay();
+      renderBuilding();
+      return;
+    }
   }
-
-  const hit = hitRecord(startScene.x, startScene.y, { solid: true, includeLocked: true });
-  // Ctrl（Mac 上 Cmd）承担多选；Shift 保留给拖动轴向锁定与画笔约束。
-  const operation = event.ctrlKey || event.metaKey ? "toggle" : "replace";
+  // Ctrl（Mac 上 Cmd）承担累加多选；Shift 保留给拖动轴向锁定与画笔约束。
+  const operation = event.ctrlKey || event.metaKey ? "add" : "replace";
   if (hit >= 0) {
     clearBrushHighlight();
     if (operation !== "replace") {
       const selected = new Set(baseSelection);
-      if (operation === "toggle") {
-        if (selected.has(hit)) selected.delete(hit);
-        else selected.add(hit);
-      } else selected.add(hit);
+      selected.add(hit);
       setSelection([...selected]);
       interaction.mode = "select";
     } else {
@@ -5793,6 +6502,7 @@ function beginCanvasPointer(event, shell) {
 }
 
 function moveCanvasPointer(event, shell) {
+  rememberCanvasClient(event.clientX, event.clientY);
   if (event.pointerType === "touch" && state.activePointers.has(event.pointerId)) {
     event.preventDefault();
     state.activePointers.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
@@ -5806,6 +6516,11 @@ function moveCanvasPointer(event, shell) {
       shell.scrollTop -= (midY - state.pointerGesture.midY);
       state.pointerGesture.midX = midX;
       state.pointerGesture.midY = midY;
+      if (pendingZoomAnchor) {
+        pendingZoomAnchor.scene = clientToContent(midX, midY);
+        pendingZoomAnchor.clientX = midX;
+        pendingZoomAnchor.clientY = midY;
+      }
       syncViewportOverlays();
       return;
     }
@@ -5862,6 +6577,9 @@ function moveCanvasPointer(event, shell) {
         if (state.shapeStroke.points.length < STAMP_CAP) state.shapeStroke.points.push(point);
       }
       state.shapeStroke.end = point;
+    } else if (state.shapeStroke.tool === "smart-wall") {
+      const raw = interaction.transform.clientToScene(event.clientX, event.clientY);
+      state.shapeStroke.end = smartConstrainEnd(state.shapeStroke.start, raw);
     } else {
       state.shapeStroke.end = currentShapeEnd(event) || state.shapeStroke.end;
     }
@@ -5925,7 +6643,10 @@ function finishCanvasPointer(event, shell, cancelled = false) {
     const stroke = state.shapeStroke;
     state.shapeStroke = null;
     syncShapeOverlay();
-    if (stroke) placeStampBatch(shapeStampPoints(stroke), stroke.tool);
+    if (stroke?.tool === "smart-wall") addSmartWall(stroke.start, stroke.end);
+    else if (stroke) placeStampBatch(shapeStampPoints(stroke), stroke.tool);
+  } else if (interaction.mode === "smart-point") {
+    addSmartMarker(interaction.startScene);
   } else if (interaction.mode === "move") {
     commitRecordDrag();
   }
@@ -6284,12 +7005,20 @@ function layerLabel(record, component) {
   return `mat ${record?.mat ?? "?"}`;
 }
 
+function writeGroupStack(record, stack) {
+  const next = BI.applyGroupStack(record, stack);
+  if (next.group) record.group = next.group;
+  else delete record.group;
+  if (next.groupName) record.groupName = next.groupName;
+  else delete record.groupName;
+  if (next.groupParents) record.groupParents = next.groupParents;
+  else delete record.groupParents;
+  delete record.groups;
+  return record;
+}
+
 function groupMemberIndices(groupId) {
-  const indices = [];
-  state.records.forEach((record, index) => {
-    if (record.group === groupId) indices.push(index);
-  });
-  return indices;
+  return BI.groupMemberIndices(state.records, groupId);
 }
 
 function toggleGroupVisibility(groupId) {
@@ -6506,22 +7235,43 @@ function buildGroupThumb(memberIndices) {
   return wrap;
 }
 
-function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText) {
-  const sample = state.records[memberIndices[0]];
-  const groupName = sample?.groupName || "未命名组";
+function groupDisplayName(groupId, memberIndices) {
+  for (const index of memberIndices || []) {
+    const entry = BI.recordGroupStack(state.records[index]).find((item) => item.id === groupId);
+    if (entry?.name) return entry.name;
+  }
+  return "未命名组";
+}
+
+function groupChildSummary(groupId, memberIndices) {
+  const childGroups = new Set();
+  (memberIndices || []).forEach((index) => {
+    const stack = BI.recordGroupStack(state.records[index]);
+    const at = stack.findIndex((entry) => entry.id === groupId);
+    if (at >= 0 && stack[at + 1]) childGroups.add(stack[at + 1].id);
+  });
+  if (childGroups.size) return `${childGroups.size} 个组 · ${memberIndices.length} 个图层`;
+  return `${memberIndices.length} 个图层`;
+}
+
+function applyLayerDepth(row, depth, extraColumns) {
+  row.style.setProperty("--layer-depth", String(Math.max(0, depth)));
+  if (depth > 0) {
+    row.classList.add("is-nested");
+    const indent = document.createElement("span");
+    indent.className = "layer-indent";
+    row.appendChild(indent);
+  }
+  if (extraColumns) row.style.gridTemplateColumns = extraColumns;
+}
+
+function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText, depth = 0) {
+  const groupName = groupDisplayName(groupId, memberIndices);
   const collapsed = state.layerCollapsed.has(groupId);
   const allHidden = memberIndices.every((index) => state.records[index].hidden);
   const allLocked = memberIndices.every((index) => state.records[index].locked);
   const allSelected = memberIndices.length > 0 && memberIndices.every((index) => selectedSet.has(index));
   const someSelected = !allSelected && memberIndices.some((index) => selectedSet.has(index));
-  const groupHit = !filterText || `${groupName}`.toLowerCase().includes(filterText);
-  const memberHit = !filterText || memberIndices.some((index) => {
-    const record = state.records[index];
-    const component = record.component || componentByUid(record.mat, record.pack || state.pack);
-    return layerLabel(record, component).toLowerCase().includes(filterText);
-  });
-  if (filterText && !groupHit && !memberHit) return { shown: false, forceChildren: false };
-
   const row = document.createElement("div");
   row.className =
     "layer-row is-group" +
@@ -6548,12 +7298,16 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
   const thumb = buildGroupThumb(memberIndices);
   const name = document.createElement("span");
   name.className = "layer-name";
-  name.innerHTML = `${groupName}<small>${memberIndices.length} 个图层</small>`;
+  name.innerHTML = `${groupName}<small>${groupChildSummary(groupId, memberIndices)}</small>`;
   const lock = createLayerLockButton(allLocked, () => toggleGroupLock(groupId));
 
-  row.style.gridTemplateColumns = isCoarsePointer()
-    ? "44px 44px 40px minmax(0,1fr) 44px"
-    : "22px 24px 36px minmax(0,1fr) 28px";
+  applyLayerDepth(
+    row,
+    depth,
+    isCoarsePointer()
+      ? (depth ? "14px 44px 44px 40px minmax(0,1fr) 44px" : "44px 44px 40px minmax(0,1fr) 44px")
+      : (depth ? "16px 22px 24px 36px minmax(0,1fr) 28px" : "22px 24px 36px minmax(0,1fr) 28px")
+  );
   row.append(twist, eye, thumb, name, lock);
 
   row.onclick = (event) => {
@@ -6586,16 +7340,19 @@ function appendGroupHeader(list, groupId, memberIndices, selectedSet, filterText
     if (!trimmed) return;
     pushHistory();
     memberIndices.forEach((index) => {
-      state.records[index].groupName = trimmed;
+      const stack = BI.recordGroupStack(state.records[index]).map((entry) =>
+        entry.id === groupId ? { ...entry, name: trimmed } : entry
+      );
+      writeGroupStack(state.records[index], stack);
     });
     fillLayers();
     updateSelectionCaption();
   };
   list.appendChild(row);
-  return { shown: true, forceChildren: groupHit && !!filterText };
+  return { shown: true, forceChildren: !!filterText };
 }
 
-function appendLayerRow(list, index, selectedSet, filterText, asChild) {
+function appendLayerRow(list, index, selectedSet, filterText, asChild, depth = 0) {
   const record = state.records[index];
   const component = recordComponent(record);
   const pack = recordPack(record) || component?._pack;
@@ -6609,7 +7366,7 @@ function appendLayerRow(list, index, selectedSet, filterText, asChild) {
   const row = document.createElement("div");
   row.className =
     "layer-row" +
-    (asChild ? " is-child" : "") +
+    (asChild || depth ? " is-child" : "") +
     (selectedSet.has(index) ? " on" : "") +
     (record.locked ? " locked" : "") +
     (record.hidden ? " is-hidden" : "");
@@ -6617,11 +7374,7 @@ function appendLayerRow(list, index, selectedSet, filterText, asChild) {
   row.setAttribute("role", "option");
   row.setAttribute("aria-selected", selectedSet.has(index) ? "true" : "false");
 
-  if (asChild) {
-    const indent = document.createElement("span");
-    indent.className = "layer-indent";
-    row.appendChild(indent);
-  }
+  if (asChild || depth) applyLayerDepth(row, Math.max(depth, asChild ? 1 : 0));
 
   const eye = createLayerEyeButton(!!record.hidden, () => {
     record.hidden = !record.hidden;
@@ -6670,6 +7423,25 @@ function appendLayerRow(list, index, selectedSet, filterText, asChild) {
   return true;
 }
 
+function appendLayerInsertSlot(list, spec, label) {
+  if (!spec) return;
+  const wrap = document.createElement("div");
+  wrap.className = "layer-insert" + (BI.insertSpecsEqual(state.layerInsert, spec) ? " is-on" : "");
+  const hit = document.createElement("button");
+  hit.type = "button";
+  hit.className = "layer-insert-hit";
+  hit.title = label;
+  hit.setAttribute("aria-label", label);
+  hit.setAttribute("aria-pressed", wrap.classList.contains("is-on") ? "true" : "false");
+  hit.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setLayerInsert(spec);
+  };
+  wrap.appendChild(hit);
+  list.appendChild(wrap);
+}
+
 function bindLayerContextMenu(row, indices) {
   row.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -6691,30 +7463,46 @@ function collectLayerItems(selectedSet, filterText) {
   const items = [];
   const shownGroups = new Set();
   const forceGroupChildren = new Map();
+  const collapsedSkip = new Set();
   for (let index = state.records.length - 1; index >= 0; index--) {
     if (state.layerSelectedOnly && !selectedSet.has(index)) continue;
     const record = state.records[index];
     if (Number(record.mat) === 0 || isNativeDeskHiddenComponent(recordComponent(record))) continue;
-    const groupId = record.group || null;
-    if (groupId) {
-      if (!shownGroups.has(groupId)) {
-        shownGroups.add(groupId);
-        const members = groupMemberIndices(groupId).filter(
-          (memberIndex) => !state.layerSelectedOnly || selectedSet.has(memberIndex)
-        );
-        const header = measureGroupHeader(groupId, members, filterText);
-        if (header.shown) items.push({ kind: "group", groupId, members, filterText });
-        forceGroupChildren.set(groupId, header.forceChildren);
-      }
-      if (state.layerCollapsed.has(groupId)) continue;
-      const childFilter = forceGroupChildren.get(groupId) ? "" : filterText;
-      if (layerRowVisible(index, childFilter)) {
-        items.push({ kind: "row", index, asChild: true, filterText: childFilter });
+    const stack = BI.recordGroupStack(record);
+    if (!stack.length) {
+      if (layerRowVisible(index, filterText)) {
+        items.push({ kind: "row", index, depth: 0, asChild: false, filterText });
       }
       continue;
     }
-    if (layerRowVisible(index, filterText)) {
-      items.push({ kind: "row", index, asChild: false, filterText });
+    let skipped = false;
+    for (let depth = 0; depth < stack.length; depth++) {
+      const entry = stack[depth];
+      if (collapsedSkip.has(entry.id)) {
+        skipped = true;
+        break;
+      }
+      if (!shownGroups.has(entry.id)) {
+        shownGroups.add(entry.id);
+        const members = groupMemberIndices(entry.id).filter(
+          (memberIndex) => !state.layerSelectedOnly || selectedSet.has(memberIndex)
+        );
+        const header = measureGroupHeader(entry.id, members, filterText);
+        forceGroupChildren.set(entry.id, header.forceChildren);
+        if (header.shown) {
+          items.push({ kind: "group", groupId: entry.id, members, depth, filterText });
+        }
+        if (state.layerCollapsed.has(entry.id)) {
+          collapsedSkip.add(entry.id);
+          skipped = true;
+          break;
+        }
+      }
+    }
+    if (skipped) continue;
+    const childFilter = stack.some((entry) => forceGroupChildren.get(entry.id)) ? "" : filterText;
+    if (layerRowVisible(index, childFilter)) {
+      items.push({ kind: "row", index, depth: stack.length, asChild: true, filterText: childFilter });
     }
   }
   return items;
@@ -6727,14 +7515,17 @@ function layerRowVisible(index, filterText) {
   const pack = recordPack(record) || component?._pack;
   const label = layerLabel(record, component);
   const packName = pack?.name || pack?.key || "";
-  const hay = `${label} ${packName} ${record.groupName || ""}`.toLowerCase();
+  const groupNames = BI.recordGroupStack(record).map((entry) => entry.name || "").join(" ");
+  const hay = `${label} ${packName} ${record.groupName || ""} ${groupNames}`.toLowerCase();
   return hay.includes(filterText);
 }
 
 function measureGroupHeader(groupId, memberIndices, filterText) {
-  const sample = state.records[memberIndices[0]];
-  const groupName = sample?.groupName || "未命名组";
-  const groupHit = !filterText || `${groupName}`.toLowerCase().includes(filterText);
+  const groupName = groupDisplayName(groupId, memberIndices);
+  const nestedNames = (memberIndices || [])
+    .flatMap((index) => BI.recordGroupStack(state.records[index]).map((entry) => entry.name || ""))
+    .join(" ");
+  const groupHit = !filterText || `${groupName} ${nestedNames}`.toLowerCase().includes(filterText);
   const memberHit =
     !filterText ||
     memberIndices.some((index) => {
@@ -6791,13 +7582,23 @@ function paintLayerWindow() {
     topPad.style.height = `${start * rowH}px`;
     fragment.appendChild(topPad);
   }
+  if (start === 0) {
+    appendLayerInsertSlot(fragment, { kind: "front" }, "在最前插入");
+  } else {
+    appendLayerInsertSlot(
+      fragment,
+      layerInsertSpecForItem(items[start - 1]),
+      "在此之间插入"
+    );
+  }
   for (let i = start; i < end; i++) {
     const item = items[i];
     if (item.kind === "group") {
-      appendGroupHeader(fragment, item.groupId, item.members, selectedSet, item.filterText);
+      appendGroupHeader(fragment, item.groupId, item.members, selectedSet, item.filterText, item.depth || 0);
     } else {
-      appendLayerRow(fragment, item.index, selectedSet, item.filterText, item.asChild);
+      appendLayerRow(fragment, item.index, selectedSet, item.filterText, item.asChild, item.depth || 0);
     }
+    appendLayerInsertSlot(fragment, layerInsertSpecForItem(item), "在此层下方插入");
   }
   if (virtual) {
     const botPad = document.createElement("div");
@@ -6831,9 +7632,11 @@ function bindLayerListScroll() {
 function fillLayers() {
   const list = document.getElementById("layerList");
   if (!list) return;
+  syncLayerInsert();
   const selectedSet = new Set(state.selected);
   const filterText = (state.layerFilter || "").trim().toLowerCase();
   layerItemsCache = state.records.length ? collectLayerItems(selectedSet, filterText) : [];
+  syncLayerInsertBanner();
   if (state.railTab !== "layers") return;
   bindLayerListScroll();
   if (state.selected.length && !state.dragging && !state.marquee) {
@@ -6876,7 +7679,7 @@ function revealSelection() {
       Math.min(sw / ((bounds.width + pad) * fit), sh / ((bounds.height + pad) * fit))
     )
   );
-  if (fitZoom < state.zoom - 0.02) setZoom(fitZoom);
+  if (fitZoom < state.zoom - 0.02) setZoom(fitZoom, null, null, { pin: false });
   requestAnimationFrame(() => {
     const transform = viewportTransform();
     const center = transform.sceneToClient(
@@ -6902,9 +7705,11 @@ function zoomActualSize() {
 
 function setActiveTool(tool) {
   if (tool === "diamond") tool = "rect";
-  const next = PLACE_TOOLS.has(tool) || tool === "select" ? tool : "select";
+  if (HIDDEN_TOOLS.has(tool)) tool = SMART_TOOLS.has(tool) ? "select" : "stamp";
+  const next = PLACE_TOOLS.has(tool) || SMART_TOOLS.has(tool) || tool === "select" ? tool : "select";
   state.tool = next;
-  if (!isPlaceTool()) state.shapeStroke = null;
+  if (!isPlaceTool() && !isSmartTool()) state.shapeStroke = null;
+  if (isPlaceTool()) state.lastPlaceTool = state.tool;
   document.querySelectorAll("[data-tool]").forEach((button) => {
     const active = button.dataset.tool === state.tool;
     button.classList.toggle("on", active);
@@ -6918,20 +7723,23 @@ function setActiveTool(tool) {
     const activeName = document.querySelector(`#canvasToolrail [data-tool="${state.tool}"] .tool-name`);
     if (label && activeName) label.textContent = activeName.textContent;
   }
+  setMobileToolFamily(isPlaceTool() || isSmartTool() ? "brush" : "select", { activate: false });
   updateToolHint();
   syncShapeOverlay();
+  syncSmartBuildingUi();
 }
 
 const COMMANDS = [
   { id: "selectTool", label: "选择工具", shortcut: "V", run: () => setActiveTool("select") },
   { id: "paintTool", label: "纯笔刷", shortcut: "N", run: () => setActiveTool("paint") },
   { id: "stampTool", label: "点刷铺放", shortcut: "B", run: () => setActiveTool("stamp") },
-  { id: "tileTool", label: "平铺铺放", shortcut: "T", run: () => setActiveTool("tile") },
-  { id: "rectTool", label: "矩形铺放", shortcut: "U", run: () => setActiveTool("rect") },
-  { id: "lineTool", label: "直线 / 斜线铺放", shortcut: "L", run: () => setActiveTool("line") },
-  { id: "circleTool", label: "圆形铺放", shortcut: "O", run: () => setActiveTool("circle") },
-  { id: "triangleTool", label: "三角形铺放", shortcut: "I", run: () => setActiveTool("triangle") },
-  { id: "ringTool", label: "一圈描边", shortcut: "G", run: () => setActiveTool("ring") },
+  { id: "tileTool", label: "平铺铺放", shortcut: "T", hidden: true, run: () => setActiveTool("tile") },
+  { id: "rectTool", label: "矩形铺放", shortcut: "U", hidden: true, run: () => setActiveTool("rect") },
+  { id: "lineTool", label: "直线 / 斜线铺放", shortcut: "L", hidden: true, run: () => setActiveTool("line") },
+  { id: "circleTool", label: "圆形铺放", shortcut: "O", hidden: true, run: () => setActiveTool("circle") },
+  { id: "triangleTool", label: "三角形铺放", shortcut: "I", hidden: true, run: () => setActiveTool("triangle") },
+  { id: "ringTool", label: "一圈描边", shortcut: "G", hidden: true, run: () => setActiveTool("ring") },
+  { id: "brushFromSelection", label: "选中项用作笔刷", shortcut: "Shift+B", run: useSelectionAsBrush },
   { id: "undo", label: "撤销", shortcut: "Ctrl+Z", run: undo },
   { id: "redo", label: "重做", shortcut: "Ctrl+Y / Ctrl+Shift+Z", run: redo },
   { id: "selectAll", label: "全选素材", shortcut: "Ctrl+A", run: selectAllRecords },
@@ -6960,7 +7768,7 @@ const COMMANDS = [
   { id: "distributeX", label: "水平分布", shortcut: "Alt+Shift+H", run: () => alignSelection("distributeX") },
   { id: "distributeY", label: "垂直分布", shortcut: "Alt+Shift+V", run: () => alignSelection("distributeY") },
   { id: "focus", label: "聚焦选中", shortcut: "F", run: focusSelection },
-  { id: "fit", label: "适应画布", shortcut: "0", run: () => setZoom(1) },
+  { id: "fit", label: "适应画布", shortcut: "0", run: () => setZoom(1, null, null, { recenter: true }) },
   { id: "actual", label: "画布 100%", shortcut: "1", run: zoomActualSize },
   { id: "marqueeTouch", label: "圈选：碰到就选", shortcut: "M", run: () => setMarqueeMode("touch") },
   { id: "marqueeContain", label: "圈选：完整包含", shortcut: "Shift+M", run: () => setMarqueeMode("contain") },
@@ -6975,6 +7783,7 @@ const COMMANDS = [
     shortcut: "Ctrl+S",
     run: () => saveDesignNow().catch((error) => console.warn(error)),
   },
+  { id: "imageBuilding", label: "图片转建筑", shortcut: "", run: () => pickImageBuilding() },
 ];
 const SHORTCUT_NOTES = [
   { label: "多选 / 取消多选", shortcut: "Ctrl+点击" },
@@ -6986,8 +7795,7 @@ const SHORTCUT_NOTES = [
   { label: "右键拖：平移画布；单击：菜单", shortcut: "右键" },
   { label: "平移画布", shortcut: "Space+左键 / 中键" },
   { label: "圈选碰到 / 完整包含", shortcut: "M / Shift+M" },
-  { label: "点刷 / 平铺 / 矩形 / 直线", shortcut: "B / T / U / L" },
-  { label: "圆 / 三角 / 描边", shortcut: "O / I / G" },
+  { label: "点刷 / 纯笔刷", shortcut: "B / N" },
   { label: "成组 / 拆组", shortcut: "C / Ctrl+Shift+G" },
   { label: "到底 / 下移 / 上移 / 到顶", shortcut: "A / S / W / D" },
   { label: "图层循环（四层）", shortcut: "Z / X" },
@@ -7241,6 +8049,9 @@ function openCanvasContextMenu(client, scene) {
   if (source && Number(source.mat)) {
     items.push({ label: "以此为笔刷", run: () => pickRecordAsBrush(source) });
   }
+  if (unlocked.length >= 2) {
+    items.push({ label: "选中项用作笔刷", run: useSelectionAsBrush });
+  }
   if (selected.length) {
     items.push("sep");
     items.push({ label: "转向", shortcut: "R", disabled: !unlocked.length, run: () => executeCommand("flip") });
@@ -7258,6 +8069,14 @@ function openCanvasContextMenu(client, scene) {
     items.push({ label: "上移一层", shortcut: "W", disabled: !unlocked.length, run: () => executeCommand("up") });
     items.push({ label: "到底层", shortcut: "A", disabled: !unlocked.length, run: () => executeCommand("bottom") });
     items.push({ label: "到顶层", shortcut: "D", disabled: !unlocked.length, run: () => executeCommand("top") });
+    items.push({
+      label: "在此层上方插入",
+      run: () => setLayerInsert(layerInsertSpecInFrontOf(selected[selected.length - 1]), { toggle: false }),
+    });
+    items.push({
+      label: "在此层下方插入",
+      run: () => setLayerInsert({ kind: "before", record: state.records[selected[selected.length - 1]] }, { toggle: false }),
+    });
     items.push({ label: "图层向后循环", shortcut: "Z", disabled: !unlocked.length, run: () => executeCommand("layerBack") });
     items.push({ label: "图层向前循环", shortcut: "X", disabled: !unlocked.length, run: () => executeCommand("layerFront") });
     items.push("sep");
@@ -7335,7 +8154,7 @@ function fillCommandList() {
   if (!list) return;
   const query = (input?.value || "").trim().toLowerCase();
   list.replaceChildren();
-  COMMANDS.filter((command) => !query || `${command.label} ${command.shortcut}`.toLowerCase().includes(query))
+  COMMANDS.filter((command) => !command.hidden && (!query || `${command.label} ${command.shortcut}`.toLowerCase().includes(query)))
     .forEach((command, index) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -7357,7 +8176,7 @@ function fillCommandList() {
 function fillShortcutHelp() {
   const grid = document.getElementById("shortcutGrid");
   if (!grid || grid.childElementCount) return;
-  [...COMMANDS.filter((command) => command.shortcut), ...SHORTCUT_NOTES].forEach((command) => {
+  [...COMMANDS.filter((command) => command.shortcut && !command.hidden), ...SHORTCUT_NOTES].forEach((command) => {
     const row = document.createElement("div");
     row.className = "shortcut-row";
     const label = document.createElement("span");
@@ -7398,7 +8217,7 @@ function setMobileToolsOpen(open) {
   syncBuildingBackdrop();
 }
 
-function setMobileToolFamily(family) {
+function setMobileToolFamily(family, { activate = true } = {}) {
   state.mobileToolFamily = family === "brush" ? "brush" : "select";
   document.querySelectorAll("[data-mobile-tool-family]").forEach((button) => {
     const active = button.dataset.mobileToolFamily === state.mobileToolFamily;
@@ -7409,6 +8228,12 @@ function setMobileToolFamily(family) {
   if (dock) dock.dataset.mobileToolFamily = state.mobileToolFamily;
   const title = document.getElementById("buildingToolSheetTitle");
   if (title) title.textContent = state.mobileToolFamily === "brush" ? "工具 · 绘制" : "工具 · 选择";
+  if (!activate) return;
+  if (state.mobileToolFamily === "brush" && !isPlaceTool()) {
+    setActiveTool(state.lastPlaceTool || "stamp");
+  } else if (state.mobileToolFamily === "select" && isPlaceTool()) {
+    setActiveTool("select");
+  }
 }
 
 function syncBuildingBackdrop() {
@@ -7781,7 +8606,9 @@ function openCurrentPaperPreview() {
   const unresolved = state.records.filter(
     (record) => isCanvasRecord(record) && !recordComponent(record)
   ).length;
-  const groups = new Set(state.records.map((record) => record.group).filter(Boolean)).size;
+  const groups = new Set(
+    state.records.flatMap((record) => BI.recordGroupStack(record).map((entry) => entry.id))
+  ).size;
   const footprint = state.base?.put || state.base?.footprint;
   const footprintText = Array.isArray(footprint)
     ? footprint.join("×")
@@ -7881,16 +8708,22 @@ async function paintPaperThumbnail(target, documentData, options = {}) {
   if (documentData.kind === "terrain") {
     const stamps = documentData.stamps || [];
     const size = Math.max(1, Number(documentData.size) || 1);
-    stamps.slice(0, 400).forEach((stamp) => {
-      const x = 10 + (Number(stamp.x) || 0) / size * (width - 20);
-      const y = 10 + (Number(stamp.y) || 0) / size * (height - 20);
-      c.fillStyle = "rgba(238, 245, 234, 0.9)";
-      c.fillRect(x, y, 3, 3);
+    const pad = Math.max(8, Math.round(Math.min(width, height) * 0.06));
+    const fit = Math.min((width - pad * 2) / size, (height - pad * 2) / size);
+    const mw = size * fit;
+    const mh = size * fit;
+    const ox = (width - mw) / 2;
+    const oy = (height - mh) / 2;
+    c.fillStyle = Number(documentData.mapflag) ? "#7a5a28" : "#1a2a18";
+    c.fillRect(0, 0, width, height);
+    stamps.slice(0, 1200).forEach((stamp) => {
+      const x = ox + (Number(stamp.x) || 0) * fit;
+      const y = oy + (Number(stamp.y) || 0) * fit;
+      c.fillStyle = "rgba(238, 245, 234, 0.88)";
+      c.fillRect(x, y, Math.max(1.5, fit * 3), Math.max(1.5, fit * 1.5));
     });
-    c.fillStyle = "#eef5ea";
-    c.font = "12px sans-serif";
-    c.textAlign = "center";
-    c.fillText(`${size} 格 · ${stamps.length} 地块`, width / 2, height - 14);
+    c.strokeStyle = "rgba(201,234,236,0.85)";
+    c.strokeRect(ox + 0.5, oy + 0.5, mw - 1, mh - 1);
     return;
   }
   if (!rows.length) {
@@ -7947,6 +8780,7 @@ const batchLibrary = {
   failed: 0,
   skippedDup: 0,
   skippedKind: 0,
+  selectedIds: new Set(),
 };
 
 const PAPER_LIBRARY_DESK = "building";
@@ -7955,7 +8789,9 @@ const PAPER_LIBRARY_STORE = "papers";
 
 function openPaperLibraryDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(PAPER_LIBRARY_DB, 1);
+    const user = String(window.deskUser || "").trim();
+    const dbName = user ? `${PAPER_LIBRARY_DB}-${encodeURIComponent(user)}` : PAPER_LIBRARY_DB;
+    const req = indexedDB.open(dbName, 1);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(PAPER_LIBRARY_STORE)) {
@@ -8074,6 +8910,7 @@ function entryFromPaperCache(cached, file, id) {
     contentId: cached.contentId || "",
     file,
     documentData: cached.documentData,
+    serverHydrated: false,
     name: cached.name,
     search: cached.search || String(cached.name || "").toLowerCase(),
     kind: cached.kind,
@@ -8170,6 +9007,7 @@ function setPaperLibraryOpen(open) {
   if (open) {
     syncPaperLibraryEmpty();
     applyPaperLibraryFilter();
+    syncPaperLibraryBatchBar();
     updatePaperLibraryStatus();
   }
   if (!open) syncBuildingRailAccessibility();
@@ -8210,6 +9048,7 @@ async function clearServerPaperLibrary() {
   batchLibrary.groups = [];
   batchLibrary.kindFilter = "all";
   batchLibrary.groupFilter = "all";
+  batchLibrary.selectedIds.clear();
   document.querySelectorAll("[data-paper-kind]").forEach((tab) => {
     const on = tab.dataset.paperKind === "all";
     tab.classList.toggle("on", on);
@@ -8218,6 +9057,7 @@ async function clearServerPaperLibrary() {
   document.getElementById("paperPreviewGrid")?.replaceChildren();
   renderPaperGroupTabs();
   syncPaperLibraryEmpty();
+  syncPaperLibraryBatchBar();
   updatePaperLibraryStatus("已清空图纸库。");
   updateBatchPreviewButton();
   clearPaperLibraryCache().catch((error) => console.warn(error));
@@ -8349,12 +9189,110 @@ function fillPaperGroupSelect(select, value) {
   select.value = current || "";
 }
 
+function paperLibrarySelectKey(entry) {
+  return PaperLibraryCore.paperSelectKey(entry);
+}
+
+function paperLibrarySelectedEntries() {
+  return batchLibrary.entries.filter((entry) => batchLibrary.selectedIds.has(paperLibrarySelectKey(entry)));
+}
+
+function syncPaperCardSelected(card, selected) {
+  if (!card) return;
+  card.classList.toggle("is-selected", !!selected);
+  const input = card.querySelector(".paper-card-select-input");
+  if (input) input.checked = !!selected;
+}
+
+function setPaperLibrarySelected(entry, selected) {
+  const key = paperLibrarySelectKey(entry);
+  if (!key) return;
+  if (selected) batchLibrary.selectedIds.add(key);
+  else batchLibrary.selectedIds.delete(key);
+  syncPaperCardSelected(entry.card, selected);
+  syncPaperLibraryBatchBar();
+}
+
+function prunePaperLibrarySelection() {
+  const valid = new Set(batchLibrary.entries.map(paperLibrarySelectKey).filter(Boolean));
+  for (const id of [...batchLibrary.selectedIds]) {
+    if (!valid.has(id)) batchLibrary.selectedIds.delete(id);
+  }
+}
+
+function clearPaperLibrarySelection() {
+  batchLibrary.selectedIds.clear();
+  document.querySelectorAll("#paperPreviewGrid .paper-preview-item").forEach((card) => {
+    syncPaperCardSelected(card, false);
+  });
+  syncPaperLibraryBatchBar();
+}
+
+function selectVisiblePaperLibraryCards() {
+  const grid = document.getElementById("paperPreviewGrid");
+  if (!grid) return;
+  const byId = new Map(batchLibrary.entries.map((entry) => [String(entry.id), entry]));
+  grid.querySelectorAll(".paper-preview-item").forEach((card) => {
+    if (card.hidden) return;
+    const entry = byId.get(String(card.dataset.id || ""));
+    if (!entry) return;
+    const key = paperLibrarySelectKey(entry);
+    if (!key) return;
+    batchLibrary.selectedIds.add(key);
+    syncPaperCardSelected(card, true);
+  });
+  syncPaperLibraryBatchBar();
+}
+
+function syncPaperLibraryBatchBar() {
+  const bar = document.getElementById("paperLibraryBatch");
+  const count = document.getElementById("paperLibraryBatchCount");
+  const n = batchLibrary.selectedIds.size;
+  if (bar) bar.hidden = n < 1;
+  if (count) count.textContent = n ? `已选 ${n} 张` : "已选 0 张";
+  fillPaperGroupSelect(document.getElementById("paperLibraryBatchGroup"));
+}
+
+async function applyPaperLibraryBatchGroup() {
+  const groupId = String(document.getElementById("paperLibraryBatchGroup")?.value || "");
+  const selected = paperLibrarySelectedEntries();
+  if (!selected.length) return;
+  const uploads = [];
+  selected.forEach((entry) => {
+    entry.groupId = groupId;
+    const card = entry.card;
+    if (card) {
+      card.dataset.group = groupId;
+      const select = card.querySelector(".paper-card-group");
+      if (select) select.value = groupId;
+    }
+    if (entry.contentId) {
+      uploads.push({
+        id: entry.contentId,
+        name: entry.name,
+        kind: entry.kind,
+        group: groupId,
+      });
+    }
+  });
+  applyPaperLibraryFilter();
+  if (paperInspectView.entry && selected.includes(paperInspectView.entry)) {
+    fillPaperGroupSelect(document.getElementById("paperInspectGroup"), groupId);
+  }
+  try {
+    if (uploads.length) await persistPaperLibrary(uploads, false);
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
 function refreshPaperGroupControls() {
   renderPaperGroupTabs();
   document.querySelectorAll(".paper-card-group").forEach((select) => {
     fillPaperGroupSelect(select);
   });
   fillPaperGroupSelect(document.getElementById("paperInspectGroup"), paperInspectView.entry?.groupId || "");
+  fillPaperGroupSelect(document.getElementById("paperLibraryBatchGroup"));
 }
 
 async function persistPaperLibraryGroups() {
@@ -8449,6 +9387,12 @@ function renderPaperLibraryCard(entry) {
   card.dataset.id = String(entry.id);
   card.dataset.kind = entry.kind || "";
   card.dataset.group = entry.groupId || "";
+  const selected = batchLibrary.selectedIds.has(paperLibrarySelectKey(entry));
+  if (selected) card.classList.add("is-selected");
+  const { label: selectCtrl } = PaperLibraryCore.createPaperSelectControl(entry, {
+    checked: selected,
+    onChange: (on) => setPaperLibrarySelected(entry, on),
+  });
   const visual = document.createElement("button");
   visual.type = "button";
   visual.className = "paper-preview-visual";
@@ -8515,7 +9459,7 @@ function renderPaperLibraryCard(entry) {
     terrain.onclick = () => importLibraryPaper(entry, "replace");
     actions.appendChild(terrain);
   }
-  card.append(visual, copy, materials, actions);
+  card.append(selectCtrl, visual, copy, materials, actions);
   entry.card = card;
   entry.thumbImg = img;
   return { card, img };
@@ -9015,6 +9959,13 @@ function syncSavedPaperIntoLibrary(payload, file) {
     entry.hasThumb = false;
     entry.thumbReady = false;
     entry.file = file || entry.file;
+    entry.serverHydrated = true;
+    entry.deskLayers = Array.isArray(payload.deskLayers) ? payload.deskLayers : [];
+    entry.deskDocument = payload.deskDocument || null;
+    if (entry.file?.paperMeta) {
+      entry.file.paperMeta.deskLayers = entry.deskLayers;
+      entry.file.paperMeta.deskDocument = entry.deskDocument;
+    }
     entry.documentData = null;
     entry._hydrate = null;
     refreshPaperLibraryCard(entry);
@@ -9032,6 +9983,13 @@ function syncSavedPaperIntoLibrary(payload, file) {
     savedAt: Date.now(),
   });
   entry.file = file || null;
+  entry.serverHydrated = true;
+  entry.deskLayers = Array.isArray(payload.deskLayers) ? payload.deskLayers : [];
+  entry.deskDocument = payload.deskDocument || null;
+  if (entry.file?.paperMeta) {
+    entry.file.paperMeta.deskLayers = entry.deskLayers;
+    entry.file.paperMeta.deskDocument = entry.deskDocument;
+  }
   batchLibrary.entries.unshift(entry);
   const grid = document.getElementById("paperPreviewGrid");
   if (!grid) return;
@@ -9046,7 +10004,7 @@ function syncSavedPaperIntoLibrary(payload, file) {
 }
 
 function paperSummaryPayload(entry) {
-  return {
+  const payload = {
     id: entry.contentId,
     name: entry.name,
     kind: entry.kind,
@@ -9055,11 +10013,16 @@ function paperSummaryPayload(entry) {
     meta: entry.meta || "",
     unresolved: entry.unresolved || 0,
   };
+  if (Array.isArray(entry.deskLayers)) payload.deskLayers = entry.deskLayers;
+  if (entry.deskDocument) payload.deskDocument = entry.deskDocument;
+  return payload;
 }
 
 async function hydratePaperEntry(entry) {
   if (!entry) return entry;
-  if (entry.file && entry.documentData) return entry;
+  // Parsed V1 data in IndexedDB does not contain desk-only groups or the full
+  // design snapshot. Entries with a server id must fetch once before opening.
+  if (entry.file && entry.documentData && (!entry.contentId || entry.serverHydrated)) return entry;
   if (entry._hydrate) return entry._hydrate;
   const contentId = entry.contentId || entry.id;
   entry._hydrate = (async () => {
@@ -9072,8 +10035,15 @@ async function hydratePaperEntry(entry) {
       name: entry.name || paper.name,
       groupId: entry.groupId || paper.group || "",
     });
+    entry.deskLayers = Array.isArray(paper.deskLayers) ? paper.deskLayers : [];
+    entry.deskDocument = paper.deskDocument && typeof paper.deskDocument === "object" ? paper.deskDocument : null;
+    if (rebuilt.file?.paperMeta) {
+      rebuilt.file.paperMeta.deskLayers = entry.deskLayers;
+      rebuilt.file.paperMeta.deskDocument = entry.deskDocument;
+    }
     entry.file = rebuilt.file;
     entry.documentData = rebuilt.documentData;
+    entry.serverHydrated = true;
     entry.kind = rebuilt.kind;
     entry.count = rebuilt.count;
     entry.meta = rebuilt.meta;
@@ -9110,11 +10080,6 @@ async function uploadPaperThumb(entry, canvas) {
 
 async function fillMissingPaperThumb(entry) {
   if (!entry?.thumbImg || entry.thumbReady) return;
-  if (entry.hasThumb) {
-    entry.thumbImg.src = PaperLibraryCore.thumbUrl(entry.contentId, entry.thumbAt || entry.savedAt);
-    entry.thumbReady = true;
-    return;
-  }
   await hydratePaperEntry(entry);
   const canvas = document.createElement("canvas");
   await paintPaperThumbnail(canvas, entry.documentData);
@@ -9126,13 +10091,24 @@ async function fillMissingPaperThumb(entry) {
 function bindPaperCardThumb(entry, loader) {
   const img = entry?.thumbImg;
   if (!img) return;
+  const rebuild = () => {
+    entry.hasThumb = false;
+    entry.thumbReady = false;
+    loader?.watch(img, () => fillMissingPaperThumb(entry));
+  };
   if (entry.hasThumb) {
-    img.src = PaperLibraryCore.thumbUrl(entry.contentId, entry.thumbAt || entry.savedAt);
+    img.addEventListener("load", () => {
+      if (PaperLibraryCore.thumbLooksLikePlaceholder(img)) {
+        rebuild();
+        return;
+      }
+      entry.thumbReady = true;
+    }, { once: true });
     img.addEventListener("error", () => {
       if (entry.thumbReady) return;
-      entry.hasThumb = false;
-      loader?.watch(img, () => fillMissingPaperThumb(entry));
+      rebuild();
     }, { once: true });
+    img.src = PaperLibraryCore.thumbUrl(entry.contentId, entry.thumbAt || entry.savedAt);
     return;
   }
   loader?.watch(img, () => fillMissingPaperThumb(entry));
@@ -9162,7 +10138,9 @@ function showPaperLibraryIndex(papers) {
   grid.hidden = !batchLibrary.entries.length;
   const empty = document.getElementById("paperLibraryEmpty");
   if (empty) empty.hidden = !!batchLibrary.entries.length;
+  prunePaperLibrarySelection();
   applyPaperLibraryFilter();
+  syncPaperLibraryBatchBar();
   updatePaperLibraryStatus();
   updateBatchPreviewButton();
 }
@@ -9197,6 +10175,7 @@ function buildPaperLibraryEntry(file, documentData, { id, contentId, name, group
     contentId: contentId || "",
     file,
     documentData,
+    serverHydrated: false,
     name: relative,
     search: relative.toLowerCase(),
     kind: documentData.kind,
@@ -9222,7 +10201,7 @@ async function openServerPaperLibrary() {
     const data = await PaperLibraryCore.fetchLibrary();
     papers = data.papers;
     batchLibrary.groups = data.groups || [];
-    renderPaperGroupTabs();
+    refreshPaperGroupControls();
   } catch (error) {
     console.warn("读取图纸库失败", error);
   }
@@ -9392,7 +10371,7 @@ async function loadPaperLibraryFiles(candidates, { persist = false, append = tru
   }
 }
 
-function importedPaperRows(records) {
+function importedPaperRows(records, layers) {
   let lastTheme = state.pack;
   const inferredThemeKeys = new Set(
     records
@@ -9426,7 +10405,7 @@ function importedPaperRows(records) {
       hidden: mat === 0,
     };
   });
-  return { rows, lastTheme };
+  return { rows: BI.applyDeskLayers(rows, layers), lastTheme };
 }
 
 async function importDesign(file, options = {}) {
@@ -9457,24 +10436,31 @@ async function importDesign(file, options = {}) {
   }
   const records = documentData.records || [];
   const mode = options.mode === "merge" && placedDesignCount() ? "merge" : "replace";
-  const imported = importedPaperRows(records);
+  const deskDocument = options.deskDocument || file.paperMeta?.deskDocument;
+  const layers = options.deskLayers || file.paperMeta?.deskLayers;
+  const imported = importedPaperRows(records, layers);
+  const deskRows = Array.isArray(deskDocument?.records) && deskDocument.records.length
+    ? deskDocument.records.map(hydrateRecord)
+    : imported.rows;
   if (mode === "merge") {
-    const body = imported.rows.filter((record) => Number(record.mat) !== 0);
+    const body = deskRows.filter((record) => Number(record.mat) !== 0);
     if (!body.length) throw new Error("这张图纸没有可合并的建筑素材。");
-    const group = `${Date.now()}-import`;
+    const stamp = Date.now();
+    const remapped = BI.remapImportedDeskGroups(body, stamp);
+    const hasSavedGroups = remapped.some((record) => record.group);
+    const fallbackGroup = `${stamp}-import`;
     const groupName = file.name.replace(/\.[^.]+$/, "") || "合并图纸";
     pushHistory();
     const first = state.records.length;
-    body.forEach((record) => {
+    remapped.forEach((record) => {
       state.records.push({
         ...record,
-        hidden: false,
-        group,
-        groupName,
+        group: record.group || (hasSavedGroups ? null : fallbackGroup),
+        groupName: record.groupName || (hasSavedGroups ? record.groupName : groupName),
       });
     });
-    state.layerCollapsed.add(group);
-    setSelection(body.map((_, index) => first + index), { expandGroup: true });
+    if (!hasSavedGroups) state.layerCollapsed.add(fallbackGroup);
+    setSelection(remapped.map((_, index) => first + index), { expandGroup: true });
     if (!state.designName) {
       state.designName = String(file.webkitRelativePath || file.name || "");
       updatePaperFileLabel();
@@ -9492,15 +10478,18 @@ async function importDesign(file, options = {}) {
     encoding: documentData._source?.encoding || "gbk",
   };
   rememberSourcePaper(file.paperMeta?.id ? { id: file.paperMeta.id, name: file.name, groupId: file.paperMeta.group } : null);
-  state.paperLayout = true;
+  if (deskDocument?.records) applyDeskDocumentMeta(deskDocument);
+  else {
+    state.paperLayout = true;
+    state.paperOrigin = null;
+  }
   // 左上角显示打开的是哪张图纸，防止忘记当前文件。
   state.designName = String(file.webkitRelativePath || file.name || "");
   updatePaperFileLabel();
-  state.records = imported.rows;
+  state.records = deskRows;
   state.baseAnchor = null;
-  state.paperOrigin = null;
   invalidateBaseLayout();
-  if (imported.lastTheme) state.pack = imported.lastTheme;
+  if (!deskDocument?.packKey && imported.lastTheme) state.pack = imported.lastTheme;
   ensureActiveCategory();
   fillThemes();
   fillCategories();
@@ -9512,6 +10501,72 @@ async function importDesign(file, options = {}) {
   syncDesignResetButtons();
   updateBase();
   renderBuilding();
+}
+
+function exportRecordList() {
+  const refs = state.records.filter((record) => Number(record.mat) === 0);
+  const body = state.records.filter((record) => Number(record.mat) !== 0);
+  return [...refs, ...body];
+}
+
+function serializeDeskLayers(records = exportRecordList()) {
+  return records.map((record) => ({
+    mat: Math.max(0, Math.round(Number(record.mat) || 0)),
+    packKey: record.localPackUnknown ? "" : record.packKey || record.pack?.key || "",
+    localPackUnknown: !!record.localPackUnknown,
+    group: record.group || "",
+    groupName: record.groupName || "",
+    groupParents: Array.isArray(record.groupParents) ? record.groupParents : undefined,
+    label: record.label || "",
+    locked: !!record.locked,
+    hidden: !!record.hidden,
+  }));
+}
+
+function serializeDeskDocument() {
+  return {
+    v: 1,
+    records: serializeSessionRecords(),
+    baseNo: state.base?.no ?? null,
+    baseMap: state.base?.map || "",
+    baseName: state.base?.name || "",
+    baseKind: state.baseKind,
+    packKey: state.pack?.key || "",
+    themeFilter: state.themeFilter || "",
+    keepFoundation: !!state.keepFoundation,
+    paperLayout: !!state.paperLayout,
+    paperOrigin: state.paperOrigin ? { ...state.paperOrigin } : null,
+    layerCollapsed: [...state.layerCollapsed],
+    smartBuilder: smartBuilderSnapshot(),
+  };
+}
+
+function applyDeskDocumentMeta(doc) {
+  if (!doc || typeof doc !== "object") return;
+  const base = findBaseFromSession(doc);
+  if (base) {
+    state.base = base;
+    state.baseKind = base.kind ?? doc.baseKind ?? state.baseKind;
+    state.basePicked = true;
+    state.baseOverridden = false;
+  }
+  if (doc.packKey && packByKey(doc.packKey)) state.pack = packByKey(doc.packKey);
+  if (doc.themeFilter === THEME_ALL || packByKey(doc.themeFilter)) {
+    state.themeFilter = doc.themeFilter || state.themeFilter;
+  }
+  if (doc.keepFoundation != null) {
+    state.keepFoundation = !!doc.keepFoundation;
+    const keep = document.getElementById("keepFoundation");
+    if (keep) keep.checked = state.keepFoundation;
+  }
+  state.paperLayout = !!doc.paperLayout;
+  state.paperOrigin =
+    doc.paperOrigin && Number.isFinite(Number(doc.paperOrigin.x)) && Number.isFinite(Number(doc.paperOrigin.y))
+      ? { x: Number(doc.paperOrigin.x), y: Number(doc.paperOrigin.y) }
+      : null;
+  state.layerCollapsed = new Set(Array.isArray(doc.layerCollapsed) ? doc.layerCollapsed : []);
+  restoreSmartBuilder(doc.smartBuilder);
+  syncSmartBuildingUi();
 }
 
 function serializeExportRecord(record) {
@@ -9544,10 +10599,7 @@ function existingUserReferences() {
 }
 
 function buildExportRecords() {
-  const body = state.records
-    .filter((record) => Number(record.mat) !== 0)
-    .map(serializeExportRecord);
-  return [...existingUserReferences(), ...body];
+  return exportRecordList().map(serializeExportRecord);
 }
 
 async function placeCurrentBuildingOnTerrain() {
@@ -9584,8 +10636,594 @@ async function exportDesign() {
   URL.revokeObjectURL(anchor.href);
 }
 
+let imageBuildingDraft = null;
+let imageBuildingIndexPromise = null;
+const IMAGE_BUILDING_DEBUG = false;
+
+function imageBuildingClusterPalette() {
+  return [];
+}
+
+function imageBuildingNearestMaterial() {
+  return -1;
+}
+
+function imageBuildingTargetRect() {
+  const layout = state.baseLayout || {};
+  const offset = layoutContentOffset();
+  const dx = Number(offset.dx) || 0;
+  const dy = Number(offset.dy) || 0;
+  if (layout.maskW && layout.maskH) {
+    return { x: layout.maskX - dx, y: layout.maskY - dy, w: layout.maskW, h: layout.maskH };
+  }
+  if (layout.floorW && layout.floorH) {
+    return { x: layout.floorX - dx, y: layout.floorY - dy, w: layout.floorW, h: layout.floorH };
+  }
+  return { x: 48, y: 48, w: DESIGN_W - 96, h: DESIGN_H - 96 };
+}
+
+function imageBuildingPackKeys() {
+  const scope = document.getElementById("imageBuildingScope")?.value || "current";
+  const packs = scope === "all" ? indexedPacks() : activeThemePacks();
+  return packs.map((pack) => pack.key).filter(Boolean);
+}
+
+function loadSpriteIndex() {
+  if (imageBuildingIndexPromise) return imageBuildingIndexPromise;
+  imageBuildingIndexPromise = fetch("/data/building_sprite_index.json")
+    .then((response) => (response.ok ? response.json() : { entries: [] }))
+    .catch(() => ({ entries: [] }));
+  return imageBuildingIndexPromise;
+}
+
+function imageBuildingSourcePixels(image) {
+  const maxSide = 720;
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight, 1));
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const scratch = document.createElement("canvas");
+  scratch.width = width;
+  scratch.height = height;
+  const ctx = scratch.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, 0, 0, width, height);
+  const imageData = ctx.getImageData(0, 0, width, height);
+  return { width, height, data: imageData.data, pixels: imageData.data };
+}
+
+function imageBuildingConvertApi() {
+  return window.BuildingImageConvert;
+}
+
+function pickImageBuilding() {
+  if (state.phase !== "design" || !state.base) {
+    appAlert("先选好户型并进入设计，再把图片转成建筑。");
+    return;
+  }
+  document.getElementById("fileImageBuilding")?.click();
+}
+
+async function openImageBuilding(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const next = new Image();
+      next.onload = () => resolve(next);
+      next.onerror = () => reject(new Error("图片读取失败"));
+      next.src = url;
+    });
+    imageBuildingDraft = {
+      image,
+      name: file.name,
+      source: imageBuildingSourcePixels(image),
+      spec: null,
+      structure: null,
+      mode: "auto",
+      selected: -1,
+      sketchTool: "select",
+      wallDraft: null,
+      _scopeTouched: false,
+    };
+    const mode = document.getElementById("imageBuildingMode");
+    if (mode) mode.value = "auto";
+    const scope = document.getElementById("imageBuildingScope");
+    if (scope) scope.value = "all";
+    const threshold = document.getElementById("imageBuildingThreshold");
+    if (threshold) threshold.value = "medium";
+    const fit = document.getElementById("imageBuildingFit");
+    if (fit) fit.value = "contain";
+    const replace = document.getElementById("imageBuildingReplace");
+    if (replace) replace.checked = false;
+    const overlay = document.getElementById("imageBuildingOverlay");
+    if (overlay) overlay.checked = false;
+    setImageBuildingSketchTool("select");
+    setModalVisible("dlgImageBuilding", true);
+    await rebuildImageBuilding();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function rebuildImageBuilding(structure) {
+  const draft = imageBuildingDraft;
+  const status = document.getElementById("imageBuildingStatus");
+  const Convert = imageBuildingConvertApi();
+  if (!draft?.source || !Convert) {
+    if (status) status.textContent = "转换器未加载。";
+    return;
+  }
+  if (status) status.textContent = "正在认结构和选件…";
+  const index = await loadSpriteIndex();
+  const requested = document.getElementById("imageBuildingMode")?.value || "auto";
+  const scope = document.getElementById("imageBuildingScope");
+  if (scope && !draft._scopeTouched && (!scope.value || scope.value === "current")) {
+    // Screenshots often use another theme; default search to all locked packs.
+    scope.value = "all";
+  }
+  const result = Convert.convertPrepared(draft.source, index, {
+    mode: requested,
+    threshold: document.getElementById("imageBuildingThreshold")?.value || "medium",
+    fit: document.getElementById("imageBuildingFit")?.value || "contain",
+    packKeys: imageBuildingPackKeys(),
+    target: imageBuildingTargetRect(),
+    name: draft.name,
+    structure: structure || undefined,
+  });
+  draft.spec = result.spec;
+  draft.structure = result.structure || result.spec?.structure || draft.structure;
+  draft.fitted = result.fitted || result.structure?.fitted || draft.fitted;
+  draft.mode = result.mode;
+  draft.selected = -1;
+  if (status) {
+    const emptyIndex = !(index.entries || []).length;
+    status.textContent = emptyIndex
+      ? `${result.status} 素材指纹库未就绪时按结构选件。`
+      : result.status;
+  }
+  updateImageBuildingApplyState();
+  paintImageBuildingSource();
+  renderImageBuildingPieces();
+  await paintImageBuildingPreview();
+}
+
+function setImageBuildingSketchTool(tool) {
+  if (imageBuildingDraft) imageBuildingDraft.sketchTool = tool;
+  document.querySelectorAll("#imageBuildingSketchTools [data-sketch-tool]").forEach((button) => {
+    button.setAttribute("aria-pressed", button.dataset.sketchTool === tool ? "true" : "false");
+  });
+}
+
+function paintImageBuildingSource() {
+  const canvas = document.getElementById("imageBuildingSource");
+  const draft = imageBuildingDraft;
+  if (!canvas || !draft?.image) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#d7e2d4";
+  ctx.fillRect(0, 0, width, height);
+  const scale = Math.min(width / draft.image.naturalWidth, height / draft.image.naturalHeight);
+  const dw = draft.image.naturalWidth * scale;
+  const dh = draft.image.naturalHeight * scale;
+  const dx = (width - dw) / 2;
+  const dy = (height - dh) / 2;
+  draft.sourceView = { dx, dy, dw, dh, scale };
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(draft.image, dx, dy, dw, dh);
+  const structure = draft.structure;
+  if (!structure) return;
+  const Convert = imageBuildingConvertApi();
+  const target = imageBuildingTargetRect();
+  const fit = document.getElementById("imageBuildingFit")?.value || "contain";
+  const mapper = Convert?.makePaperMapper?.(draft.image.naturalWidth, draft.image.naturalHeight, target, fit);
+  const useImageSpace = !!(structure.imageFloor && !structure.__userEdited);
+  const toCanvas = (pt) => {
+    if (useImageSpace) {
+      return {
+        x: dx + (pt.x / Math.max(1, draft.image.naturalWidth)) * dw,
+        y: dy + (pt.y / Math.max(1, draft.image.naturalHeight)) * dh,
+      };
+    }
+    if (mapper) {
+      const img = mapper.toImage(pt.x, pt.y);
+      return {
+        x: dx + (img.x / Math.max(1, draft.image.naturalWidth)) * dw,
+        y: dy + (img.y / Math.max(1, draft.image.naturalHeight)) * dh,
+      };
+    }
+    return {
+      x: dx + ((pt.x - target.x) / Math.max(1, target.w)) * dw,
+      y: dy + ((pt.y - target.y) / Math.max(1, target.h)) * dh,
+    };
+  };
+  const overlayFloor = useImageSpace ? structure.imageFloor : structure.floor;
+  const overlayWalls = useImageSpace ? structure.imageWalls || [] : structure.walls || [];
+  if (overlayFloor) {
+    ctx.beginPath();
+    [overlayFloor.left, overlayFloor.back, overlayFloor.right, overlayFloor.front].forEach((pt, index) => {
+      const p = toCanvas(pt);
+      if (index) ctx.lineTo(p.x, p.y);
+      else ctx.moveTo(p.x, p.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(180, 190, 200, 0.28)";
+    ctx.strokeStyle = "#4a5d6a";
+    ctx.lineWidth = 2;
+    ctx.fill();
+    ctx.stroke();
+  }
+  overlayWalls.forEach((wall, index) => {
+    const a = toCanvas(wall.a);
+    const b = toCanvas(wall.b);
+    ctx.strokeStyle = index === draft.selected ? "#c45c26" : "#2f6f4a";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    (wall.openings || []).forEach((opening) => {
+      const x = a.x + (b.x - a.x) * opening.t;
+      const y = a.y + (b.y - a.y) * opening.t;
+      ctx.fillStyle = "#8a4b2a";
+      ctx.fillRect(x - 6, y - 10, 12, 20);
+    });
+  });
+}
+
+async function paintImageBuildingPreview() {
+  const canvas = document.getElementById("imageBuildingPreview");
+  const draft = imageBuildingDraft;
+  if (!canvas || !draft) return;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#2a4a34";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const records = (draft.spec?.records || []).filter((row) => Number(row.mat) > 0);
+  if (!records.length || !window.BuildingPreview?.renderPaper || !state.base) return;
+  try {
+    const rendered = await window.BuildingPreview.renderPaper({
+      documentData: { kind: "desk", records },
+      baseNo: state.base.no,
+      coordinateSpace: "editor",
+    });
+    const bitmap = rendered?.bitmap;
+    if (!bitmap?.width) return;
+    const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
+    const dw = bitmap.width * scale;
+    const dh = bitmap.height * scale;
+    const dx = (canvas.width - dw) / 2;
+    const dy = (canvas.height - dh) / 2;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bitmap, dx, dy, dw, dh);
+    if (document.getElementById("imageBuildingOverlay")?.checked && draft.image) {
+      ctx.globalAlpha = 0.35;
+      ctx.drawImage(draft.image, dx, dy, dw, dh);
+      ctx.globalAlpha = 1;
+    }
+    if (draft.selected >= 0 && records[draft.selected]) {
+      const row = records[draft.selected];
+      ctx.strokeStyle = "#ffd36a";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(
+        dx + ((row.x - 80) / 400) * dw,
+        dy + ((row.y - 90) / 360) * dh,
+        18,
+        18
+      );
+    }
+  } catch (error) {
+    const status = document.getElementById("imageBuildingStatus");
+    if (status) status.textContent = error.message || String(error);
+  }
+}
+
+function renderImageBuildingPieces() {
+  const list = document.getElementById("imageBuildingPieces");
+  const draft = imageBuildingDraft;
+  if (!list) return;
+  list.replaceChildren();
+  const records = draft?.spec?.records || [];
+  records.forEach((row, index) => {
+    const item = document.createElement("div");
+    item.className = "image-building-piece" + (index === draft.selected ? " on" : "");
+    item.setAttribute("role", "listitem");
+    const thumb = document.createElement("img");
+    const pack = packByKey(row.pack);
+    const component = pack ? findSpriteInPack(pack, row.local) : null;
+    thumb.alt = "";
+    thumb.width = 36;
+    thumb.height = 36;
+    if (component) thumb.src = spriteUrl(component, pack, row.state || 0, true);
+    const meta = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = row.label || `${row.category || row.group} #${row.local}`;
+    const detail = document.createElement("small");
+    const face = Number(row.state) ? "朝向 B" : "朝向 A";
+    const conf = row.confidence != null ? ` · ${Math.round(row.confidence * 100)}%` : "";
+    detail.textContent = `${row.group || row.category} · ${face}${conf}`;
+    meta.append(title, detail);
+    const replace = document.createElement("button");
+    replace.type = "button";
+    replace.className = "btn";
+    replace.textContent = "替换";
+    replace.addEventListener("click", (event) => {
+      event.stopPropagation();
+      cycleImageBuildingPiece(index);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn";
+    remove.textContent = "删除";
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
+      draft.spec.records.splice(index, 1);
+      draft.selected = -1;
+      renderImageBuildingPieces();
+      paintImageBuildingPreview();
+      updateImageBuildingApplyState();
+      const Convert = imageBuildingConvertApi();
+      const status = document.getElementById("imageBuildingStatus");
+      if (status && Convert) status.textContent = Convert.statusText(Convert.summarizeSpec(draft.spec), draft.mode);
+    });
+    item.append(thumb, meta, replace, remove);
+    item.addEventListener("click", () => {
+      draft.selected = index;
+      renderImageBuildingPieces();
+      paintImageBuildingPreview();
+    });
+    list.appendChild(item);
+  });
+}
+
+async function cycleImageBuildingPiece(index) {
+  const draft = imageBuildingDraft;
+  const row = draft?.spec?.records?.[index];
+  if (!row) return;
+  const Convert = imageBuildingConvertApi();
+  const indexDoc = await loadSpriteIndex();
+  const pool = Convert.filterEntries(indexDoc, { packKeys: imageBuildingPackKeys(), category: row.category });
+  if (pool.length < 2) return;
+  const current = pool.findIndex((entry) => entry.pack === row.pack && entry.local === row.local && (entry.frame || 0) === (row.state || 0));
+  const next = pool[(current + 1) % pool.length];
+  const rebuilt = Convert.recordFromFoot(next, row.footX || row.x, row.footY || row.y, {
+    state: next.frame || 0,
+    group: row.group,
+    confidence: row.confidence,
+  });
+  draft.spec.records[index] = rebuilt;
+  renderImageBuildingPieces();
+  await paintImageBuildingPreview();
+}
+
+function imageBuildingCanvasPoint(event) {
+  const canvas = document.getElementById("imageBuildingSource");
+  const draft = imageBuildingDraft;
+  if (!canvas || !draft?.sourceView || !draft?.image) return null;
+  const rect = canvas.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) * canvas.width) / Math.max(1, rect.width);
+  const y = ((event.clientY - rect.top) * canvas.height) / Math.max(1, rect.height);
+  const view = draft.sourceView;
+  const imgX = ((x - view.dx) / Math.max(1, view.dw)) * draft.image.naturalWidth;
+  const imgY = ((y - view.dy) / Math.max(1, view.dh)) * draft.image.naturalHeight;
+  const Convert = imageBuildingConvertApi();
+  const target = imageBuildingTargetRect();
+  const fit = document.getElementById("imageBuildingFit")?.value || "contain";
+  if (Convert?.makePaperMapper) {
+    return Convert.makePaperMapper(draft.image.naturalWidth, draft.image.naturalHeight, target, fit).toPaper(imgX, imgY);
+  }
+  return {
+    x: target.x + (imgX / Math.max(1, draft.image.naturalWidth)) * target.w,
+    y: target.y + (imgY / Math.max(1, draft.image.naturalHeight)) * target.h,
+  };
+}
+
+function markImageBuildingStructureEdited() {
+  if (!imageBuildingDraft?.structure) return;
+  imageBuildingDraft.structure.__userEdited = true;
+}
+
+function nearestWall(structure, point) {
+  let best = -1;
+  let dist = 28;
+  (structure.walls || []).forEach((wall, index) => {
+    const dx = wall.b.x - wall.a.x;
+    const dy = wall.b.y - wall.a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const t = Math.max(0, Math.min(1, ((point.x - wall.a.x) * dx + (point.y - wall.a.y) * dy) / (len * len)));
+    const px = wall.a.x + dx * t;
+    const py = wall.a.y + dy * t;
+    const d = Math.hypot(point.x - px, point.y - py);
+    if (d < dist) {
+      dist = d;
+      best = index;
+    }
+  });
+  return best;
+}
+
+function handleImageBuildingPointer(event) {
+  const draft = imageBuildingDraft;
+  if (!draft?.structure) return;
+  const point = imageBuildingCanvasPoint(event);
+  if (!point) return;
+  const tool = draft.sketchTool || "select";
+  if (tool === "wall") {
+    if (!draft.wallDraft) {
+      draft.wallDraft = { x: point.x, y: point.y };
+      paintImageBuildingSource();
+      return;
+    }
+    draft.structure.walls.push({ a: draft.wallDraft, b: point, openings: [], state: draft.structure.walls.length % 2 });
+    draft.wallDraft = null;
+    markImageBuildingStructureEdited();
+    rebuildImageBuilding(draft.structure);
+    return;
+  }
+  if (tool === "opening") {
+    const index = nearestWall(draft.structure, point);
+    if (index < 0) return;
+    const wall = draft.structure.walls[index];
+    const dx = wall.b.x - wall.a.x;
+    const dy = wall.b.y - wall.a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const t = Math.max(0.12, Math.min(0.88, ((point.x - wall.a.x) * dx + (point.y - wall.a.y) * dy) / (len * len)));
+    wall.openings.push({ t, w: 22 });
+    markImageBuildingStructureEdited();
+    rebuildImageBuilding(draft.structure);
+    return;
+  }
+  if (tool === "prop") {
+    draft.structure.props = draft.structure.props || [];
+    draft.structure.props.push({ x: point.x, y: point.y, kind: "decor" });
+    markImageBuildingStructureEdited();
+    rebuildImageBuilding(draft.structure);
+    return;
+  }
+  if (tool === "erase") {
+    const index = nearestWall(draft.structure, point);
+    if (index >= 0) draft.structure.walls.splice(index, 1);
+    else draft.structure.props = (draft.structure.props || []).filter((row) => Math.hypot(row.x - point.x, row.y - point.y) > 18);
+    markImageBuildingStructureEdited();
+    rebuildImageBuilding(draft.structure);
+    return;
+  }
+  const index = nearestWall(draft.structure, point);
+  if (index < 0) return;
+  const wall = draft.structure.walls[index];
+  const grabA = Math.hypot(point.x - wall.a.x, point.y - wall.a.y) < Math.hypot(point.x - wall.b.x, point.y - wall.b.y);
+  const move = (moveEvent) => {
+    const next = imageBuildingCanvasPoint(moveEvent);
+    if (!next) return;
+    if (grabA) wall.a = next;
+    else wall.b = next;
+    paintImageBuildingSource();
+  };
+  const up = (upEvent) => {
+    canvas.releasePointerCapture?.(upEvent.pointerId);
+    canvas.removeEventListener("pointermove", move);
+    canvas.removeEventListener("pointerup", up);
+    markImageBuildingStructureEdited();
+    rebuildImageBuilding(draft.structure);
+  };
+  const canvas = event.currentTarget;
+  canvas.setPointerCapture?.(event.pointerId);
+  canvas.addEventListener("pointermove", move);
+  canvas.addEventListener("pointerup", up);
+}
+
+function updateImageBuildingApplyState() {
+  const button = document.getElementById("btnApplyImageBuilding");
+  const status = document.getElementById("imageBuildingStatus");
+  const draft = imageBuildingDraft;
+  const Convert = imageBuildingConvertApi();
+  if (!button) return;
+  const gate = Convert?.canAutoApply?.(draft?.spec, {
+    userEdited: !!draft?.structure?.__userEdited,
+    mode: draft?.mode,
+  }) || { ok: false, reason: Convert?.UNRESOLVED_STATUS || "未识别" };
+  button.disabled = !gate.ok || state.phase !== "design";
+  if (!gate.ok && status && draft) status.textContent = gate.reason;
+}
+
+function applyImageBuilding() {
+  const draft = imageBuildingDraft;
+  const Convert = imageBuildingConvertApi();
+  const status = document.getElementById("imageBuildingStatus");
+  if (state.phase !== "design") {
+    if (status) status.textContent = "先选好户型并进入设计。";
+    return;
+  }
+  const gate = Convert?.canAutoApply?.(draft?.spec, {
+    userEdited: !!draft?.structure?.__userEdited,
+    mode: draft?.mode,
+  }) || { ok: false, reason: "还没有可写入的真实素材。先改墙线或换一张图。" };
+  if (!gate.ok) {
+    if (status) status.textContent = gate.reason;
+    updateImageBuildingApplyState();
+    return;
+  }
+  const errors = Convert?.validateSpec(draft.spec, state.packUids) || [];
+  if (errors.length) {
+    if (status) status.textContent = errors[0];
+    return;
+  }
+  const sorted = Convert.depthSortRecords(draft.spec.records);
+  pushHistory();
+  if (document.getElementById("imageBuildingReplace")?.checked) {
+    state.records = state.records.filter((record) => Number(record.mat) === 0);
+    state.sourcePaper = null;
+  }
+  const start = state.records.length;
+  const seen = new Set();
+  sorted.forEach((row) => {
+    const pack = packByKey(row.pack) || state.pack;
+    const component = findSpriteInPack(pack, row.local);
+    if (!component) return;
+    const face = Number(row.state) || 0;
+    const foot = stampFootOffset(component, face);
+    const footX = row.footX != null ? row.footX : row.x + foot.x;
+    const footY = row.footY != null ? row.footY : row.y + foot.y;
+    const index = appendSpriteStamp(component, pack, face, footX, footY, seen);
+    if (index < 0) return;
+    const record = state.records[index];
+    const packUid = packUidOf(pack);
+    if (packUid != null && Number(record.mat) < 1000) record.mat = packUid * 1000 + row.local;
+    const pos = record;
+    pos.x = Math.max(0, Math.min(2047, pos.x));
+    pos.y = Math.max(0, Math.min(2047, pos.y));
+    if (Number(record.mat) === 0) state.records.splice(index, 1);
+  });
+  if (state.records.length <= start) {
+    if (status) status.textContent = "这些件无法写入当前户型。";
+    return;
+  }
+  setSelection(Array.from({ length: state.records.length - start }, (_, index) => start + index));
+  markBuildingDirty();
+  renderBuilding();
+  setModalVisible("dlgImageBuilding", false);
+}
+
+function bindImageBuilding() {
+  const open = () => pickImageBuilding();
+  document.getElementById("btnImageBuilding")?.addEventListener("click", open);
+  document.getElementById("btnProjectImageBuilding")?.addEventListener("click", open);
+  const file = document.getElementById("fileImageBuilding");
+  if (file) {
+    file.addEventListener("change", async (event) => {
+      const picked = event.target.files?.[0];
+      event.target.value = "";
+      if (!picked) return;
+      try {
+        await openImageBuilding(picked);
+      } catch (error) {
+        await appAlert(error.message || String(error), { title: "图片导入失败" });
+      }
+    });
+  }
+  ["imageBuildingMode", "imageBuildingScope", "imageBuildingThreshold", "imageBuildingFit"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("change", () => {
+      if (id === "imageBuildingScope" && imageBuildingDraft) imageBuildingDraft._scopeTouched = true;
+      if (imageBuildingDraft) rebuildImageBuilding(imageBuildingDraft.structure?.__userEdited ? imageBuildingDraft.structure : undefined);
+    });
+  });
+  document.getElementById("imageBuildingOverlay")?.addEventListener("change", () => paintImageBuildingPreview());
+  document.getElementById("btnApplyImageBuilding")?.addEventListener("click", () => applyImageBuilding());
+  document.getElementById("btnImageBuildingRebuild")?.addEventListener("click", () => {
+    if (imageBuildingDraft) rebuildImageBuilding(imageBuildingDraft.structure);
+  });
+  document.querySelectorAll("#imageBuildingSketchTools [data-sketch-tool]").forEach((button) => {
+    button.addEventListener("click", () => setImageBuildingSketchTool(button.dataset.sketchTool));
+  });
+  const source = document.getElementById("imageBuildingSource");
+  source?.addEventListener("pointerdown", handleImageBuildingPointer);
+  if (IMAGE_BUILDING_DEBUG) {
+    imageBuildingClusterPalette();
+    imageBuildingNearestMaterial();
+  }
+}
+
 function bindBuilding() {
   bindBuildingSheetChrome();
+  bindImageBuilding();
   window.MobileWorkspace?.registerSheet({
     id: "building-rail",
     root: ".building-rail",
@@ -9679,7 +11317,7 @@ function bindBuilding() {
   const btnZoomReset = document.getElementById("btnZoomReset");
   if (btnZoomOut) btnZoomOut.onclick = () => zoomBy(-ZOOM_STEP);
   if (btnZoomIn) btnZoomIn.onclick = () => zoomBy(ZOOM_STEP);
-  if (btnZoomReset) btnZoomReset.onclick = () => setZoom(1);
+  if (btnZoomReset) btnZoomReset.onclick = () => setZoom(1, null, null, { recenter: true });
   bindNudgePad();
   const canvasShell = document.getElementById("canvasShell");
   if (canvasShell) {
@@ -9692,6 +11330,7 @@ function bindBuilding() {
           return;
         }
         event.preventDefault();
+        rememberCanvasClient(event.clientX, event.clientY);
         const delta = event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
         zoomBy(delta, event.clientX, event.clientY);
       },
@@ -9738,6 +11377,15 @@ function bindBuilding() {
   });
   document.getElementById("btnPaperLibraryNewGroup")?.addEventListener("click", () => {
     createPaperLibraryGroup().catch((error) => console.warn(error));
+  });
+  document.getElementById("btnPaperLibrarySelectVisible")?.addEventListener("click", () => {
+    selectVisiblePaperLibraryCards();
+  });
+  document.getElementById("btnPaperLibraryBatchApply")?.addEventListener("click", () => {
+    applyPaperLibraryBatchGroup().catch((error) => console.warn(error));
+  });
+  document.getElementById("btnPaperLibraryBatchClear")?.addEventListener("click", () => {
+    clearPaperLibrarySelection();
   });
   document.querySelectorAll("[data-paper-kind]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -9827,12 +11475,59 @@ function bindBuilding() {
       appAlert(error.message || String(error), { title: "放置失败" });
     });
   };
+  document.getElementById("smartBuildingStyle")?.addEventListener("change", (event) => {
+    state.smartBuilder.styleId = String(event.target.value || "");
+    state.smartBuilder.warnings = [];
+    markBuildingDirty();
+    syncSmartBuildingUi();
+  });
+  document.querySelectorAll("[data-smart-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.smartBuilder.mode = button.dataset.smartMode || "wall";
+      openSmartBuilder();
+    });
+  });
+  document.getElementById("btnSmartBuildingClose")?.addEventListener("click", closeSmartBuilder);
+  document.getElementById("btnSmartBuildingApply")?.addEventListener("click", applySmartBuilding);
+  document.getElementById("btnSmartSaveRole")?.addEventListener("click", saveCurrentMaterialToSmartStyle);
+  document.getElementById("btnSmartBuildingClear")?.addEventListener("click", () => {
+    state.smartBuilder.walls = [];
+    state.smartBuilder.props = [];
+    state.smartBuilder.warnings = [];
+    markBuildingDirty();
+    syncSmartBuildingUi();
+  });
+  document.getElementById("btnSmartBuildingUndo")?.addEventListener("click", () => {
+    if (state.smartBuilder.props.length) state.smartBuilder.props.pop();
+    else {
+      const wall = state.smartBuilder.walls[state.smartBuilder.walls.length - 1];
+      if (wall?.openings?.length) wall.openings.pop();
+      else state.smartBuilder.walls.pop();
+    }
+    markBuildingDirty();
+    syncSmartBuildingUi();
+  });
   document.querySelectorAll("button[data-command]").forEach((button) => {
-    button.onclick = () => executeCommand(button.dataset.command);
+    button.onclick = () => {
+      executeCommand(button.dataset.command);
+      if (isCoarsePointer()) button.blur();
+    };
+  });
+  document.getElementById("designDock")?.addEventListener("pointerup", (event) => {
+    if (event.pointerType === "mouse") return;
+    event.target.closest("button")?.blur();
+  });
+  document.getElementById("buildingMobileDock")?.addEventListener("pointerup", (event) => {
+    if (event.pointerType === "mouse") return;
+    const button = event.target.closest("button");
+    if (button && button.getAttribute("aria-pressed") !== "true" && button.getAttribute("aria-expanded") !== "true") {
+      button.blur();
+    }
   });
   document.querySelectorAll("button[data-tool]").forEach((button) => {
     button.onclick = () => {
-      setActiveTool(button.dataset.tool);
+      if (button.dataset.tool === "smart-wall") openSmartBuilder();
+      else setActiveTool(button.dataset.tool);
       if (window.MobileWorkspace?.modeForViewport().mobile) setMobileToolsOpen(false);
     };
   });
@@ -9899,6 +11594,8 @@ function bindBuilding() {
       fillLayers();
     };
   }
+  const btnClearLayerInsert = document.getElementById("btnClearLayerInsert");
+  if (btnClearLayerInsert) btnClearLayerInsert.onclick = () => clearLayerInsert();
   const themeList = document.getElementById("themeList");
   if (themeList) {
     themeList.onchange = () => {
@@ -10066,7 +11763,7 @@ function bindBuilding() {
   document.querySelectorAll("[data-close-modal]").forEach((button) => {
     button.onclick = () => setModalVisible(button.dataset.closeModal, false);
   });
-  ["dlgCommands", "dlgShortcuts", "dlgSaveDesign"].forEach((id) => {
+  ["dlgCommands", "dlgShortcuts", "dlgSaveDesign", "dlgImageBuilding"].forEach((id) => {
     document.getElementById(id).addEventListener("click", (event) => {
       if (event.target.id === id) setModalVisible(id, false);
     });
@@ -10273,30 +11970,15 @@ function bindBuilding() {
     } else if (key === "n" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       executeCommand("paintTool");
+    } else if (key === "b" && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      executeCommand("brushFromSelection");
     } else if (key === "b" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       executeCommand("stampTool");
-    } else if (key === "t" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      executeCommand("tileTool");
-    } else if (key === "u" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      executeCommand("rectTool");
-    } else if (key === "l" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      executeCommand("lineTool");
-    } else if (key === "o" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      executeCommand("circleTool");
-    } else if (key === "i" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      executeCommand("triangleTool");
     } else if (key === "c" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       executeCommand("group");
-    } else if (key === "g" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      executeCommand("ringTool");
     } else if (key === "m" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       executeCommand(event.shiftKey ? "marqueeContain" : "marqueeTouch");
@@ -10376,6 +12058,10 @@ function bindBuilding() {
         return;
       }
       if (hideContextMenu()) return;
+      if (state.layerInsert) {
+        clearLayerInsert();
+        return;
+      }
       if (!cancelCanvasInteraction()) {
         if (isPlaceTool()) setActiveTool("select");
         else cancelPick();

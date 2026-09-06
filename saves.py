@@ -150,6 +150,37 @@ def load_terrain_bundle() -> dict:
     return {"draft": draft if isinstance(draft, dict) else None, "versions": versions}
 
 
+def _terrain_version_summary(item: dict) -> dict:
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "savedAt": int(item.get("savedAt") or 0),
+        "desc": item.get("desc") or "",
+        "mapSize": item.get("mapSize") or item.get("size"),
+        "mapflag": item.get("mapflag") or 0,
+        "stampCount": len(item.get("stamps") or []),
+        "buildingCount": len(item.get("buildings") or []),
+        "previewCount": len(item.get("previewBuildings") or []),
+    }
+
+
+def load_terrain_index() -> dict:
+    """Return the current draft plus lightweight version metadata."""
+    bundle = load_terrain_bundle()
+    return {
+        "draft": bundle["draft"],
+        "versions": [_terrain_version_summary(item) for item in bundle["versions"]],
+    }
+
+
+def load_terrain_version(ident: str) -> dict | None:
+    ident = safe_save_id(ident)
+    if not ident:
+        return None
+    item = _read_json(saves_root() / "terrain-versions" / f"{ident}.json")
+    return item if isinstance(item, dict) else None
+
+
 def save_terrain_draft(doc: dict) -> dict:
     if not isinstance(doc, dict):
         raise ValueError("draft must be an object")
@@ -277,6 +308,131 @@ def _int_field(value, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def sanitize_desk_layers(value) -> list[dict]:
+    """Desk-only extras (groups/locks/labels). Native V1 papers stay unchanged."""
+    if not isinstance(value, list):
+        return []
+    cleaned = []
+    for item in value[:8000]:
+        if not isinstance(item, dict):
+            continue
+        cleaned.append(
+            {
+                "mat": max(0, _int_field(item.get("mat"))),
+                "packKey": str(item.get("packKey") or "")[:40],
+                "localPackUnknown": bool(item.get("localPackUnknown")),
+                "group": str(item.get("group") or "")[:80],
+                "groupName": str(item.get("groupName") or "")[:40],
+                "label": str(item.get("label") or "")[:40],
+                "locked": bool(item.get("locked")),
+                "hidden": bool(item.get("hidden")),
+            }
+        )
+    return cleaned
+
+
+def sanitize_smart_builder(value) -> dict | None:
+    """Keep editable semantic walls without trusting arbitrary nested payloads."""
+    if not isinstance(value, dict):
+        return None
+    def safe_float(raw) -> float:
+        try:
+            return float(raw or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    walls = []
+    for item in (value.get("walls") or [])[:200]:
+        if not isinstance(item, dict) or not isinstance(item.get("a"), dict) or not isinstance(item.get("b"), dict):
+            continue
+        openings = []
+        for opening in (item.get("openings") or [])[:50]:
+            if not isinstance(opening, dict):
+                continue
+            openings.append({
+                "kind": "door" if opening.get("kind") == "door" else "window",
+                "t": max(0.0, min(1.0, safe_float(opening.get("t")))),
+                "width": max(8, min(256, _int_field(opening.get("width")))),
+            })
+        walls.append({
+            "a": {"x": _int_field(item["a"].get("x")), "y": _int_field(item["a"].get("y"))},
+            "b": {"x": _int_field(item["b"].get("x")), "y": _int_field(item["b"].get("y"))},
+            "openings": openings,
+        })
+    props = []
+    for item in (value.get("props") or [])[:200]:
+        if not isinstance(item, dict):
+            continue
+        props.append({
+            "role": str(item.get("role") or "sign")[:24],
+            "x": _int_field(item.get("x")),
+            "y": _int_field(item.get("y")),
+        })
+    mode = str(value.get("mode") or "wall")
+    if mode not in {"wall", "door", "window", "sign"}:
+        mode = "wall"
+    return {
+        "v": 1,
+        "styleId": str(value.get("styleId") or "")[:80],
+        "mode": mode,
+        "walls": walls,
+        "props": props,
+    }
+
+
+def sanitize_desk_document(value) -> dict | None:
+    """Full desk snapshot so reopening a paper keeps order, house, and groups."""
+    if not isinstance(value, dict):
+        return None
+    records = []
+    for item in (value.get("records") or [])[:8000]:
+        if not isinstance(item, dict):
+            continue
+        records.append(
+            {
+                "mode": "desk",
+                "x": _int_field(item.get("x")),
+                "y": _int_field(item.get("y")),
+                "mat": max(0, _int_field(item.get("mat"))),
+                "state": max(0, min(63, _int_field(item.get("state", item.get("flip"))))),
+                "packKey": str(item.get("packKey") or "")[:40],
+                "localPackUnknown": bool(item.get("localPackUnknown")),
+                "group": str(item.get("group") or "")[:80],
+                "groupName": str(item.get("groupName") or "")[:40],
+                "label": str(item.get("label") or "")[:40],
+                "locked": bool(item.get("locked")),
+                "hidden": bool(item.get("hidden")),
+            }
+        )
+    origin = value.get("paperOrigin") if isinstance(value.get("paperOrigin"), dict) else None
+    paper_origin = None
+    if origin is not None:
+        paper_origin = {"x": _int_field(origin.get("x")), "y": _int_field(origin.get("y"))}
+    collapsed = value.get("layerCollapsed")
+    layer_collapsed = []
+    if isinstance(collapsed, list):
+        layer_collapsed = [str(item)[:80] for item in collapsed[:200] if item]
+    base_no = value.get("baseNo")
+    document = {
+        "v": 1,
+        "records": records,
+        "baseNo": None if base_no in (None, "") else _int_field(base_no),
+        "baseMap": str(value.get("baseMap") or "")[:40],
+        "baseName": str(value.get("baseName") or "")[:40],
+        "baseKind": _int_field(value.get("baseKind")),
+        "packKey": str(value.get("packKey") or "")[:40],
+        "themeFilter": str(value.get("themeFilter") or "")[:40],
+        "keepFoundation": bool(value.get("keepFoundation", True)),
+        "paperLayout": bool(value.get("paperLayout")),
+        "paperOrigin": paper_origin,
+        "layerCollapsed": layer_collapsed,
+    }
+    smart_builder = sanitize_smart_builder(value.get("smartBuilder"))
+    if smart_builder:
+        document["smartBuilder"] = smart_builder
+    return document
 
 
 def _paper_thumb_names(ident: str) -> tuple[str, str]:
@@ -484,6 +640,18 @@ def save_building_papers(items) -> int:
                 payload["unresolved"] = max(0, _int_field(item.get("unresolved")))
             elif "unresolved" in existing:
                 payload["unresolved"] = existing["unresolved"]
+            if "deskLayers" in item:
+                payload["deskLayers"] = sanitize_desk_layers(item.get("deskLayers"))
+            elif isinstance(existing.get("deskLayers"), list):
+                payload["deskLayers"] = sanitize_desk_layers(existing.get("deskLayers"))
+            if "deskDocument" in item:
+                document = sanitize_desk_document(item.get("deskDocument"))
+                if document:
+                    payload["deskDocument"] = document
+            elif isinstance(existing.get("deskDocument"), dict):
+                document = sanitize_desk_document(existing.get("deskDocument"))
+                if document:
+                    payload["deskDocument"] = document
             _atomic_write(path, payload)
             saved += 1
     return saved

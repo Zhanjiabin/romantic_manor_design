@@ -40,6 +40,12 @@ web/_debug*
 data/saves/**
 !data/saves/.gitkeep
 
+# Image-to-building decoded frames, jobs, and large datasets.
+data/image_to_building/frames/
+data/image_to_building/alpha/
+data/image_to_building/jobs/
+datasets/
+
 # Scratch research scripts and packed deploy archives.
 _tmp_*
 _tmp_*/

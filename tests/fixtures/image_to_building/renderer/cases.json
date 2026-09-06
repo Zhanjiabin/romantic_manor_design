@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "rendererVersion": "desk-renderPaper-v1",
+  "bases": [1, 2, 3, 4, 5, 8, 11, 22, 100, 201],
+  "lockedPackCount": 22,
+  "cafe": { "mat": 14124, "x": 200, "y": 220, "state": 0, "note": "bazaar local 124" },
+  "fence": { "mat": 8101, "x": 240, "y": 250, "state": 0, "note": "flower2 local 101 wood flower post" },
+  "bookshop": "tests/fixtures/bookshop-layout.json",
+  "gates": {
+    "canvasSize": "equal",
+    "groundAnchorPx": 1,
+    "bboxPx": 1,
+    "edgeF1": 0.995,
+    "rgbMae": 2
+  }
+}

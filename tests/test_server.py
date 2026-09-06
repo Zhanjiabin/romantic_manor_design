@@ -322,11 +322,34 @@ def test_http_saves_roundtrip():
         conn.close()
 
         conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "PUT",
+            "/api/saves/terrain/version",
+            body='{"id":"v1","name":"version","savedAt":2,"stamps":[{"kind":"A","x":1,"y":2}],"buildings":[]}',
+            headers=headers,
+        )
+        put_version = conn.getresponse()
+        put_version.read()
+        assert put_version.status == 200
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
         conn.request("GET", "/api/saves/terrain", headers=headers)
         got = conn.getresponse()
         body = got.read()
         assert got.status == 200
-        assert b'"t1"' in body
+        index = json.loads(body)
+        assert index["draft"]["id"] == "v1"
+        assert index["versions"][0]["id"] == "v1"
+        assert index["versions"][0]["stampCount"] == 1
+        assert "stamps" not in index["versions"][0]
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/terrain/version/v1", headers=headers)
+        got_version = conn.getresponse()
+        assert got_version.status == 200
+        assert json.loads(got_version.read())["stamps"][0]["kind"] == "A"
         conn.close()
 
         asset = b"\x89PNG\r\n\x1a\npreview"

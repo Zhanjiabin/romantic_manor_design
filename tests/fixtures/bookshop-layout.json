@@ -1,0 +1,56 @@
+{
+  "name": "书店金样",
+  "sort": "depth",
+  "records": [
+    {
+      "pack": "bazaar",
+      "local": 301,
+      "x": 240,
+      "y": 310,
+      "state": 0,
+      "depth": 860,
+      "group": "地面",
+      "label": "灰地砖"
+    },
+    {
+      "pack": "bazaar",
+      "local": 501,
+      "x": 180,
+      "y": 220,
+      "state": 1,
+      "depth": 620,
+      "group": "后墙",
+      "label": "左墙"
+    },
+    {
+      "pack": "bazaar",
+      "local": 508,
+      "x": 300,
+      "y": 230,
+      "state": 0,
+      "depth": 760,
+      "group": "前墙",
+      "label": "右墙"
+    },
+    {
+      "pack": "bazaar",
+      "local": 201,
+      "x": 210,
+      "y": 250,
+      "state": 1,
+      "depth": 710,
+      "group": "门窗",
+      "label": "窗台"
+    },
+    {
+      "pack": "bazaar",
+      "local": 101,
+      "x": 330,
+      "y": 200,
+      "state": 0,
+      "depth": 730,
+      "group": "装饰",
+      "label": "招牌"
+    }
+  ]
+}

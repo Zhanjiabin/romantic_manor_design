@@ -44,7 +44,8 @@ from saves import (
     load_building_papers,
     load_paper_thumb,
     load_terrain_asset,
-    load_terrain_bundle,
+    load_terrain_index,
+    load_terrain_version,
     paper_exists,
     save_building_bundle,
     save_building_papers,
@@ -632,7 +633,14 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/logout":
             return self._send_logout()
         if path == "/api/saves/terrain":
-            body = json.dumps(load_terrain_bundle(), ensure_ascii=False).encode("utf-8")
+            body = json.dumps(load_terrain_index(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
+        version_prefix = "/api/saves/terrain/version/"
+        if path.startswith(version_prefix):
+            version = load_terrain_version(path[len(version_prefix) :])
+            if not version:
+                return self._send(404, b"missing", "text/plain")
+            body = json.dumps(version, ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
         asset_prefix = "/api/saves/terrain/assets/"
         if path.startswith(asset_prefix):

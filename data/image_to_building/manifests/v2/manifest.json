@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "footModelVersion": "desk-stampFootOffset-v1",
+  "uidMappingSha256": "4eac4da18bf6b66f1af5ff120d1c39e11a049244d5febdf2d71587dd6e5978e2",
+  "editorCatalogSha256": "aad804875928c9a18f50dd097a1a79ad0b07c648e03e598c51563c2058ff9247",
+  "gameRoot": "D:\\game\\浪漫庄园",
+  "entryCount": 5543,
+  "quarantineCount": 0,
+  "missingFiles": [],
+  "frameBorrow": false,
+  "skippedUnmappedPacks": 10,
+  "skippedMissingLocal": 0
+}

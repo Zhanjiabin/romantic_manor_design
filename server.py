@@ -70,8 +70,20 @@ PUBLIC_PATHS = frozenset({
     "/favicon.svg",
     "/apple-touch-icon.png",
 })
-PUBLIC_PREFIXES = ("/web/login.", "/web/favicon.", "/web/apple-touch-icon")
+PUBLIC_PREFIXES = (
+    "/web/login.",
+    "/web/favicon.",
+    "/web/apple-touch-icon",
+    "/tiles/",
+    "/ale/",
+    "/ale-atlas/",
+    "/item-ale/",
+    "/bdesign/ale/",
+    "/bdesign/imgs/",
+    "/bdesign/res/",
+)
 SESSION_COOKIE = "manor_session"
+ASSET_CACHE = "public, max-age=2592000, immutable"
 SESSION_MAX_AGE = 30 * 24 * 3600
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 ALE_PNG_MAX_BYTES = 80 * 1024 * 1024
@@ -432,9 +444,9 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", cache)
         if etag:
             self.send_header("ETag", etag)
-            self.send_header("Vary", "Accept-Encoding")
         if encoding:
             self.send_header("Content-Encoding", encoding)
+            self.send_header("Vary", "Accept-Encoding")
         for key, value in headers or []:
             self.send_header(key, value)
         self.end_headers()
@@ -443,8 +455,28 @@ class Handler(SimpleHTTPRequestHandler):
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
             return
 
-    def _send_png(self, png: bytes):
-        self._send(200, png, "image/png", cache="public, max-age=604800, immutable")
+    def _asset_etag(self, src: Path, extra: str = "") -> str:
+        stat = src.stat()
+        return f'"{stat.st_mtime_ns:x}-{stat.st_size:x}-{extra}"'
+
+    def _if_none_match(self, etag: str) -> bool:
+        incoming = (self.headers.get("If-None-Match") or "").strip()
+        if not incoming or incoming == "*":
+            return incoming == "*"
+        return etag in {part.strip() for part in incoming.split(",") if part.strip()}
+
+    def _send_not_modified(self, etag: str, cache: str = ASSET_CACHE):
+        self.send_response(304)
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", cache)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+    def _send_png(self, png: bytes, etag: str | None = None):
+        tag = etag or f'"{hashlib.md5(png).hexdigest()}"'
+        if self._if_none_match(tag):
+            return self._send_not_modified(tag)
+        return self._send(200, png, "image/png", cache=ASSET_CACHE, etag=tag)
 
     def _send_download(self, body: bytes, filename: str, ctype: str):
         ascii_name = "materials.xlsx"
@@ -866,26 +898,35 @@ class Handler(SimpleHTTPRequestHandler):
         src = (TILE / "mask" / (name + ".ale")).resolve()
         if not _is_under(src, (TILE / "mask").resolve()) or not src.is_file():
             return self._send(404, b"missing", "text/plain")
+        etag = self._asset_etag(src, cache_key)
+        if self._if_none_match(etag):
+            return self._send_not_modified(etag)
         try:
             png = _png_cached(cache_key, lambda: dumps_png(src.read_bytes(), crop=crop))
         except (AleError, OSError) as e:
             return self._send(400, str(e).encode("utf-8", errors="replace"), "text/plain; charset=utf-8")
-        return self._send_png(png)
+        return self._send_png(png, etag)
 
     def _item_ale_png(self, name: str, frame: int = 0, thumb: bool = False):
         clean = name.replace("\\", "/").lstrip("/")
         if clean.lower().endswith(".png"):
             clean = clean[:-4]
-        src = (RCITEM / clean).resolve()
         root = RCITEM.resolve()
-        if not _is_under(src, root) or not src.is_file():
+        src = _resolve_under(root, clean)
+        if src is None or not src.is_file():
             return self._send(404, b"missing", "text/plain")
         suffix = src.suffix.lower()
         if suffix in {".gif", ".png", ".jpg", ".jpeg"}:
-            return self._send(200, src.read_bytes(), _ctype(src), cache="public, max-age=604800, immutable")
+            etag = self._asset_etag(src, suffix)
+            if self._if_none_match(etag):
+                return self._send_not_modified(etag)
+            return self._send(200, src.read_bytes(), _ctype(src), cache=ASSET_CACHE, etag=etag)
         if suffix != ".ale":
             return self._send(404, b"missing", "text/plain")
         cache_key = f"item:{rel_cache_key(src, root)}:frame={frame}:thumb={int(thumb)}"
+        etag = self._asset_etag(src, cache_key)
+        if self._if_none_match(etag):
+            return self._send_not_modified(etag)
         try:
             png = _png_cached(
                 cache_key,
@@ -897,7 +938,7 @@ class Handler(SimpleHTTPRequestHandler):
                 str(exc).encode("utf-8", errors="replace"),
                 "text/plain; charset=utf-8",
             )
-        return self._send_png(png)
+        return self._send_png(png, etag)
 
     def _bdesign_ale_png(self, name: str, frame: int = 0, thumb: bool = False):
         clean = name.replace("\\", "/").lstrip("/")
@@ -905,11 +946,14 @@ class Handler(SimpleHTTPRequestHandler):
             clean = clean[:-4]
         if not clean.lower().endswith(".ale"):
             clean += ".ale"
-        src = (BDESIGN_RES / clean).resolve()
         root = BDESIGN_RES.resolve()
-        if not _is_under(src, root) or not src.is_file():
+        src = _resolve_under(root, clean)
+        if src is None or not src.is_file():
             return self._send(404, b"missing", "text/plain")
         cache_key = f"building:{rel_cache_key(src, root)}:frame={frame}:thumb={int(thumb)}"
+        etag = self._asset_etag(src, cache_key)
+        if self._if_none_match(etag):
+            return self._send_not_modified(etag)
         try:
             png = _png_cached(
                 cache_key,
@@ -921,17 +965,20 @@ class Handler(SimpleHTTPRequestHandler):
                 str(exc).encode("utf-8", errors="replace"),
                 "text/plain; charset=utf-8",
             )
-        return self._send_png(png)
+        return self._send_png(png, etag)
 
     def _bdesign_img_ale_png(self, name: str, frame: int = 0):
         clean = name.replace("\\", "/").lstrip("/")
         if not clean.lower().endswith(".ale"):
             return self._send(404, b"missing", "text/plain")
-        src = (BDESIGN_IMGS / clean).resolve()
         root = BDESIGN_IMGS.resolve()
-        if not _is_under(src, root) or not src.is_file():
+        src = _resolve_under(root, clean)
+        if src is None or not src.is_file():
             return self._send(404, b"missing", "text/plain")
         cache_key = f"building-img:{rel_cache_key(src, root)}:frame={frame}"
+        etag = self._asset_etag(src, cache_key)
+        if self._if_none_match(etag):
+            return self._send_not_modified(etag)
         try:
             png = _png_cached(
                 cache_key,
@@ -943,7 +990,7 @@ class Handler(SimpleHTTPRequestHandler):
                 str(exc).encode("utf-8", errors="replace"),
                 "text/plain; charset=utf-8",
             )
-        return self._send_png(png)
+        return self._send_png(png, etag)
 
     def _file(self, path: Path, guess=False):
         path = path.resolve()
@@ -964,7 +1011,7 @@ class Handler(SimpleHTTPRequestHandler):
         # files cost a 304 instead of a re-transfer.
         immutable_roots = (TILE.resolve(), BDESIGN_RES.resolve(), BDESIGN_IMGS.resolve(), RCITEM.resolve())
         cache = (
-            "public, max-age=604800, immutable"
+            ASSET_CACHE
             if any(_is_under(path, root) for root in immutable_roots)
             else "no-cache"
         )
@@ -999,6 +1046,33 @@ def _is_under(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _resolve_under(root: Path, rel: str) -> Path | None:
+    root = root.resolve()
+    parts = [part for part in str(rel or "").replace("\\", "/").split("/") if part and part != "."]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    current = root
+    for part in parts:
+        if not current.is_dir():
+            return None
+        exact = current / part
+        if exact.exists():
+            current = exact
+            continue
+        try:
+            names = os.listdir(current)
+        except OSError:
+            return None
+        matches = [name for name in names if name.lower() == part.lower()]
+        if len(matches) != 1:
+            return None
+        current = current / matches[0]
+    current = current.resolve()
+    if not _is_under(current, root):
+        return None
+    return current
 
 
 def rel_cache_key(path: Path, root: Path) -> str:

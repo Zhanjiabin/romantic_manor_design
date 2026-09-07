@@ -302,6 +302,36 @@ def test_paper_save_rejects_stale_body_and_thumbnail():
             assert "changed" in str(exc)
         else:
             raise AssertionError("stale thumbnail upload should fail")
+
+        assert save_building_papers([{
+            "id": ident,
+            "name": "强制写回.txt",
+            "data": "Zm9yY2U=",
+            "kind": "terrain",
+            "savedAt": 50,
+            "revision": "rev-forced",
+            "force": True,
+            "terrainDocument": {
+                "stamps": [{"kind": "H", "x": 1, "y": 2}, {"kind": "G", "x": 3, "y": 4}],
+                "previewBuildings": [{"id": "preview-keep", "name": "咖啡馆"}],
+                "mapSize": 80,
+            },
+        }]) == 1
+        forced = load_building_paper(ident)
+        assert forced["data"] == "Zm9yY2U="
+        assert forced["name"] == "强制写回.txt"
+        assert forced["terrainDocument"]["stamps"][1]["kind"] == "G"
+        assert forced["terrainDocument"]["previewBuildings"][0]["id"] == "preview-keep"
+        try:
+            save_building_papers([{
+                "id": "huge-paper",
+                "name": "过大.txt",
+                "data": "A" * (4 * 1024 * 1024 + 1),
+            }])
+        except ValueError as exc:
+            assert "too large" in str(exc)
+        else:
+            raise AssertionError("oversized paper should fail")
     finally:
         if prev is None:
             os.environ.pop("MANOR_SAVES", None)

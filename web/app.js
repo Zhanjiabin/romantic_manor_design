@@ -253,7 +253,7 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
-  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=264"]);
+  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=273"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
     if (terrainInteractionBusy()) return;
@@ -277,7 +277,7 @@ async function consumePendingBuildingImport() {
     const binary = atob(payload.base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const file = new File([bytes], payload.name || "建筑.txt", { type: "text/plain" });
+    const file = PaperLibraryCore.createPaperFile(bytes, payload.name || "建筑.txt");
     await importFile(file, "build");
   } catch (err) {
     await appAlert(err.message || String(err), { title: "导入失败" });
@@ -297,7 +297,7 @@ async function consumePendingTerrainImport() {
   if (!payload?.base64) return;
   try {
     const bytes = PaperLibraryCore.base64ToBytes(payload.base64);
-    const file = new File([bytes], payload.name || "地形.txt", { type: "text/plain" });
+    const file = PaperLibraryCore.createPaperFile(bytes, payload.name || "地形.txt");
     await importFile(file, "terrain");
   } catch (err) {
     await appAlert(err.message || String(err), { title: "导入失败" });
@@ -4621,13 +4621,31 @@ function copyFloorQuad(quad) {
   };
 }
 
+function serializePreviewRecord(record) {
+  if (!record) return null;
+  const packKey = typeof record.packKey === "string" && record.packKey
+    ? record.packKey
+    : (typeof record.pack?.key === "string" ? record.pack.key : "");
+  return {
+    mode: record.mode || "desk",
+    x: Number(record.x) || 0,
+    y: Number(record.y) || 0,
+    mat: Number(record.mat) || 0,
+    state: Number(record.state ?? record.flip) || 0,
+    packKey,
+    group: record.group || "",
+    groupName: record.groupName || "",
+    hidden: !!record.hidden,
+  };
+}
+
 function serializePreviewEntity(entity) {
   if (!entity) return null;
   return {
     id: entity.id,
     sourceType: entity.sourceType,
     name: entity.name,
-    records: entity.records?.map((record) => ({ ...record })),
+    records: entity.records?.map(serializePreviewRecord).filter(Boolean),
     paperHash: entity.paperHash,
     baseNo: entity.baseNo,
     localPackKey: entity.localPackKey || "",
@@ -5298,6 +5316,20 @@ function terrainPaperStem() {
   return desc || fromSource;
 }
 
+function terrainSnapshotMatches(local, remote) {
+  if (!local || !remote || !Array.isArray(remote.stamps)) return false;
+  if (remote.stamps.length !== (local.stamps || []).length) return false;
+  const localSize = Number(local.mapSize ?? local.size) || 0;
+  const remoteSize = Number(remote.mapSize ?? remote.size) || 0;
+  if (localSize && remoteSize && localSize !== remoteSize) return false;
+  const localPreviews = Array.isArray(local.previewBuildings) ? local.previewBuildings.length : 0;
+  const remotePreviews = Array.isArray(remote.previewBuildings) ? remote.previewBuildings.length : 0;
+  if (localPreviews !== remotePreviews) return false;
+  const localBuildings = Array.isArray(local.buildings) ? local.buildings.length : 0;
+  const remoteBuildings = Array.isArray(remote.buildings) ? remote.buildings.length : 0;
+  return localBuildings === remoteBuildings;
+}
+
 function projectSnapshot(name) {
   const savedAt = Date.now();
   return {
@@ -5339,11 +5371,13 @@ function applyProject(doc, opts) {
     state.buildings = incomingBuildings;
   }
   const keepSelected = state.selectedPreviewId;
-  state.previewBuildings = (doc.previewBuildings || []).map(deserializePreviewEntity);
-  state.selectedPreviewId = state.previewBuildings.some((entity) => entity.id === keepSelected)
-    ? keepSelected
-    : null;
-  refreshPreviewRuntimes();
+  if (Array.isArray(doc.previewBuildings)) {
+    state.previewBuildings = doc.previewBuildings.map(deserializePreviewEntity).filter((row) => row?.id);
+    state.selectedPreviewId = state.previewBuildings.some((entity) => entity.id === keepSelected)
+      ? keepSelected
+      : null;
+    refreshPreviewRuntimes();
+  }
   state.bldKind = doc.bldKind || "manor";
   state.projectSavedAt = snapSavedAt(doc);
   state.terrainSource = doc.terrainSource || null;
@@ -5588,12 +5622,14 @@ function loadDraftLocal() {
 async function saveDraft() {
   const revision = terrainEditRevision;
   const snap = projectSnapshot("自动保存");
+  if (terrainEditRevision !== revision) return;
   saveDraftLocal(snap);
   try {
     await idbPut("kv", snap, "draft");
   } catch (err) {
     console.warn(err);
   }
+  if (terrainEditRevision !== revision) return;
   try {
     await putTerrainDraft(snap);
     if (terrainEditRevision === revision) {
@@ -5607,6 +5643,7 @@ async function saveDraft() {
     }
     console.warn(err);
   }
+  if (terrainEditRevision !== revision) return;
   await saveAutomaticHistoryIfDue(snap);
 }
 
@@ -5642,12 +5679,14 @@ async function saveAutomaticHistoryIfDue(snap) {
 async function saveDraftForSwitch() {
   const revision = terrainEditRevision;
   const snap = projectSnapshot("自动保存");
+  if (terrainEditRevision !== revision) return;
   saveDraftLocal(snap);
   try {
     await idbPut("kv", snap, "draft");
   } catch (err) {
     console.warn(err);
   }
+  if (terrainEditRevision !== revision) return;
   if (terrainEditRevision === revision) state.dirty = false;
   setSaveStatus("已保存 " + formatSaveTime(snap.savedAt));
   putTerrainDraft(snap).catch((err) => console.warn(err));
@@ -7055,7 +7094,7 @@ function onKey(e) {
 
 async function applyTerrain(doc, quiet, options = {}) {
   pushHist();
-  if (options.replaceProject) {
+  if (options.replaceProject && !options.keepPreviews) {
     state.buildings = [];
     state.previewRuntime.forEach((runtime) => {
       if (runtime?.url) URL.revokeObjectURL(runtime.url);
@@ -7861,6 +7900,7 @@ function syncSavedTerrainIntoLibrary(payload, file) {
     entry.documentData = null;
     entry.inspectBitmap = null;
     entry._hydrate = null;
+    entry._hydrateGen = (entry._hydrateGen || 0) + 1;
     refreshTerrainPaperLibraryCard(entry);
     return entry;
   }
@@ -7878,6 +7918,7 @@ function syncSavedTerrainIntoLibrary(payload, file) {
   entry.file = file || null;
   entry.serverHydrated = true;
   entry.terrainDocument = payload.terrainDocument || null;
+  entry._hydrateGen = 1;
   terrainPaperLibrary.entries.unshift(entry);
   const grid = document.getElementById("paperPreviewGrid");
   if (!grid) return;
@@ -7909,7 +7950,7 @@ async function commitTerrainToPaperLibrary(mode) {
     terrainDocument.sourcePaper = { id: ident, name, groupId: state.sourcePaper?.groupId || "" };
     const paper = terrainDocument.stamps.filter((s) => s.kind && s.kind.charAt(0) !== "@");
     const thumbPromise = view ? PaperLibraryCore.canvasToJpegBlob(view) : Promise.resolve(null);
-    const bytes = await formatCurrentTerrainBytes(terrainDocument, state.terrainSource);
+    const bytes = await formatCurrentTerrainBytes(terrainDocument, null);
     const data = PaperLibraryCore.bytesToBase64(bytes);
     const upload = {
       id: ident,
@@ -7921,21 +7962,29 @@ async function commitTerrainToPaperLibrary(mode) {
       group: state.sourcePaper?.groupId || "",
       count: paper.length,
       meta: `${terrainDocument.mapSize} 格 · ${paper.length} 个地块`,
+      force: true,
       terrainDocument,
     };
-    await PaperLibraryCore.persist([upload], { replace: false });
+    await PaperLibraryCore.persist([upload], { replace: false, requireSaved: true });
+    const confirmed = await PaperLibraryCore.fetchPaper(ident);
+    const confirmedDoc = confirmed?.terrainDocument && typeof confirmed.terrainDocument === "object"
+      ? confirmed.terrainDocument
+      : null;
+    if (!terrainSnapshotMatches(terrainDocument, confirmedDoc)) {
+      throw new Error("图纸库写入后对不上当前设计，请再保存一次。");
+    }
+    upload.terrainDocument = confirmedDoc;
     rememberSourcePaper({ id: ident, name, groupId: upload.group });
     const desc = document.getElementById("desc");
     if (desc) desc.value = name.replace(/\.txt$/i, "");
-    const file = new File([bytes], name);
-    file.paperMeta = {
+    const file = PaperLibraryCore.createPaperFile(bytes, name, {
       id: ident,
       revision: upload.revision,
       kind: "terrain",
       group: upload.group,
       data,
       terrainDocument,
-    };
+    });
     const savedEntry = syncSavedTerrainIntoLibrary(upload, file);
     const blob = await thumbPromise;
     if (blob) {
@@ -7977,17 +8026,34 @@ function terrainSummaryPayload(entry) {
   };
 }
 
-async function hydrateTerrainPaperEntry(entry) {
+async function hydrateTerrainPaperEntry(entry, { force = false } = {}) {
   if (!entry) return entry;
-  if (entry.file && entry.documentData && (!entry.contentId || entry.serverHydrated)) return entry;
-  if (entry._hydrate) return entry._hydrate;
+  const needsTerrainDocument = (entry.kind === "terrain" || entry.documentData?.kind === "terrain")
+    && !entry.terrainDocument;
+  if (
+    !force
+    && entry.file
+    && entry.documentData
+    && (!entry.contentId || (entry.serverHydrated && !needsTerrainDocument))
+  ) {
+    return entry;
+  }
+  if (!force && entry._hydrate) return entry._hydrate;
   const contentId = entry.contentId || entry.id;
+  entry._hydrateGen = (entry._hydrateGen || 0) + 1;
+  const hydrateGen = entry._hydrateGen;
   entry._hydrate = (async () => {
     const paper = await PaperLibraryCore.fetchPaper(contentId);
+    if (entry._hydrateGen !== hydrateGen) return entry;
     const { file, bytes } = PaperLibraryCore.fileFromPaper(paper);
     const documentData = await PaperLibraryCore.parseFile(bytes.buffer);
+    if (entry._hydrateGen !== hydrateGen) return entry;
     entry.file = file;
     entry.documentData = documentData;
+    if (paper.name) {
+      entry.name = paper.name;
+      entry.search = String(paper.name).toLowerCase();
+    }
     entry.serverHydrated = true;
     entry.inspectBitmap = null;
     entry.revision = paper.revision || "";
@@ -8263,43 +8329,61 @@ function renderTerrainPaperLibraryCard(entry, { paint = true } = {}) {
 }
 
 async function applyTerrainLibraryPaper(entry) {
+  terrainEditRevision += 1;
   try {
-    await hydrateTerrainPaperEntry(entry);
+    await hydrateTerrainPaperEntry(entry, { force: true });
   } catch (error) {
     console.warn(error);
+    await appAlert("读取图纸失败，请再试一次。", { title: "打开图纸" });
     return;
   }
   if (!entry?.file) return;
   setTerrainPaperLibraryOpen(false);
-  if (entry.kind === "terrain" && entry.terrainDocument) {
+  const expect = entry.kind === "terrain" ? "terrain" : entry.kind === "desk" ? "desk" : "build";
+  if (expect !== "terrain") {
+    await importFile(entry.file, expect);
+    return;
+  }
+  const sourcePaper = {
+    id: entry.contentId || entry.id,
+    name: entry.name,
+    groupId: entry.groupId || "",
+  };
+  const snapshot = entry.terrainDocument && typeof entry.terrainDocument === "object"
+    && Array.isArray(entry.terrainDocument.stamps)
+    ? entry.terrainDocument
+    : null;
+  terrainEditRevision += 1;
+  if (snapshot) {
     pushHist();
-    terrainEditRevision += 1;
-    const project = {
-      ...entry.terrainDocument,
-      sourcePaper: {
-        id: entry.contentId || entry.id,
-        name: entry.name,
-        groupId: entry.groupId || "",
-      },
-    };
-    applyProject(project, { quiet: true, replace: true });
-    state.terrainSource = entry.documentData?._source || null;
-    rememberSourcePaper(entry);
+    applyProject({
+      ...snapshot,
+      sourcePaper,
+    }, { quiet: true, replace: true });
+    state.terrainSource = entry.documentData?._source || snapshot.terrainSource || null;
+    rememberSourcePaper(sourcePaper);
     savePreviewGuard();
     state.dirty = false;
     const draft = projectSnapshot("自动保存");
     saveDraftLocal(draft);
     await idbPut("kv", draft, "draft").catch((error) => console.warn(error));
     putTerrainDraft(draft).catch((error) => console.warn(error));
+    updatePreviewBuildingUi();
     setSaveStatus("已打开图纸 " + entry.name);
     return;
   }
-  const expect = entry.kind === "terrain" ? "terrain" : entry.kind === "desk" ? "desk" : "build";
-  await importFile(
-    entry.file,
-    expect,
-    expect === "terrain" ? { sourcePaper: entry, replaceProject: true } : {}
+  const samePaper = sourcePaperId() === (entry.contentId || entry.id);
+  await appAlert(
+    samePaper
+      ? "这张图纸没有完整设计快照。打开后可能对不上刚才的地形和建筑，请打开后再保存一次。"
+      : "这张旧图纸没有完整设计快照。打开后只恢复游戏地形文件，画布预览建筑可能对不上。打开后请再保存一次。",
+    { title: "打开图纸" }
   );
+  await importFile(entry.file, "terrain", {
+    sourcePaper,
+    replaceProject: true,
+    keepPreviews: samePaper,
+  });
 }
 
 async function loadTerrainPaperLibraryFiles(candidates, { persist = false, append = true } = {}) {
@@ -8326,8 +8410,8 @@ async function loadTerrainPaperLibraryFiles(candidates, { persist = false, appen
   const uploads = [];
   for (const [index, file] of candidates.entries()) {
     try {
-      const relative = String(file.webkitRelativePath || file.name).replace(/\\/g, "/");
       const meta = file.paperMeta || {};
+      const relative = PaperLibraryCore.paperNameFromFile(file, meta.name);
       const buffer = meta.data ? PaperLibraryCore.base64ToBytes(meta.data).buffer : await file.arrayBuffer();
       if (gen !== terrainPaperLibrary.generation) return;
       const bytes = new Uint8Array(buffer);

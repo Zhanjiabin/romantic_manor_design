@@ -15,7 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from server import (
+    ASSET_CACHE,
     Handler,
+    PUBLIC_PREFIXES,
+    _resolve_under,
     auth_accounts,
     auth_credentials,
     clear_login_failures,
@@ -147,6 +150,81 @@ def test_safe_next_path():
     assert safe_next_path("//evil") == "/"
     assert safe_next_path("https://evil.example/") == "/"
     assert safe_next_path("/login") == "/"
+
+
+def test_resolve_under_matches_case_insensitive_leaf():
+    tmp = Path(tempfile.mkdtemp(prefix="manor-ale-case-"))
+    pack = tmp / "res" / "snow"
+    pack.mkdir(parents=True)
+    (pack / "windows01.ale").write_bytes(b"ale")
+    hit = _resolve_under(tmp, "res/snow/Windows01.ale")
+    assert hit is not None
+    assert hit.name == "windows01.ale"
+    assert _resolve_under(tmp, "res/snow/missing.ale") is None
+
+
+def test_game_art_prefixes_are_public():
+    for path in (
+        "/tiles/maptexture/990000.jpg",
+        "/ale/wlink014.png",
+        "/bdesign/ale/res/snow/windows01.ale.png",
+        "/bdesign/imgs/glsbg.gif",
+        "/item-ale/foo.ale.png",
+    ):
+        assert any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES)
+    assert not any("/api/saves/terrain".startswith(prefix) for prefix in PUBLIC_PREFIXES)
+    assert "max-age=2592000" in ASSET_CACHE
+
+
+def test_http_game_art_skips_login():
+    saved = _clear_auth_env()
+    os.environ["MANOR_USER"] = "ada"
+    os.environ["MANOR_PASSWORD"] = "secret"
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = httpd.server_address[:2]
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/bdesign/ale/res/missing-sprite.ale.png?f=0&thumb=1")
+        missing = conn.getresponse()
+        missing.read()
+        assert missing.status == 404
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/tiles/missing-tile.jpg")
+        tile = conn.getresponse()
+        tile.read()
+        assert tile.status == 404
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/terrain")
+        api = conn.getresponse()
+        api.read()
+        assert api.status == 401
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/web/favicon.svg")
+        first = conn.getresponse()
+        first.read()
+        etag = first.getheader("ETag")
+        assert first.status == 200
+        assert etag
+        conn.close()
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/web/favicon.svg", headers={"If-None-Match": etag})
+        cached = conn.getresponse()
+        cached.read()
+        assert cached.status == 304
+        conn.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        _restore_env(saved)
 
 
 def test_http_auth_and_public_health():

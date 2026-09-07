@@ -669,7 +669,7 @@ def save_building_papers(items) -> int:
             if not name or not isinstance(data, str) or not data:
                 continue
             if len(data) > 4 * 1024 * 1024:
-                continue
+                raise ValueError("paper data too large")
             incoming_saved = _int_field(item.get("savedAt"))
             existing_saved = _int_field(existing.get("savedAt"))
             existing_data = existing.get("data") if isinstance(existing.get("data"), str) else ""
@@ -681,8 +681,10 @@ def save_building_papers(items) -> int:
                 or "deskDocument" in item
                 or "terrainDocument" in item
             )
+            force = bool(item.get("force"))
             if (
-                incoming_visual
+                not force
+                and incoming_visual
                 and incoming_saved > 0
                 and existing_saved > 0
                 and (

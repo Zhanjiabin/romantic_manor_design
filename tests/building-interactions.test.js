@@ -18,6 +18,7 @@ const {
   recordGroupStack,
   remapImportedDeskGroups,
   wrapRecordsInGroup,
+  reorderRecordsByCommand,
   expandGroupedIndices,
   visiblePaperRecords,
   remapIndicesAfterInsert,
@@ -172,6 +173,42 @@ test("grouping two complete groups nests them without flattening", () => {
   assert.deepEqual(expandGroupedIndices(nested, [2], "b"), [2, 3]);
 });
 
+test("layer up/down moves a selected group past the next group, not one sprite", () => {
+  const garden = { group: "garden", groupName: "花园1" };
+  const wall = { group: "wall", groupName: "左墙" };
+  const stair = { group: "stair", groupName: "楼梯" };
+  const rows = [
+    { mat: 1, ...stair },
+    { mat: 2, ...stair },
+    { mat: 3, ...wall },
+    { mat: 4, ...wall },
+    { mat: 5, ...wall },
+    { mat: 6, ...garden },
+    { mat: 7, ...garden },
+  ];
+  const gardenIdx = [5, 6];
+  const down1 = reorderRecordsByCommand(rows, gardenIdx, "down");
+  assert.deepEqual(down1.map((row) => row.mat), [1, 2, 6, 7, 3, 4, 5]);
+  const down2 = reorderRecordsByCommand(down1, [2, 3], "down");
+  assert.deepEqual(down2.map((row) => row.mat), [6, 7, 1, 2, 3, 4, 5]);
+  const up1 = reorderRecordsByCommand(down1, [2, 3], "up");
+  assert.deepEqual(up1.map((row) => row.mat), [1, 2, 3, 4, 5, 6, 7]);
+  const alreadyTop = reorderRecordsByCommand(rows, gardenIdx, "up");
+  assert.deepEqual(alreadyTop.map((row) => row.mat), [1, 2, 3, 4, 5, 6, 7]);
+  const alreadyBottom = reorderRecordsByCommand(rows, [0, 1], "down");
+  assert.deepEqual(alreadyBottom.map((row) => row.mat), [1, 2, 3, 4, 5, 6, 7]);
+  const single = reorderRecordsByCommand(
+    [{ mat: 1 }, { mat: 2 }, { mat: 3 }],
+    [2],
+    "down"
+  );
+  assert.deepEqual(single.map((row) => row.mat), [1, 3, 2]);
+  const top = reorderRecordsByCommand(rows, [0, 1], "top");
+  assert.deepEqual(top.map((row) => row.mat), [3, 4, 5, 6, 7, 1, 2]);
+  const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  assert.match(buildingJs, /state\.records = BI\.reorderRecordsByCommand\(state\.records, indices, command\)/);
+});
+
 test("paper export and library previews skip hidden desk layers", () => {
   const rows = [
     { mat: 0, hidden: true },
@@ -181,16 +218,35 @@ test("paper export and library previews skip hidden desk layers", () => {
   ];
   assert.deepEqual(visiblePaperRecords(rows).map((row) => row.mat), [14101, 8101]);
   const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  // Library previews must use the canvas visibility rule (hidden layer, mat 0,
+  // native-hidden try*.ale) and never clip by the 570×550 design layer: paper
+  // coordinates span the 1690×1030 native layer.
+  const previewFn = buildingJs.match(/function libraryPreviewRecords\([\s\S]*?\n\}/)?.[0] || "";
+  assert.match(previewFn, /BI\.visiblePaperRecords\(records\)/);
+  assert.match(previewFn, /isNativeDeskHiddenComponent\(component\)/);
+  assert.doesNotMatch(previewFn, /inDesignLayerBounds|DESIGN_W|DESIGN_H/);
+  assert.match(buildingJs, /function paperThumbIsStale\(/);
+  assert.match(buildingJs, /entry\.kind === "desk" && paperThumbIsStale\(entry\)/);
   assert.match(buildingJs, /function exportRecordList\(records = state\.records\) \{\s*const refs = records\.filter\(\(record\) => Number\(record\.mat\) === 0\);\s*return \[\.\.\.refs, \.\.\.BI\.visiblePaperRecords\(records\)\];\s*\}/);
-  assert.match(buildingJs, /const deskDocument = serializeDeskDocument\(\);[\s\S]*formatCurrentPaperBytes\(exportRecords, source\)/);
+  assert.match(buildingJs, /const deskDocument = serializeDeskDocument\(\);[\s\S]*formatCurrentPaperBytes\(exportRecords, null\)/);
+  assert.match(buildingJs, /const report = buildingMaterialReport\(state\.records\)/);
+  assert.match(buildingJs, /function paperPackKey\(/);
+  assert.match(buildingJs, /if \(record\?\.localPackUnknown\) return null;/);
+  assert.match(buildingJs, /if \(packUid != null\) return packUid \* 1000 \+ local;/);
+  assert.doesNotMatch(buildingJs, /usesGlobal && packUid/);
+  assert.doesNotMatch(
+    buildingJs,
+    /if \(record\.localPackUnknown && Number\(record\.mat\) > 0 && Number\(record\.mat\) < 1000\) \{\s*return null;/
+  );
   assert.match(buildingJs, /deskLayers: serializeDeskLayers\(deskDocument\.records\)/);
   assert.match(buildingJs, /function serializeDeskLayers\(records = serializeSessionRecords\(\)\)/);
   assert.match(buildingJs, /function paperLibraryPreviewDocument\(/);
+  assert.match(buildingJs, /function libraryPreviewRecords\(/);
+  assert.match(buildingJs, /function previewPackForRecord\(/);
   assert.match(buildingJs, /entry\?\.kind === "terrain" \|\| entry\?\.documentData\?\.kind === "terrain"/);
   assert.match(buildingJs, /function applyVisibleDeskLibraryStats\(/);
-  assert.match(buildingJs, /entry\.kind === "desk" \? await paintPaperInspectBitmap\(paperLibraryPreviewDocument\(entry\)\) : null/);
+  assert.match(buildingJs, /entry\.kind === "desk"\s*\? await paintPaperInspectBitmap\(paperLibraryPreviewDocument\(entry\)\)/);
   assert.match(buildingJs, /paintPaperThumbnail\(canvas, paperLibraryPreviewDocument\(entry\)\)/);
-  assert.match(buildingJs, /entry\.kind !== "desk" \? clonePaperCardThumb\(entry\) : null/);
   assert.match(buildingJs, /Number\(record\.mat\) !== 0 && !record\.hidden/);
 });
 
@@ -920,6 +976,8 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   assert.match(source, /state\.previewInteraction/);
   assert.match(source, /previewBuildings: \[\]/);
   assert.match(source, /previewBuildings: state\.previewBuildings\.map\(serializePreviewEntity\)/);
+  assert.match(source, /function serializePreviewRecord\(/);
+  assert.match(source, /Array\.isArray\(doc\.previewBuildings\)/);
   assert.match(source, /function previewResizeHandles/);
   assert.match(source, /function previewOpaqueAt/);
   assert.match(source, /function previewPointInFootprint/);
@@ -1045,10 +1103,13 @@ test("both desks keep interactive frames off the expensive render paths", () => 
   assert.match(mobileJs, /lastViewportKey/);
   assert.match(mobileJs, /requestAnimationFrame/);
   // Server: static files revalidate via ETag, game assets are immutable,
-  // text assets can compress.
+  // public so the browser can keep them across visits, text can compress.
   assert.match(serverPy, /If-None-Match/);
-  assert.match(serverPy, /max-age=604800, immutable/);
+  assert.match(serverPy, /max-age=2592000, immutable/);
+  assert.match(serverPy, /\/bdesign\/ale\//);
   assert.match(serverPy, /gzip\.compress/);
+  assert.match(buildingJs, /function bindSpriteThumb/);
+  assert.match(buildingJs, /function scheduleAssetThumbPrefetch/);
 });
 
 test("layer list clicks a grouped child without expanding the whole group", () => {
@@ -1217,13 +1278,15 @@ test("building designs and uploaded paper libraries persist explicitly", () => {
   assert.match(buildingJs, /function serializeDeskDocument\(/);
   assert.match(buildingJs, /const deskDocument = serializeDeskDocument\(\)/);
   assert.match(buildingJs, /deskLayers: serializeDeskLayers\(deskDocument\.records\)/);
-  assert.match(buildingJs, /formatCurrentPaperBytes\(exportRecords, source\)/);
+  assert.match(buildingJs, /formatCurrentPaperBytes\(exportRecords, null\)/);
   assert.match(buildingJs, /BI\.applyDeskLayers\(rows, layers\)/);
   assert.match(buildingJs, /function newPaperLibraryId\(/);
   assert.match(buildingJs, /function rememberSourcePaper\(/);
   assert.match(buildingJs, /paper\?\.contentId \|\| paper\?\.id/);
   assert.match(buildingJs, /file\.paperMeta\?\.id/);
-  assert.match(buildingJs, /PaperLibraryCore\.persist\(\[upload\], \{ replace: false \}\)/);
+  assert.match(buildingJs, /PaperLibraryCore\.persist\(\[upload\], \{ replace: false, requireSaved: true \}\)/);
+  assert.match(buildingJs, /PaperLibraryCore\.createPaperFile\(bytes, name/);
+  assert.match(buildingJs, /name: paper\.name \|\| entry\.name/);
   assert.match(buildingJs, /mode === "original" \? originalId : newPaperLibraryId\(\)/);
   assert.match(buildingJs, /async function openServerPaperLibrary/);
   assert.match(buildingJs, /function loadPaperLibraryCacheMap/);
@@ -1339,8 +1402,8 @@ test("terrain designs save to the paper library like building designs", () => {
   assert.match(appJs, /paper\?\.contentId \|\| paper\?\.id/);
   assert.match(appJs, /sourcePaper: state\.sourcePaper \? \{ \.\.\.state\.sourcePaper \} : null/);
   assert.match(appJs, /state\.sourcePaper = null/);
-  assert.match(appJs, /expect === "terrain" \? \{ sourcePaper: entry, replaceProject: true \} : \{\}/);
-  assert.match(appJs, /PaperLibraryCore\.persist\(\[upload\], \{ replace: false \}\)/);
+  assert.match(appJs, /replaceProject: true,\s*keepPreviews: samePaper/);
+  assert.match(appJs, /PaperLibraryCore\.persist\(\[upload\], \{ replace: false, requireSaved: true \}\)/);
   assert.match(appJs, /mode === "original" \? originalId : newPaperLibraryId\(\)/);
   assert.match(appJs, /kind: "terrain"/);
   assert.match(appJs, /wireClick\("btnSaveLocal", \(\) => openSaveTerrainDialog\(\)\)/);
@@ -1377,11 +1440,11 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(terrainJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(buildingJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(paperCore, /b > r \+ 8 && b >= g/);
-  assert.match(terrainHtml, /paper-library-core\.js\?v=18/);
+  assert.match(terrainHtml, /paper-library-core\.js\?v=22/);
   assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
-  assert.match(terrainHtml, /app\.js\?v=284/);
-  assert.match(buildingHtml, /paper-library-core\.js\?v=18/);
-  assert.match(buildingHtml, /building\.js\?v=264/);
+  assert.match(terrainHtml, /app\.js\?v=289/);
+  assert.match(buildingHtml, /paper-library-core\.js\?v=22/);
+  assert.match(buildingHtml, /building\.js\?v=274/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
 });
 
@@ -1393,7 +1456,7 @@ test("building desk can insert a new layer between existing rows", () => {
   const interactions = fs.readFileSync(path.join(__dirname, "../web/building-interactions.js"), "utf8");
   assert.match(buildingHtml, /id="layerInsertBanner"/);
   assert.match(buildingHtml, /id="btnClearLayerInsert"/);
-  assert.match(buildingHtml, /building-interactions\.js\?v=19/);
+  assert.match(buildingHtml, /building-interactions\.js\?v=22/);
   assert.match(interactions, /function resolveLayerInsertIndex/);
   assert.match(buildingJs, /function insertDeskRecords/);
   assert.match(buildingJs, /function appendLayerInsertSlot/);
@@ -1542,7 +1605,25 @@ test("paper library can batch-assign groups on both desks", () => {
   assert.equal(core.paperMatchesArchiveView({ archived: true }, false), false);
   assert.equal(core.paperMatchesArchiveView({ archived: true }, true), true);
   assert.equal(core.countArchivedPapers([{ archived: true }, { archived: false }]), 1);
+  const pack = { key: "bazaar", components: [] };
+  pack.components.push({ id: 1, _pack: pack });
+  assert.equal(core.jsonSafe({ packKey: pack, component: { _pack: pack } }).packKey, "bazaar");
+  const sharedStamp = { kind: "A", x: 10, y: 20 };
+  const sharedSafe = core.jsonSafe({
+    stamps: [sharedStamp, { kind: "B", x: 11, y: 21 }, sharedStamp],
+    extra: sharedStamp,
+  });
+  assert.equal(sharedSafe.stamps.length, 3);
+  assert.equal(sharedSafe.stamps[0].kind, "A");
+  assert.equal(sharedSafe.stamps[2].kind, "A");
+  assert.equal(sharedSafe.extra.kind, "A");
+  assert.match(paperCoreSrc, /requireSaved && papers\.length && saved < 1/);
+  assert.match(paperCoreSrc, /ancestors\.delete\(item\)/);
   assert.equal(core.sanitizePaperFileName("2026/8/30小围墙10"), "2026/8/30小围墙10.txt");
+  assert.equal(core.sanitizePaperFileName("2026/9/6房5"), "2026/9/6房5.txt");
+  assert.equal(core.downloadSafePaperFileName("2026/9/6房5"), "2026-9-6房5.txt");
+  assert.equal(core.paperNameFromFile({ name: "6房5.txt", paperMeta: { name: "2026/9/6房5.txt" } }), "2026/9/6房5.txt");
+  assert.equal(core.paperNameFromFile({ name: "6房5.txt", webkitRelativePath: "箱/2026/9/6房5.txt" }), "箱/2026/9/6房5.txt");
   assert.match(buildingJs, /return PaperLibraryCore\.sanitizePaperFileName\(raw \|\| "build"\)/);
   assert.match(terrainJs, /return PaperLibraryCore\.sanitizePaperFileName\(raw \|\| "map"\)/);
   assert.equal(core.sanitizePaperFileName("96房栏杆2.txt"), "96房栏杆2.txt");
@@ -1655,10 +1736,15 @@ test("scene preview entities persist in project v2 but stay out of game exports"
   assert.ok(boot.indexOf("reconcileTerrainRemote") < boot.indexOf("mergePreviewGuardIntoState"));
   assert.match(source, /applyProject\(full, \{ quiet: true, replace: true \}\)/);
   assert.match(source, /terrainDocument = projectSnapshot/);
-  assert.match(source, /formatCurrentTerrainBytes\(terrainDocument, state\.terrainSource\)/);
+  assert.match(source, /function terrainSnapshotMatches/);
+  assert.match(source, /formatCurrentTerrainBytes\(terrainDocument, null\)/);
   assert.match(source, /const thumbPromise = view \? PaperLibraryCore\.canvasToJpegBlob\(view\)/);
-  assert.match(source, /entry\.kind === "terrain" && entry\.terrainDocument/);
-  assert.match(source, /sourcePaper: entry, replaceProject: true/);
+  assert.match(source, /force: true/);
+  assert.match(source, /requireSaved: true/);
+  assert.match(source, /hydrateTerrainPaperEntry\(entry, \{ force: true \}\)/);
+  assert.match(source, /entry\._hydrateGen/);
+  assert.match(source, /keepPreviews: samePaper/);
+  assert.match(source, /sourcePaper,\s*replaceProject: true/);
   assert.match(source, /saveNamedVersion\(\s*`保存图纸/);
   const terrainExport = source.slice(source.indexOf("async function exportTerrain()"), source.indexOf("async function exportBuild()"));
   const buildingExport = source.slice(source.indexOf("async function exportBuild()"));
@@ -1741,10 +1827,8 @@ test("both desks expose the shared mobile-first workspace", () => {
   assert.match(terrainJs, /function bindTerrainPaperLibrary/);
   assert.match(terrainJs, /function showTerrainPaperLibraryIndex/);
   assert.match(terrainJs, /function hydrateTerrainPaperEntry/);
-  assert.match(
-    terrainJs,
-    /entry\.file && entry\.documentData && \(!entry\.contentId \|\| entry\.serverHydrated\)/
-  );
+  assert.match(terrainJs, /needsTerrainDocument/);
+  assert.match(terrainJs, /!entry\.contentId \|\| \(entry\.serverHydrated && !needsTerrainDocument\)/);
   assert.doesNotMatch(terrainJs, /base64ToBytes\(paper\.data\)/);
   assert.match(terrainJs, /terrainLibraryAcceptsKind/);
   assert.match(terrainJs, /kind === "desk" \|\| kind === "terrain" \|\| kind === "manor"/);

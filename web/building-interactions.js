@@ -1112,6 +1112,94 @@
     });
   }
 
+  function fullyUnselectedOutermostGroups(records, selectedIndices) {
+    const selected = new Set(selectedIndices);
+    const candidateIds = new Set();
+    (records || []).forEach((record) => {
+      recordGroupStack(record).forEach((entry) => candidateIds.add(entry.id));
+    });
+    const full = [];
+    candidateIds.forEach((id) => {
+      const members = groupMemberIndices(records, id);
+      if (members.length && members.every((index) => !selected.has(index))) full.push(id);
+    });
+    return full.filter((id) => {
+      const members = groupMemberIndices(records, id);
+      const stack = recordGroupStack(records[members[0]]);
+      const at = stack.findIndex((entry) => entry.id === id);
+      return at >= 0 && !stack.slice(0, at).some((entry) => full.includes(entry.id));
+    });
+  }
+
+  function layerOrderUnits(records, selectedIndices) {
+    const selected = new Set(selectedIndices);
+    const atomicIds = new Set([
+      ...outermostFullySelectedGroups(records, selectedIndices),
+      ...fullyUnselectedOutermostGroups(records, selectedIndices),
+    ]);
+    const units = [];
+    const emitted = new Set();
+    for (let index = 0; index < (records || []).length; index++) {
+      if (emitted.has(index)) continue;
+      const hit = recordGroupStack(records[index]).find((entry) => atomicIds.has(entry.id));
+      if (hit) {
+        const members = groupMemberIndices(records, hit.id);
+        units.push({
+          indices: members,
+          selected: members.some((member) => selected.has(member)),
+        });
+        members.forEach((member) => emitted.add(member));
+        continue;
+      }
+      units.push({ indices: [index], selected: selected.has(index) });
+      emitted.add(index);
+    }
+    return units;
+  }
+
+  function shiftSelectedUnits(units, direction) {
+    const next = units.slice();
+    if (direction < 0) {
+      for (let i = 1; i < next.length; i++) {
+        if (!next[i].selected || next[i - 1].selected) continue;
+        const swap = next[i - 1];
+        next[i - 1] = next[i];
+        next[i] = swap;
+      }
+    } else {
+      for (let i = next.length - 2; i >= 0; i--) {
+        if (!next[i].selected || next[i + 1].selected) continue;
+        const swap = next[i + 1];
+        next[i + 1] = next[i];
+        next[i] = swap;
+      }
+    }
+    return next;
+  }
+
+  function flattenLayerUnits(records, units) {
+    const out = [];
+    units.forEach((unit) => {
+      unit.indices.forEach((index) => out.push(records[index]));
+    });
+    return out;
+  }
+
+  function reorderRecordsByCommand(records, selectedIndices, command) {
+    const rows = records || [];
+    const indices = [...new Set(selectedIndices || [])]
+      .filter((index) => Number.isInteger(index) && rows[index])
+      .sort((a, b) => a - b);
+    if (!indices.length) return rows.slice();
+    const moving = indices.map((index) => rows[index]);
+    const keep = rows.filter((_, index) => !indices.includes(index));
+    if (command === "bottom") return [...moving, ...keep];
+    if (command === "top") return [...keep, ...moving];
+    if (command !== "down" && command !== "up") return rows.slice();
+    const units = layerOrderUnits(rows, indices);
+    return flattenLayerUnits(rows, shiftSelectedUnits(units, command === "down" ? -1 : 1));
+  }
+
   function peelGroupsFromRecords(records, groupIds) {
     const ids = new Set(groupIds);
     return (records || []).map((record) => {
@@ -1215,6 +1303,7 @@
     normalizeRect,
     outermostFullySelectedGroups,
     peelGroupsFromRecords,
+    reorderRecordsByCommand,
     recordGroupStack,
     recordInGroup,
     rectFromPoints,

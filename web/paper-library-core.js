@@ -121,17 +121,57 @@
     return { ...doc, kind: "terrain" };
   }
 
-  async function persist(uploads, { replace = false, groups } = {}) {
+  function isPackLike(value) {
+    return !!(
+      value
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && typeof value.key === "string"
+      && Array.isArray(value.components)
+      && value.components.some((row) => row && typeof row === "object" && row._pack)
+    );
+  }
+
+  function jsonSafe(value) {
+    const ancestors = new WeakSet();
+    const walk = (item, key) => {
+      if (item && typeof item === "object") {
+        if (key === "_pack" || key === "component") return undefined;
+        if (isPackLike(item)) return typeof item.key === "string" ? item.key : undefined;
+        if (ancestors.has(item)) return undefined;
+        ancestors.add(item);
+        let out;
+        if (Array.isArray(item)) {
+          out = item.map((row, index) => {
+            const next = walk(row, String(index));
+            return next === undefined ? null : next;
+          });
+        } else {
+          out = {};
+          Object.entries(item).forEach(([childKey, child]) => {
+            const next = walk(child, childKey);
+            if (next !== undefined) out[childKey] = next;
+          });
+        }
+        ancestors.delete(item);
+        return out;
+      }
+      return item;
+    };
+    return walk(value, "");
+  }
+
+  async function persist(uploads, { replace = false, groups, requireSaved = false } = {}) {
     const papers = Array.isArray(uploads) ? uploads : [];
     const batches = [];
     let batch = [];
     let batchBytes = 32;
     papers.forEach((paper) => {
-      const extras = JSON.stringify({
+      const extras = JSON.stringify(jsonSafe({
         deskLayers: paper.deskLayers,
         deskDocument: paper.deskDocument,
         terrainDocument: paper.terrainDocument,
-      });
+      }));
       const extrasBytes = global.TextEncoder
         ? new TextEncoder().encode(extras).byteLength
         : extras.length * 3;
@@ -164,7 +204,7 @@
     }
     let saved = 0;
     for (const [index, chunk] of batches.entries()) {
-      const payload = { replace: replace && index === 0, papers: chunk };
+      const payload = { replace: replace && index === 0, papers: chunk.map(jsonSafe) };
       if (groups && index === batches.length - 1) payload.groups = groups;
       const response = await fetch(API, {
         method: "PUT",
@@ -174,6 +214,9 @@
       });
       if (!response.ok) throw new Error(`图纸库同步失败 (${response.status})`);
       saved += Number((await response.json())?.saved || 0);
+    }
+    if (requireSaved && papers.length && saved < 1) {
+      throw new Error("图纸库没有写入这张图纸，请再试一次。");
     }
     return saved;
   }
@@ -359,6 +402,26 @@
     return `${text || "图纸"}.txt`;
   }
 
+  function downloadSafePaperFileName(raw) {
+    const stem = paperNameStem(sanitizePaperFileName(raw)).replace(/[\/\\]+/g, "-");
+    return `${stem || "图纸"}.txt`;
+  }
+
+  function paperNameFromFile(file, fallback) {
+    if (file?.paperMeta?.name) return sanitizePaperFileName(file.paperMeta.name);
+    if (fallback) return sanitizePaperFileName(fallback);
+    const relative = String(file?.webkitRelativePath || "").replace(/\\/g, "/").trim();
+    if (relative) return sanitizePaperFileName(relative);
+    return sanitizePaperFileName(file?.name || "图纸");
+  }
+
+  function createPaperFile(bytes, libraryName, extraMeta) {
+    const name = sanitizePaperFileName(libraryName);
+    const file = new File([bytes], downloadSafePaperFileName(name));
+    file.paperMeta = { ...(extraMeta && typeof extraMeta === "object" ? extraMeta : {}), name };
+    return file;
+  }
+
   function sanitizePaperGroupName(raw) {
     return String(raw || "").replace(/\s+/g, " ").trim().slice(0, 40);
   }
@@ -531,8 +594,7 @@
 
   function fileFromPaper(paper) {
     const bytes = base64ToBytes(paper.data);
-    const file = new File([bytes], String(paper.name || "图纸.txt"));
-    file.paperMeta = {
+    const file = createPaperFile(bytes, paper.name || "图纸.txt", {
       id: paper.id,
       revision: paper.revision || "",
       kind: paper.kind,
@@ -541,7 +603,7 @@
       deskLayers: Array.isArray(paper.deskLayers) ? paper.deskLayers : [],
       deskDocument: paper.deskDocument && typeof paper.deskDocument === "object" ? paper.deskDocument : null,
       terrainDocument: paper.terrainDocument && typeof paper.terrainDocument === "object" ? paper.terrainDocument : null,
-    };
+    });
     return { file, bytes, data: paper.data };
   }
 
@@ -637,6 +699,7 @@
     fetchPaper,
     thumbUrl,
     putThumb,
+    jsonSafe,
     canvasToJpegBlob,
     entryFromIndex,
     fileFromPaper,
@@ -654,6 +717,9 @@
     bindPaperSortSelect,
     paperNameStem,
     sanitizePaperFileName,
+    downloadSafePaperFileName,
+    paperNameFromFile,
+    createPaperFile,
     sanitizePaperGroupName,
     paperGroupById,
     renamePaperGroup,

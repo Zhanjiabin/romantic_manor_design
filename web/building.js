@@ -197,6 +197,8 @@ let assetRowsCache = [];
 let assetListBound = false;
 let assetWindowRaf = 0;
 let assetFilterKey = "";
+let assetWindowKey = "";
+let assetPrefetchKey = "";
 let lastSceneKey = "";
 let paintedOffset = { dx: 0, dy: 0 };
 const spriteBoundsCache = new WeakMap();
@@ -639,7 +641,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=284"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=289"]);
 }
 
 function sortThemes(packs) {
@@ -851,11 +853,8 @@ function updatePaperFileLabel() {
 }
 
 function currentPaperDownloadName(ext = "txt") {
-  const stem = paperFileStem()
-    .replace(/[\/\\]+/g, "-")
-    .replace(/[<>:"|?*\u0000-\u001f]+/g, "")
-    .slice(0, 80);
-  return `${stem || "build"}.${ext}`;
+  const safe = PaperLibraryCore.downloadSafePaperFileName(paperFileStem() || "build");
+  return ext === "txt" ? safe : `${safe.replace(/\.txt$/i, "")}.${ext}`;
 }
 
 function paperLibraryFileName(raw) {
@@ -1693,10 +1692,10 @@ function componentUid(componentId, pack = state.pack) {
   const usePack = pack || state.pack;
   const component = usePack?.components.find((row) => row.id === componentId);
   if (component?.kind !== "sprite") return null;
-  const usesGlobal = state.records.some((record) => Number(record.mat) >= 1000);
   const packUid = packUidOf(usePack);
-  if (usesGlobal && packUid != null) return packUid * 1000 + componentId;
-  return componentId;
+  const local = Number(componentId);
+  if (packUid != null) return packUid * 1000 + local;
+  return local;
 }
 
 function indexedPacks() {
@@ -1747,21 +1746,23 @@ function packByKey(key) {
 }
 
 function recordPack(record) {
-  return record?.pack || packByKey(record?.packKey) || state.pack;
+  if (record?.pack) return record.pack;
+  if (record?.packKey) return packByKey(record.packKey);
+  if (record?.localPackUnknown) return null;
+  return state.pack;
 }
 
 function recordComponent(record) {
   if (!record) return null;
-  if (record.localPackUnknown && Number(record.mat) > 0 && Number(record.mat) < 1000) {
-    return null;
-  }
   if (record.component) return record.component;
   const pack = recordPack(record);
+  if (!pack) return null;
   const component = componentByUid(record.mat, pack);
   if (component) {
     record.component = component;
     if (!record.pack) record.pack = component._pack || pack;
     if (!record.packKey) record.packKey = (component._pack || pack)?.key;
+    if (record.packKey) record.localPackUnknown = false;
   }
   return component;
 }
@@ -2803,7 +2804,7 @@ function appendAssetTile(parent, row) {
     (component === state.component && !state.customBrush ? " on" : "") +
     (missing ? " missing" : "");
   const image = document.createElement("img");
-  if (component.kind === "sprite") image.src = spriteUrl(component, pack, 0, true);
+  if (component.kind === "sprite") bindSpriteThumb(image, spriteUrl(component, pack, 0, true));
   image.draggable = false;
   const label = document.createElement("span");
   label.className = "asset-card-badge";
@@ -2871,7 +2872,37 @@ function appendAssetTile(parent, row) {
   parent.appendChild(tile);
 }
 
-function paintAssetWindow() {
+function bindSpriteThumb(image, url) {
+  if (!image || !url) return;
+  const cached = loadImage(url);
+  if (cached?.complete && cached.naturalWidth) {
+    image.src = cached.currentSrc || cached.src || url;
+    return;
+  }
+  image.src = url;
+}
+
+function scheduleAssetThumbPrefetch(rows) {
+  const key = `${assetFilterKey}|${rows.length}|${rows[0]?.key || ""}`;
+  if (key === assetPrefetchKey) return;
+  assetPrefetchKey = key;
+  const limit = Math.min(rows.length, 48);
+  let index = 0;
+  const schedule = globalThis.requestIdleCallback || ((callback) => setTimeout(callback, 80));
+  const step = (deadline) => {
+    while (index < limit && (!deadline?.timeRemaining || deadline.timeRemaining() > 6)) {
+      const row = rows[index++];
+      if (row?.component?.kind === "sprite") {
+        const url = spriteUrl(row.component, row.pack, 0, true);
+        if (url) loadImage(url);
+      }
+    }
+    if (index < limit) schedule(step);
+  };
+  schedule(step);
+}
+
+function paintAssetWindow(force = false) {
   const list = document.getElementById("componentList");
   if (!list) return;
   const rows = assetRowsCache;
@@ -2888,6 +2919,9 @@ function paintAssetWindow() {
     start = startRow * cols;
     end = Math.min(rows.length, start + visibleRows * cols);
   }
+  const windowKey = `${assetFilterKey}|${start}|${end}|${cols}|${Math.round(rowH)}`;
+  if (!force && windowKey === assetWindowKey && list.childElementCount) return;
+  assetWindowKey = windowKey;
   const fragment = document.createDocumentFragment();
   if (virtual && start > 0) {
     const topPad = document.createElement("div");
@@ -2914,6 +2948,7 @@ function fillComponents() {
   bindAssetListScroll();
   if (isCustomCategory()) {
     assetRowsCache = [];
+    assetWindowKey = "";
     list.replaceChildren();
     syncAssetCategoryView();
     updateAssetFilterSummary();
@@ -2922,6 +2957,7 @@ function fillComponents() {
   syncAssetCategoryView();
   if (!activeThemePacks().length) {
     assetRowsCache = [];
+    assetWindowKey = "";
     list.replaceChildren();
     updateAssetFilterSummary();
     return;
@@ -2936,11 +2972,13 @@ function fillComponents() {
     const empty = document.createElement("div");
     empty.className = "base-icon-empty";
     empty.textContent = "没有匹配的素材。试试改搜索，或换个类别 / 主题。";
+    assetWindowKey = "";
     list.replaceChildren(empty);
     updateAssetFilterSummary();
     return;
   }
-  paintAssetWindow();
+  paintAssetWindow(true);
+  scheduleAssetThumbPrefetch(assetRowsCache);
   updateAssetFilterSummary();
 }
 
@@ -4858,6 +4896,13 @@ function putBuildingSaves(payload, keepalive) {
   });
 }
 
+function paperPackKey(record, fallback = "") {
+  if (typeof record?.packKey === "string" && record.packKey) return record.packKey;
+  if (typeof record?.pack?.key === "string" && record.pack.key) return record.pack.key;
+  if (record?.localPackUnknown) return "";
+  return typeof fallback === "string" ? fallback : "";
+}
+
 function serializeSessionRecords() {
   return state.records.map((record) => ({
     mode: record.mode || "desk",
@@ -4865,9 +4910,7 @@ function serializeSessionRecords() {
     y: record.y,
     mat: record.mat,
     state: record.state ?? record.flip ?? 0,
-    packKey: record.localPackUnknown
-      ? ""
-      : record.packKey || record.pack?.key || state.pack?.key || "",
+    packKey: paperPackKey(record, state.pack?.key || ""),
     localPackUnknown: !!record.localPackUnknown,
     group: record.group || null,
     groupName: record.groupName || null,
@@ -5032,10 +5075,10 @@ async function commitDesignToPaperLibrary(mode) {
     const thumbPromise = canvasEl
       ? PaperLibraryCore.canvasToJpegBlob(canvasEl)
       : Promise.resolve(null);
-    const bytes = await formatCurrentPaperBytes(exportRecords, source);
+    const bytes = await formatCurrentPaperBytes(exportRecords, null);
     const data = bytesToBase64(bytes);
     const ident = mode === "original" ? originalId : newPaperLibraryId();
-    const report = buildingMaterialReport(deskDocument.records);
+    const report = buildingMaterialReport(state.records);
     const upload = {
       id: ident,
       revision: newPaperLibraryId(),
@@ -5047,15 +5090,15 @@ async function commitDesignToPaperLibrary(mode) {
       count: report.visible,
       meta: `${report.visible} 件素材 · ${report.totals.size} 种材料`,
       unresolved: report.unresolved,
+      force: true,
       deskLayers: serializeDeskLayers(deskDocument.records),
       deskDocument,
     };
-    await PaperLibraryCore.persist([upload], { replace: false });
+    await PaperLibraryCore.persist([upload], { replace: false, requireSaved: true });
     state.designName = name;
     rememberSourcePaper({ id: ident, name, groupId: upload.group });
     updatePaperFileLabel();
-    const file = new File([bytes], name);
-    file.paperMeta = {
+    const file = PaperLibraryCore.createPaperFile(bytes, name, {
       id: ident,
       revision: upload.revision,
       kind: "desk",
@@ -5063,7 +5106,7 @@ async function commitDesignToPaperLibrary(mode) {
       data,
       deskLayers: upload.deskLayers,
       deskDocument: upload.deskDocument,
-    };
+    });
     const savedEntry = syncSavedPaperIntoLibrary(upload, file);
     const blob = await thumbPromise;
     if (blob) {
@@ -5216,10 +5259,8 @@ function warmOtherDesk(htmlHref, extraUrls = []) {
 
 function hydrateRecord(record) {
   const localPackUnknown = !!record.localPackUnknown;
-  const packKey = localPackUnknown
-    ? ""
-    : record.packKey || record.pack?.key || state.pack?.key || "";
-  const pack = localPackUnknown ? null : packByKey(packKey) || state.pack;
+  const packKey = paperPackKey(record, localPackUnknown ? "" : state.pack?.key || "");
+  const pack = packByKey(packKey) || (localPackUnknown ? null : state.pack);
   const x = decodeS15(record.x);
   const y = decodeS15(record.y);
   const mat = Number(record.mat) || 0;
@@ -5769,47 +5810,26 @@ function flipSelectedOrBrush() {
   stepFacing(1);
 }
 
+function reorderSelectionIndices() {
+  const unlocked = selectedUnlockedIndices();
+  if (!unlocked.length) return [];
+  const selected = new Set(
+    (state.selected || []).filter((index) => Number.isInteger(index) && state.records[index])
+  );
+  unlocked.forEach((index) => selected.add(index));
+  BI.outermostFullySelectedGroups(state.records, [...selected]).forEach((groupId) => {
+    BI.groupMemberIndices(state.records, groupId).forEach((index) => selected.add(index));
+  });
+  return [...selected].sort((a, b) => a - b);
+}
+
 function reorderSelected(command) {
-  const indices = selectedUnlockedIndices().sort((a, b) => a - b);
+  const indices = reorderSelectionIndices();
   if (!indices.length) return;
+  if (command !== "bottom" && command !== "top" && command !== "down" && command !== "up") return;
   pushHistory();
   const moving = indices.map((index) => state.records[index]);
-  const keep = state.records.filter((_, index) => !indices.includes(index));
-
-  if (command === "bottom") {
-    state.records = [...moving, ...keep];
-  } else if (command === "top") {
-    state.records = [...keep, ...moving];
-  } else if (command === "down") {
-    const set = new Set(indices);
-    const next = state.records.slice();
-    for (let i = 0; i < next.length; i++) {
-      if (!set.has(i) || i === 0) continue;
-      if (set.has(i - 1)) continue;
-      const tmp = next[i - 1];
-      next[i - 1] = next[i];
-      next[i] = tmp;
-      set.delete(i);
-      set.add(i - 1);
-    }
-    state.records = next;
-  } else if (command === "up") {
-    const set = new Set(indices);
-    const next = state.records.slice();
-    for (let i = next.length - 1; i >= 0; i--) {
-      if (!set.has(i) || i >= next.length - 1) continue;
-      if (set.has(i + 1)) continue;
-      const tmp = next[i + 1];
-      next[i + 1] = next[i];
-      next[i] = tmp;
-      set.delete(i);
-      set.add(i + 1);
-    }
-    state.records = next;
-  } else {
-    return;
-  }
-
+  state.records = BI.reorderRecordsByCommand(state.records, indices, command);
   const idSet = new Set(moving);
   const newSelected = [];
   state.records.forEach((record, index) => {
@@ -8738,6 +8758,35 @@ function previewPackForMat(mat) {
   return state.pack;
 }
 
+function previewPackForRecord(record, fallbackKey) {
+  const mat = Number(record?.mat) || 0;
+  if (record?.pack) return record.pack;
+  const key = paperPackKey(record, fallbackKey || "");
+  if (key) {
+    const pack = packByKey(key);
+    if (pack) return pack;
+  }
+  return previewPackForMat(mat);
+}
+
+// Same visibility rule as the design canvas (isCanvasRecord) minus the viewport
+// clip: paper coordinates live on the 1690×1030 native layer, so no bounds check.
+function libraryPreviewRecords(records, fallbackKey) {
+  return BI.visiblePaperRecords(records).filter((record) => {
+    const component = componentByUid(Number(record.mat) || 0, previewPackForRecord(record, fallbackKey));
+    return !!component && !isNativeDeskHiddenComponent(component);
+  });
+}
+
+// Server thumbnails painted before this moment were rendered with a preview
+// rule that drew native-hidden try*.ale sprites; repaint and re-upload them.
+const PAPER_THUMB_MIN_AT = Date.UTC(2026, 8, 6, 14, 0, 0);
+
+function paperThumbIsStale(entry) {
+  const at = Number(entry?.thumbAt) || 0;
+  return at > 0 && at < PAPER_THUMB_MIN_AT;
+}
+
 const previewImageCache = new Map();
 
 function loadPreviewImage(url) {
@@ -8771,10 +8820,11 @@ async function paintPaperThumbnail(target, documentData, options = {}) {
   c.closePath();
   c.fill();
 
-  const rows = BI.visiblePaperRecords(documentData.records)
+  const fallbackKey = documentData.packKey || "";
+  const rows = libraryPreviewRecords(documentData.records, fallbackKey)
     .map((record) => {
       const mat = Number(record.mat) || 0;
-      const pack = previewPackForMat(mat);
+      const pack = previewPackForRecord(record, fallbackKey);
       const component = componentByUid(mat, pack);
       const geometry = frameGeometry(component, record.state ?? record.flip ?? 0);
       return {
@@ -8784,7 +8834,8 @@ async function paintPaperThumbnail(target, documentData, options = {}) {
         width: geometry.width || 16,
         height: geometry.height || 16,
       };
-    });
+    })
+    .filter((row) => row.component);
   if (documentData.kind === "terrain") {
     const stamps = documentData.stamps || [];
     const size = Math.max(1, Number(documentData.size) || 1);
@@ -9996,17 +10047,20 @@ function paperLibraryPreviewDocument(entry) {
     return { ...(entry.documentData || {}), kind: "terrain" };
   }
   const desk = entry?.deskDocument;
+  const fallbackKey = desk?.packKey || "";
   if (Array.isArray(desk?.records) && desk.records.length) {
     return {
       ...(entry.documentData || {}),
       kind: "desk",
-      records: BI.visiblePaperRecords(desk.records),
+      packKey: fallbackKey,
+      records: libraryPreviewRecords(desk.records, fallbackKey),
     };
   }
   const documentData = entry?.documentData || { records: [] };
   return {
     ...documentData,
-    records: BI.visiblePaperRecords(documentData.records),
+    packKey: documentData.packKey || fallbackKey,
+    records: libraryPreviewRecords(documentData.records, documentData.packKey || fallbackKey),
   };
 }
 
@@ -10022,7 +10076,8 @@ function applyVisibleDeskLibraryStats(entry) {
 }
 
 async function paintPaperInspectBitmap(documentData) {
-  const rows = BI.visiblePaperRecords(documentData.records);
+  const fallbackKey = documentData.packKey || "";
+  const rows = libraryPreviewRecords(documentData.records, fallbackKey);
   if (!rows.length) {
     const empty = document.createElement("canvas");
     await paintPaperThumbnail(empty, documentData, { width: DESIGN_W, height: DESIGN_H });
@@ -10034,7 +10089,7 @@ async function paintPaperInspectBitmap(documentData) {
   let bottom = -Infinity;
   rows.forEach((record) => {
     const mat = Number(record.mat) || 0;
-    const pack = previewPackForMat(mat);
+    const pack = previewPackForRecord(record, fallbackKey);
     const component = componentByUid(mat, pack);
     const geometry = frameGeometry(component, record.state ?? record.flip ?? 0);
     const x = Number(record.x) || 0;
@@ -10193,15 +10248,16 @@ async function openPaperInspect(entry, { focusMaterials = false } = {}) {
     return;
   }
   if (paperInspectView.entry !== entry) return;
+  applyVisibleDeskLibraryStats(entry);
   if (materialsHeading) {
     materialsHeading.textContent = entry.materials.size
       ? `所需材料 · ${entry.materials.size} 种`
       : "所需材料";
   }
   fillInspectMaterialList(document.getElementById("paperInspectMaterials"), entry.materials, entry.unresolved);
-  const bitmap = entry.inspectBitmap
-    || (entry.kind !== "desk" ? clonePaperCardThumb(entry) : null)
-    || (entry.kind === "desk" ? await paintPaperInspectBitmap(paperLibraryPreviewDocument(entry)) : null);
+  const bitmap = entry.kind === "desk"
+    ? await paintPaperInspectBitmap(paperLibraryPreviewDocument(entry))
+    : (entry.inspectBitmap || clonePaperCardThumb(entry));
   if (paperInspectView.entry !== entry) return;
   entry.inspectBitmap = bitmap;
   paperInspectView.bitmap = bitmap;
@@ -10333,9 +10389,11 @@ async function hydratePaperEntry(entry) {
     const rebuilt = buildPaperLibraryEntry(file, parsed.documentData, {
       id: entry.id,
       contentId,
-      name: entry.name || paper.name,
+      name: paper.name || entry.name,
       groupId: entry.groupId || paper.group || "",
     });
+    entry.name = rebuilt.name;
+    entry.search = String(rebuilt.name || "").toLowerCase();
     entry.deskLayers = Array.isArray(paper.deskLayers) ? paper.deskLayers : [];
     entry.deskDocument = paper.deskDocument && typeof paper.deskDocument === "object" ? paper.deskDocument : null;
     entry.revision = paper.revision || "";
@@ -10400,6 +10458,10 @@ function bindPaperCardThumb(entry, loader) {
     entry.thumbReady = false;
     loader?.watch(img, () => fillMissingPaperThumb(entry));
   };
+  if (entry.hasThumb && entry.kind === "desk" && paperThumbIsStale(entry)) {
+    rebuild();
+    return;
+  }
   if (entry.hasThumb) {
     img.addEventListener("load", () => {
       if (PaperLibraryCore.thumbLooksLikePlaceholder(img)) {
@@ -10558,8 +10620,8 @@ async function loadPaperLibraryFiles(candidates, { persist = false, append = tru
   };
   for (const [index, file] of candidates.entries()) {
     try {
-      const relative = String(file.webkitRelativePath || file.name).replace(/\\/g, "/");
       const meta = file.paperMeta || {};
+      const relative = PaperLibraryCore.paperNameFromFile(file, meta.name);
       const buffer = meta.data ? base64ToBytes(meta.data).buffer : await file.arrayBuffer();
       if (gen !== batchLibrary.generation) return;
       const bytes = new Uint8Array(buffer);
@@ -10734,7 +10796,7 @@ async function importDesign(file, options = {}) {
     sessionStorage.setItem(
       "manor-pending-building-import",
       JSON.stringify({
-        name: file.name,
+        name: PaperLibraryCore.paperNameFromFile(file),
         encoding: documentData._source?.encoding || "gbk",
         base64: btoa(binary),
         at: Date.now(),
@@ -10771,7 +10833,7 @@ async function importDesign(file, options = {}) {
     if (!hasSavedGroups) state.layerCollapsed.add(fallbackGroup);
     setSelection(remapped.map((_, index) => first + index), { expandGroup: true });
     if (!state.designName) {
-      state.designName = String(file.webkitRelativePath || file.name || "");
+      state.designName = PaperLibraryCore.paperNameFromFile(file);
       updatePaperFileLabel();
     }
     updateSelectionCaption();
@@ -10786,14 +10848,14 @@ async function importDesign(file, options = {}) {
   state.source = {
     encoding: documentData._source?.encoding || "gbk",
   };
-  rememberSourcePaper(file.paperMeta?.id ? { id: file.paperMeta.id, name: file.name, groupId: file.paperMeta.group } : null);
+  rememberSourcePaper(file.paperMeta?.id ? { id: file.paperMeta.id, name: PaperLibraryCore.paperNameFromFile(file), groupId: file.paperMeta.group } : null);
   if (deskDocument?.records) applyDeskDocumentMeta(deskDocument);
   else {
     state.paperLayout = true;
     state.paperOrigin = null;
   }
   // 左上角显示打开的是哪张图纸，防止忘记当前文件。
-  state.designName = String(file.webkitRelativePath || file.name || "");
+  state.designName = PaperLibraryCore.paperNameFromFile(file);
   updatePaperFileLabel();
   state.records = deskRows;
   state.baseAnchor = null;
@@ -10820,7 +10882,7 @@ function exportRecordList(records = state.records) {
 function serializeDeskLayers(records = serializeSessionRecords()) {
   return records.map((record) => ({
     mat: Math.max(0, Math.round(Number(record.mat) || 0)),
-    packKey: record.localPackUnknown ? "" : record.packKey || record.pack?.key || "",
+    packKey: paperPackKey(record),
     localPackUnknown: !!record.localPackUnknown,
     group: record.group || "",
     groupName: record.groupName || "",
@@ -11240,7 +11302,7 @@ function renderImageBuildingPieces() {
     thumb.alt = "";
     thumb.width = 36;
     thumb.height = 36;
-    if (component) thumb.src = spriteUrl(component, pack, row.state || 0, true);
+    if (component) bindSpriteThumb(thumb, spriteUrl(component, pack, row.state || 0, true));
     const meta = document.createElement("span");
     const title = document.createElement("strong");
     title.textContent = row.label || `${row.category || row.group} #${row.local}`;

@@ -457,7 +457,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _asset_etag(self, src: Path, extra: str = "") -> str:
         stat = src.stat()
-        return f'"{stat.st_mtime_ns:x}-{stat.st_size:x}-{extra}"'
+        digest = hashlib.md5(
+            f"{stat.st_mtime_ns}:{stat.st_size}:{extra}".encode("utf-8")
+        ).hexdigest()
+        return f'"{digest}"'
 
     def _if_none_match(self, etag: str) -> bool:
         incoming = (self.headers.get("If-None-Match") or "").strip()

@@ -152,6 +152,45 @@ def test_safe_next_path():
     assert safe_next_path("/login") == "/"
 
 
+def test_asset_etag_stays_ascii_for_chinese_paths():
+    handler = Handler.__new__(Handler)
+    tmp = Path(tempfile.mkdtemp(prefix="manor-etag-"))
+    src = tmp / "产品.ale"
+    src.write_bytes(b"ale")
+    etag = handler._asset_etag(src, f"item:{src.name}:frame=178")
+    assert etag.startswith('"') and etag.endswith('"')
+    etag.encode("latin-1")
+
+
+def test_http_chinese_item_icon_does_not_drop_connection():
+    from game_paths import RCITEM
+    from urllib.parse import quote
+
+    src = RCITEM / "item" / "产品.ale"
+    if not src.is_file():
+        return
+    saved = _clear_auth_env()
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = httpd.server_address[:2]
+        path = "/item-ale/item/" + quote("产品.ale") + ".png?f=178"
+        conn = HTTPConnection(host, port, timeout=20)
+        conn.request("GET", path)
+        res = conn.getresponse()
+        body = res.read()
+        assert res.status == 200
+        assert (res.getheader("Content-Type") or "").startswith("image/png")
+        assert (res.getheader("ETag") or "").isascii()
+        assert body[:8] == b"\x89PNG\r\n\x1a\n"
+        conn.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        _restore_env(saved)
+
+
 def test_resolve_under_matches_case_insensitive_leaf():
     tmp = Path(tempfile.mkdtemp(prefix="manor-ale-case-"))
     pack = tmp / "res" / "snow"

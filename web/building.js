@@ -641,7 +641,7 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=289"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=290"]);
 }
 
 function sortThemes(packs) {
@@ -10972,12 +10972,34 @@ function buildExportRecords() {
   return exportRecordList().map(serializeExportRecord);
 }
 
+function serializeTerrainPreviewRecords(records = state.records) {
+  return BI.visiblePaperRecords(records)
+    .filter((record) => {
+      const component = recordComponent(record);
+      return !!component && !isNativeDeskHiddenComponent(component);
+    })
+    .map((record) => {
+      const component = recordComponent(record);
+      const pack = component?._pack || recordPack(record);
+      const exported = serializeExportRecord(record);
+      const local = Math.max(0, Math.round(Number(component?.id) || 0));
+      if (component && local > 0 && local < 1000) {
+        const uid = packUidOf(pack);
+        exported.mat = uid != null ? uid * 1000 + local : local;
+      }
+      return {
+        ...exported,
+        packKey: paperPackKey(record, pack?.key || ""),
+      };
+    });
+}
+
 async function placeCurrentBuildingOnTerrain() {
   if (!state.base) {
     await appAlert("请先选择建筑户型。", { title: "无法放置" });
     return;
   }
-  const records = buildExportRecords();
+  const records = serializeTerrainPreviewRecords();
   if (!records.some((record) => Number(record.mat))) {
     await appAlert("当前建筑还没有可预览的素材。", { title: "无法放置" });
     return;

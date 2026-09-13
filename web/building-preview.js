@@ -53,14 +53,8 @@
     return (previewCatalog?.bases || []).find((base) => Number(base.no) === value) || null;
   }
 
-  function resolveComponent(mat, previewCatalog, localPackKey = "") {
-    const value = Math.max(0, Math.round(Number(mat) || 0));
-    if (!value) return null;
-    const local = value < 1000 ? value : value % 1000;
-    const uid = value < 1000 ? 0 : Math.floor(value / 1000);
-    const packKey = value < 1000
-      ? localPackKey
-      : previewCatalog.mapping[String(uid)] || previewCatalog.aliases[String(uid)] || "";
+  function pickPackComponent(previewCatalog, packKey, local) {
+    if (!packKey) return null;
     const pack = previewCatalog.packs.get(packKey);
     if (!pack) return null;
     const component = (pack.components || []).find(
@@ -70,6 +64,22 @@
     const stem = String(component.file || "").toLowerCase().replace(/\.ale$/, "");
     if (/^try\d+$/.test(stem)) return null;
     return { component, pack };
+  }
+
+  function resolveComponent(mat, previewCatalog, localPackKey = "", recordPackKey = "") {
+    const value = Math.max(0, Math.round(Number(mat) || 0));
+    if (!value) return null;
+    const local = value < 1000 ? value : value % 1000;
+    const uid = value < 1000 ? 0 : Math.floor(value / 1000);
+    if (value < 1000) {
+      return pickPackComponent(previewCatalog, recordPackKey || localPackKey || "", local);
+    }
+    if (recordPackKey) {
+      const desk = pickPackComponent(previewCatalog, recordPackKey, local);
+      if (desk) return desk;
+    }
+    const mappedKey = previewCatalog.mapping[String(uid)] || previewCatalog.aliases[String(uid)] || "";
+    return pickPackComponent(previewCatalog, mappedKey || localPackKey || "", local);
   }
 
   function spriteUrl(component, pack, stateValue = 0) {
@@ -446,9 +456,14 @@
     const unresolved = [];
     const rows = await Promise.all(
       (documentData.records || [])
-        .filter((record) => Number(record.mat))
+        .filter((record) => Number(record.mat) && !record.hidden)
         .map(async (record) => {
-          const solved = resolveComponent(record.mat, previewCatalog, options.localPackKey || "");
+          const solved = resolveComponent(
+            record.mat,
+            previewCatalog,
+            options.localPackKey || "",
+            record.packKey || record.pack?.key || ""
+          );
           if (!solved) {
             unresolved.push(Number(record.mat) || 0);
             return null;

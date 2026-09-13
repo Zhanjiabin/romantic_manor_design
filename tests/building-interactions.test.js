@@ -972,6 +972,11 @@ test("terrain desk exposes persistent real-building scene previews", () => {
   assert.doesNotMatch(source, /导入建筑 \$\{buildingCount\}/);
   assert.match(source, /function previewBuildingMaterialData/);
   assert.match(source, /BuildingPreview\?\.resolveComponent/);
+  assert.match(source, /record\.packKey \|\| ""/);
+  assert.match(renderer, /function pickPackComponent/);
+  assert.match(renderer, /recordPackKey = ""/);
+  assert.match(renderer, /record\.packKey \|\| record\.pack\?\.key/);
+  assert.match(renderer, /!record\.hidden/);
   assert.match(source, /Math\.floor\(raw \/ 1_000_000\)/);
   assert.match(source, /state\.previewInteraction/);
   assert.match(source, /previewBuildings: \[\]/);
@@ -1442,10 +1447,58 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(paperCore, /b > r \+ 8 && b >= g/);
   assert.match(terrainHtml, /paper-library-core\.js\?v=22/);
   assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
-  assert.match(terrainHtml, /app\.js\?v=289/);
+  assert.match(terrainHtml, /app\.js\?v=290/);
+  assert.match(terrainHtml, /building-preview\.js\?v=10/);
   assert.match(buildingHtml, /paper-library-core\.js\?v=22/);
-  assert.match(buildingHtml, /building\.js\?v=274/);
+  assert.match(buildingHtml, /building\.js\?v=275/);
+  assert.match(buildingHtml, /building-preview\.js\?v=10/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
+});
+
+test("placing a house on the terrain desk keeps each sprite's building-desk pack", () => {
+  const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  const previewJs = fs.readFileSync(path.join(__dirname, "../web/building-preview.js"), "utf8");
+  const place = buildingJs.slice(
+    buildingJs.indexOf("function serializeTerrainPreviewRecords"),
+    buildingJs.indexOf("async function exportDesign")
+  );
+  assert.match(place, /function serializeTerrainPreviewRecords/);
+  assert.match(place, /BI\.visiblePaperRecords\(records\)/);
+  assert.match(place, /packKey: paperPackKey\(record, pack\?\.key \|\| ""\)/);
+  assert.match(place, /exported\.mat = uid != null \? uid \* 1000 \+ local : local/);
+  assert.match(place, /const records = serializeTerrainPreviewRecords\(\)/);
+  assert.doesNotMatch(place, /buildExportRecords\(\)/);
+  assert.match(previewJs, /function pickPackComponent/);
+  assert.match(previewJs, /if \(recordPackKey\) \{\s*const desk = pickPackComponent/);
+
+  const start = previewJs.indexOf("function pickPackComponent");
+  const end = previewJs.indexOf("function spriteUrl");
+  const resolve = new Function(
+    "previewCatalog",
+    "mat",
+    "localPackKey",
+    "recordPackKey",
+    `${previewJs.slice(start, end)}\nreturn resolveComponent(mat, previewCatalog, localPackKey, recordPackKey);`
+  );
+  const europe = { key: "europe", components: [{ kind: "sprite", id: 42, file: "DoorWin.ale" }] };
+  const muguang = { key: "muguang", components: [{ kind: "sprite", id: 42, file: "Paper.ale" }] };
+  const catalog = {
+    packs: new Map([
+      ["europe", europe],
+      ["muguang", muguang],
+    ]),
+    mapping: { 1: "europe", 28: "muguang" },
+    aliases: {},
+  };
+  const fromDeskPack = resolve(catalog, 42, "muguang", "europe");
+  assert.equal(fromDeskPack.pack.key, "europe");
+  assert.equal(fromDeskPack.component.file, "DoorWin.ale");
+  const mapped = resolve(catalog, 1042, "", "");
+  assert.equal(mapped.pack.key, "europe");
+  const deskWinsMapped = resolve(catalog, 28042, "muguang", "europe");
+  assert.equal(deskWinsMapped.pack.key, "europe");
+  const fallbackTheme = resolve(catalog, 42, "muguang", "");
+  assert.equal(fallbackTheme.component.file, "Paper.ale");
 });
 
 test("building desk can insert a new layer between existing rows", () => {

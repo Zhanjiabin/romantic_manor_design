@@ -253,7 +253,7 @@ async function boot() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
-  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=273"]);
+  warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=275"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
     if (terrainInteractionBusy()) return;
@@ -4385,7 +4385,12 @@ function previewBuildingMaterialData(entity, catalog) {
   addMaterialItems(map, base?.baseMaterials);
   (entity.records || []).forEach((record) => {
     if (record.hidden || Number(record.mat) === 0) return;
-    const resolved = window.BuildingPreview?.resolveComponent(record.mat, catalog, entity.localPackKey);
+    const resolved = window.BuildingPreview?.resolveComponent(
+      record.mat,
+      catalog,
+      entity.localPackKey,
+      record.packKey || ""
+    );
     if (!resolved?.component) {
       unresolved += 1;
       return;

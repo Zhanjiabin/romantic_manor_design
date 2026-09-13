@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=11" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=7" />
+  <link rel="stylesheet" href="/web/cloth.css?v=10" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -149,9 +149,33 @@
         <span id="clothPreviewTitle">设计预览</span>
         <button type="button" class="icon-x" data-close-modal="dlgClothPreview" aria-label="关闭"></button>
       </div>
-      <div class="modal-body">
-        <p class="dlg-desc">游戏里试穿会把这张贴图套到角色 UV 上。这里按原生尺寸查看当前图。</p>
-        <canvas id="previewCanvas" width="256" height="256" aria-label="贴图预览"></canvas>
+      <div class="modal-body cloth-tryon-body" data-mobile-sheet-scroll>
+        <p class="dlg-desc" id="previewHint">拖动看正反面。衣服、头巾、表情和面饰都可以一起选，不必先限定短款长裙。</p>
+        <div class="cloth-tryon-layout">
+          <canvas id="previewCanvas" width="280" height="440" aria-label="拖动旋转角色试穿"></canvas>
+          <div class="preview-outfit" id="previewOutfit">
+            <div class="preview-outfit-row">
+              <span>身体</span>
+              <div class="preview-outfit-picks" id="previewBodyPicks" role="group" aria-label="身体款式"></div>
+            </div>
+            <label class="field">
+              <span>衣服</span>
+              <select class="input" id="previewClothPick" aria-label="衣服贴图"></select>
+            </label>
+            <label class="field">
+              <span>头巾</span>
+              <select class="input" id="previewHairPick" aria-label="头巾贴图"></select>
+            </label>
+            <label class="field">
+              <span>表情</span>
+              <select class="input" id="previewExprPick" aria-label="表情贴图"></select>
+            </label>
+            <label class="field">
+              <span>面饰</span>
+              <select class="input" id="previewFacePick" aria-label="面饰贴图"></select>
+            </label>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -248,6 +272,7 @@
   <script src="/web/app-dialog.js?v=2"></script>
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
-  <script src="/web/cloth.js?v=10"></script>
+  <script src="/web/cloth-preview.js?v=10"></script>
+  <script src="/web/cloth.js?v=13"></script>
 </body>
 </html>

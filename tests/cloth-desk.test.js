@@ -112,3 +112,52 @@ test("clothes desk AI design fills prompt templates without sending them", () =>
   assert.match(clothCss, /min-height:\s*44px/);
   assert.match(clothCss, /\.cloth-ai-prompt/);
 });
+
+test("clothes desk try-on preview uses native CMZ meshes and drag rotate", () => {
+  const preview = JSON.parse(fs.readFileSync(path.join(root, "data/cloth/preview/manifest.json"), "utf8"));
+  const previewJs = fs.readFileSync(path.join(root, "web/cloth-preview.js"), "utf8");
+  assert.equal(preview.viewport[0], 220);
+  assert.equal(preview.viewport[1], 300);
+  for (const id of ["female-short", "female-long", "female-skirt", "male-short", "male-long"]) {
+    const row = preview.kinds[id];
+    assert.ok(row, id);
+    const slots = new Set(row.body.map((part) => part.slot));
+    assert.deepEqual([...slots].sort(), ["cloth", "skin"]);
+    const cloth = row.body.find((part) => part.slot === "cloth");
+    assert.ok(cloth.indices.length >= 3, id);
+    assert.ok(fs.existsSync(path.join(root, "data/cloth/preview", row.defaultCloth)), id);
+  }
+  assert.ok(preview.shared["female-head"].positions.length);
+  assert.ok(preview.shared["male-hair"].indices.length);
+  assert.match(clothHtml, /id="previewCanvas"/);
+  assert.match(clothHtml, /width="280"/);
+  assert.match(clothHtml, /height="440"/);
+  assert.match(clothHtml, /cloth-preview\.js/);
+  assert.match(clothHtml, /id="previewHint"/);
+  assert.match(clothHtml, /id="previewClothPick"/);
+  assert.match(clothHtml, /id="previewHairPick"/);
+  assert.match(clothHtml, /id="previewExprPick"/);
+  assert.match(clothHtml, /id="previewFacePick"/);
+  assert.match(clothHtml, /id="previewBodyPicks"/);
+  assert.match(clothJs, /ClothTryOn\.open/);
+  assert.match(clothJs, /ClothTryOn\?\.close/);
+  assert.match(clothJs, /snapshotCurrentSlot/);
+  assert.match(clothJs, /applyPreviewSlots/);
+  assert.match(clothJs, /slots\.hair/);
+  assert.match(clothJs, /当前画布/);
+  assert.match(previewJs, /pointerdown/);
+  assert.match(previewJs, /yaw \+= dx/);
+  assert.match(previewJs, /yaw = Math\.PI/);
+  assert.match(previewJs, /getContext\("webgl"/);
+  assert.match(previewJs, /\/data\/cloth\/preview\//);
+  assert.match(previewJs, /setYaw/);
+  assert.match(previewJs, /POLYGON_OFFSET_FILL/);
+  assert.match(previewJs, /lookAt\(\[0, 300, 86\]/);
+  assert.match(previewJs, /setSlot/);
+  assert.match(previewJs, /slot:face/);
+  assert.match(clothCss, /touch-action:\s*none/);
+  assert.match(clothCss, /#12121c/);
+  assert.match(clothCss, /preview-body-pick/);
+  assert.match(clothCss, /height:\s*440px/);
+  assert.match(clothCss, /is-tablet-workspace/);
+});

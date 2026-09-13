@@ -54,6 +54,15 @@
     promptDefaults: [],
     prompts: [],
     promptDeletedIds: [],
+    outfit: { bodyKind: "", cloth: {}, hair: "", expression: "", face: "" },
+  };
+
+  const BODY_SHORT = {
+    "female-short": "女短",
+    "female-long": "女长",
+    "female-skirt": "女裙",
+    "male-short": "男短",
+    "male-long": "男长",
   };
 
   const pointers = new Map();
@@ -63,6 +72,7 @@
   let gesture = null;
   let sessionTimer = 0;
   let fitTimer = 0;
+  let previewBodyKind = "";
 
   function kindById(id) {
     return (state.catalog?.kinds || []).find((kind) => kind.id === id) || null;
@@ -543,9 +553,180 @@
     });
   }
 
+  function outfitSlotFor(kind) {
+    if (!kind) return "";
+    if (kind.diyType === "fair" || kind.id === "hair") return "hair";
+    if (kind.diyType === "biaoqing" || kind.id === "expression") return "expression";
+    if (kind.diyType === "face" || kind.id === "face") return "face";
+    if (kind.diyType === "cloth") return "cloth";
+    return "";
+  }
+
+  function ensureOutfit() {
+    if (!state.outfit || typeof state.outfit !== "object") {
+      state.outfit = { bodyKind: "", cloth: {}, hair: "", expression: "", face: "" };
+    }
+    if (!state.outfit.cloth || typeof state.outfit.cloth !== "object") state.outfit.cloth = {};
+    return state.outfit;
+  }
+
+  function snapshotCurrentSlot() {
+    const kind = currentKind();
+    if (!kind || !canvas.width) return;
+    const slot = outfitSlotFor(kind);
+    if (!slot) return;
+    const outfit = ensureOutfit();
+    let url = "";
+    try {
+      url = canvas.toDataURL(slot === "cloth" ? "image/jpeg" : "image/png", 0.88);
+    } catch (error) {
+      console.warn(error);
+      return;
+    }
+    if (slot === "cloth") {
+      outfit.bodyKind = kind.id;
+      outfit.cloth[kind.id] = url;
+    } else {
+      outfit[slot] = url;
+    }
+  }
+
+  function bodyKindsForPreview() {
+    return (state.catalog?.kinds || []).filter((kind) => kind.diyType === "cloth");
+  }
+
+  function previewGender() {
+    return (previewBodyKind || "").startsWith("male") ? "male" : "female";
+  }
+
+  function designsForSlot(slot) {
+    return (state.designs || []).filter((item) => outfitSlotFor(kindById(item.kind)) === slot);
+  }
+
+  function fillSlotSelect(select, slot) {
+    if (!select) return;
+    const outfit = ensureOutfit();
+    const options = [
+      { value: "default", label: "默认" },
+      { value: "canvas", label: "当前画布" },
+    ];
+    if (slot === "cloth") {
+      Object.keys(outfit.cloth).forEach((kindId) => {
+        if (!outfit.cloth[kindId]) return;
+        const kind = kindById(kindId);
+        options.push({ value: "outfit:" + kindId, label: "刚才画的 · " + (kind?.label || kindId) });
+      });
+    } else if (outfit[slot]) {
+      options.push({ value: "outfit", label: "刚才画的" });
+    }
+    designsForSlot(slot).forEach((item) => {
+      options.push({ value: "design:" + item.id, label: "已存 · " + (item.name || "作品") });
+    });
+    const prev = select.value;
+    select.replaceChildren();
+    options.forEach((row) => {
+      const opt = document.createElement("option");
+      opt.value = row.value;
+      opt.textContent = row.label;
+      select.append(opt);
+    });
+    let pick = "default";
+    if (outfitSlotFor(currentKind()) === slot) pick = "canvas";
+    else if (slot === "cloth") {
+      if (outfit.cloth[previewBodyKind]) pick = "outfit:" + previewBodyKind;
+      else {
+        const any = Object.keys(outfit.cloth).find((id) => outfit.cloth[id]);
+        if (any) pick = "outfit:" + any;
+      }
+    } else if (outfit[slot]) pick = "outfit";
+    if (prev && options.some((row) => row.value === prev)) pick = prev;
+    select.value = pick;
+  }
+
+  function srcFromPick(select, slot) {
+    const value = select?.value || "default";
+    if (value === "canvas") return snapshotPng();
+    if (value === "outfit") return ensureOutfit()[slot] || "";
+    if (value.startsWith("outfit:")) return ensureOutfit().cloth[value.slice(7)] || "";
+    if (value.startsWith("design:")) {
+      const id = value.slice(7);
+      return (state.designs || []).find((item) => item.id === id)?.png || "";
+    }
+    return "";
+  }
+
+  function fillBodyPicks() {
+    const row = document.getElementById("previewBodyPicks");
+    if (!row) return;
+    const bodies = bodyKindsForPreview();
+    row.replaceChildren();
+    bodies.forEach((kind) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "preview-body-pick" + (kind.id === previewBodyKind ? " on" : "");
+      button.dataset.bodyKind = kind.id;
+      button.setAttribute("aria-pressed", String(kind.id === previewBodyKind));
+      button.textContent = BODY_SHORT[kind.id] || kind.label;
+      button.addEventListener("click", async () => {
+        if (previewBodyKind === kind.id) return;
+        previewBodyKind = kind.id;
+        ensureOutfit().bodyKind = kind.id;
+        fillBodyPicks();
+        await applyPreviewSlots({ bodyOnly: true });
+      });
+      row.append(button);
+    });
+  }
+
+  function fillPreviewOutfit() {
+    const bodies = bodyKindsForPreview();
+    const outfit = ensureOutfit();
+    const cur = currentKind();
+    if (!bodies.some((kind) => kind.id === previewBodyKind)) {
+      if (cur && cur.diyType === "cloth") previewBodyKind = cur.id;
+      else if (bodies.some((kind) => kind.id === outfit.bodyKind)) previewBodyKind = outfit.bodyKind;
+      else previewBodyKind = bodies[0]?.id || "";
+    }
+    fillBodyPicks();
+    fillSlotSelect(document.getElementById("previewClothPick"), "cloth");
+    fillSlotSelect(document.getElementById("previewHairPick"), "hair");
+    fillSlotSelect(document.getElementById("previewExprPick"), "expression");
+    fillSlotSelect(document.getElementById("previewFacePick"), "face");
+  }
+
+  async function applyPreviewSlots(options = {}) {
+    if (!window.ClothTryOn) throw new Error("试穿还没加载");
+    const slots = {
+      cloth: srcFromPick(document.getElementById("previewClothPick"), "cloth"),
+      hair: srcFromPick(document.getElementById("previewHairPick"), "hair"),
+      expression: srcFromPick(document.getElementById("previewExprPick"), "expression"),
+      face: srcFromPick(document.getElementById("previewFacePick"), "face"),
+    };
+    const gender = previewGender();
+    if (options.bodyOnly) {
+      await window.ClothTryOn.setBodyKind(previewBodyKind, gender);
+      await window.ClothTryOn.setSlot("cloth", slots.cloth || null);
+      return;
+    }
+    if (options.update) {
+      await window.ClothTryOn.setSlot("cloth", slots.cloth || null);
+      await window.ClothTryOn.setSlot("hair", slots.hair || null);
+      await window.ClothTryOn.setSlot("expression", slots.expression || null);
+      await window.ClothTryOn.setSlot("face", slots.face || null);
+      return;
+    }
+    await window.ClothTryOn.open({
+      kindId: previewBodyKind,
+      bodyKind: previewBodyKind,
+      gender,
+      slots,
+    });
+  }
+
   async function selectKind(id, options = {}) {
     const kind = kindById(id);
     if (!kind) return;
+    if (!options.silent) snapshotCurrentSlot();
     if (kind.id === state.kindId && !options.png && options.templateId == null && !options.clear) {
       renderKinds();
       return;
@@ -635,22 +816,28 @@
     if (!modal) return;
     if (visible) window.MobileWorkspace?.openLayer(modal, document.activeElement);
     else window.MobileWorkspace?.closeLayer(modal);
-    if (id === "dlgClothAi") {
+    if (id === "dlgClothAi" || id === "dlgClothPreview") {
       document.querySelector(".cloth-workspace")?.toggleAttribute("inert", !!visible);
       document.querySelector(".cloth-app .topbar")?.toggleAttribute("inert", !!visible);
     }
+    if (id === "dlgClothPreview" && !visible) window.ClothTryOn?.close();
   }
 
-  function showPreview() {
+  async function showPreview() {
     const preview = document.getElementById("previewCanvas");
     if (!preview) return;
-    preview.width = canvas.width;
-    preview.height = canvas.height;
-    const pctx = preview.getContext("2d");
-    pctx.imageSmoothingEnabled = false;
-    pctx.clearRect(0, 0, preview.width, preview.height);
-    pctx.drawImage(canvas, 0, 0);
+    snapshotCurrentSlot();
     setModalVisible("dlgClothPreview", true);
+    fillPreviewOutfit();
+    try {
+      await applyPreviewSlots();
+      const hint = document.getElementById("previewHint");
+      if (hint) hint.textContent = "拖动看正反面。衣服、头巾、表情和面饰都可以一起选。";
+    } catch (error) {
+      const hint = document.getElementById("previewHint");
+      if (hint) hint.textContent = "试穿预览打不开：" + (error?.message || error);
+      console.warn(error);
+    }
   }
 
   function sessionSnapshot() {
@@ -668,6 +855,7 @@
       panY: state.panY,
       designName: state.designName,
       png: snapshotPng(),
+      outfit: state.outfit || null,
     };
   }
 
@@ -1499,6 +1687,11 @@
     document.getElementById("btnExportPng")?.addEventListener("click", () => exportJpg());
     document.getElementById("btnRestore")?.addEventListener("click", () => restoreDefault());
     document.getElementById("btnPreview")?.addEventListener("click", () => showPreview());
+    ["previewClothPick", "previewHairPick", "previewExprPick", "previewFacePick"].forEach((id) => {
+      document.getElementById(id)?.addEventListener("change", () => {
+        applyPreviewSlots({ update: true }).catch((error) => console.warn(error));
+      });
+    });
     document.getElementById("btnSaveDesign")?.addEventListener("click", () => {
       const input = document.getElementById("clothSaveName");
       if (input && !input.value) input.value = currentKind()?.label || "";
@@ -1623,6 +1816,15 @@
       silent: true,
       keepHistory: false,
     });
+    if (snap.outfit && typeof snap.outfit === "object") {
+      state.outfit = {
+        bodyKind: snap.outfit.bodyKind || "",
+        cloth: snap.outfit.cloth && typeof snap.outfit.cloth === "object" ? snap.outfit.cloth : {},
+        hair: snap.outfit.hair || "",
+        expression: snap.outfit.expression || "",
+        face: snap.outfit.face || "",
+      };
+    }
     setTool(state.tool);
     return true;
   }

@@ -1,0 +1,421 @@
+/* Clothes design desk — native GPaintObj 256×256 / fair 512×256. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.cloth-app .topbar {
+  min-height: 52px;
+}
+
+.cloth-workspace {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr) 232px;
+  min-height: 0;
+  height: 100%;
+}
+
+.cloth-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background:
+    radial-gradient(900px 420px at 50% 0%, rgba(90, 150, 176, 0.16), transparent 55%),
+    linear-gradient(180deg, #d7e4df 0%, #c9d6cc 100%);
+}
+
+.paint-hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px 0;
+  color: var(--ink-soft);
+  font-weight: 650;
+}
+
+#btnClothAiHud {
+  margin-left: auto;
+  min-height: 44px;
+}
+
+html:not(.is-mobile-workspace) #btnClothAiHud,
+html.is-tablet-workspace #btnClothAiHud {
+  display: none;
+}
+
+.paint-board {
+  position: relative;
+  min-height: 0;
+  margin: 10px 14px;
+  overflow: hidden;
+  touch-action: none;
+  border-radius: 16px;
+  border: 1px solid rgba(140, 168, 176, 0.55);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45), transparent 40%),
+    #9eb8b0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), var(--shadow-sm);
+}
+
+.paint-view {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.paint-view canvas,
+#previewCanvas {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #f4f0ea;
+  box-shadow: 0 10px 28px rgba(16, 36, 32, 0.22);
+}
+
+.paint-hint {
+  margin: 0 14px 10px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.kind-grid,
+.brush-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-height: calc(3 * 44px + 12px);
+}
+
+.kind-grid .tool,
+.brush-grid .tool,
+.tool-row .tool {
+  min-height: 44px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 650;
+  box-shadow: none;
+}
+
+.kind-grid .tool.on,
+.brush-grid .tool.on,
+.tool-row .tool.on,
+.template-card.on {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.kind-meta {
+  margin: 4px 0 8px;
+  min-height: 34px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.template-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.template-card,
+.design-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 44px;
+  padding: 6px;
+  border: 1px solid rgba(183, 200, 178, 0.9);
+  border-radius: 10px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.template-card img,
+.design-card img,
+.template-blank {
+  width: 100%;
+  height: 88px;
+  object-fit: contain;
+  border-radius: 7px;
+  background: #f4f0ea;
+}
+
+.template-blank {
+  display: grid;
+  place-items: center;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.template-card-cap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.template-card-cap span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-del {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.template-del:hover,
+.template-del:focus-visible {
+  background: #f3d7d7;
+  color: #8a2f2f;
+}
+
+.template-card span,
+.design-card span {
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.color-well-row {
+  margin: 10px 0;
+}
+
+.color-well {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink-soft);
+}
+
+.color-well input[type="color"] {
+  width: 100%;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+  background: #111;
+}
+
+.swatch-row {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.swatch {
+  width: 100%;
+  min-height: 28px;
+  min-width: 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+}
+
+.design-list {
+  display: grid;
+  gap: 8px;
+}
+
+.cloth-preview-card {
+  width: min(640px, 100%);
+}
+
+#previewCanvas {
+  margin: 8px auto 0;
+  max-width: 100%;
+  height: auto;
+}
+
+.cloth-app .rail-left,
+.cloth-app .rail-right {
+  min-width: 0;
+}
+
+.cloth-app .rail-block {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.tool-row-2,
+.io-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.io-row {
+  margin: 8px 0 12px;
+}
+
+.io-row .btn,
+#btnSaveBoard,
+#btnClothAiRail {
+  min-height: 44px;
+}
+
+#btnSaveBoard {
+  margin: 8px 0 12px;
+}
+
+html.is-mobile-workspace .cloth-app .top-actions .btn {
+  min-height: 40px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .cloth-app .brand {
+  display: none;
+}
+
+html.is-mobile-workspace .cloth-app .desk-switch-inline {
+  margin-left: 0;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .cloth-workspace {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .cloth-stage {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .cloth-app .top-actions .btn-compact:not(.btn-primary) {
+  display: none;
+}
+
+html.is-mobile-workspace .cloth-app .paint-hint {
+  display: none;
+}
+
+html.is-tablet-workspace .cloth-app {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+html.is-tablet-workspace .cloth-workspace {
+  grid-template-columns: 228px minmax(0, 1fr) 220px;
+}
+
+html.is-tablet-workspace .cloth-app #clothTemplateSheet,
+html.is-tablet-workspace .cloth-app #clothToolSheet {
+  position: relative !important;
+  inset: auto !important;
+  width: auto !important;
+  max-height: none !important;
+  display: flex !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+html.is-tablet-workspace .cloth-mobile-dock {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .cloth-app .top-actions {
+    gap: 4px;
+  }
+}
+
+.cloth-ai-card {
+  width: min(560px, 100%);
+  max-height: min(84vh, calc(var(--visual-vh, 100dvh) - 16px));
+}
+
+.cloth-ai-card .modal-body {
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  max-height: min(72vh, calc(var(--visual-vh, 100dvh) - 72px));
+}
+
+.cloth-ai-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.cloth-ai-model-row .btn,
+.cloth-ai-prompt-actions .btn,
+#btnClothAiGenerate {
+  min-height: 44px;
+}
+
+.cloth-ai-prompt-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cloth-ai-prompt {
+  min-height: 168px;
+  resize: vertical;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.cloth-ai-rules {
+  padding: 8px 10px;
+  border: 1px solid rgba(183, 200, 178, 0.8);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cloth-ai-rules summary {
+  cursor: pointer;
+  min-height: 32px;
+  font-weight: 650;
+}
+
+.cloth-ai-rules p {
+  margin: 8px 0 0;
+}
+
+html.is-mobile-workspace .cloth-ai-prompt-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html.is-mobile-workspace .cloth-ai-card .modal-body {
+  max-height: none;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .cloth-mobile-dock .mobile-dock-button {
+  font-size: 10px;
+}

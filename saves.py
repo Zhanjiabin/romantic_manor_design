@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Disk-backed desk saves (terrain drafts/versions + building session)."""
+"""Disk-backed desk saves (terrain, building, and cloth)."""
 from __future__ import annotations
 
 import hashlib
@@ -848,7 +848,118 @@ def save_building_bundle(doc: dict) -> dict:
                 except OSError:
                     pass
             elif isinstance(customs, dict):
-                _atomic_write(path, customs)
+                incoming_items = customs.get("items") if isinstance(customs.get("items"), list) else []
+                existing = _read_json(path)
+                existing_items = []
+                if isinstance(existing, dict) and isinstance(existing.get("items"), list):
+                    existing_items = existing.get("items") or []
+                elif isinstance(existing, list):
+                    existing_items = existing
+                incoming_at = int(customs.get("savedAt") or 0)
+                existing_at = int(existing.get("savedAt") or 0) if isinstance(existing, dict) else 0
+                if not incoming_items and existing_items and (existing_at == 0 or incoming_at <= existing_at):
+                    pass
+                else:
+                    _atomic_write(path, customs)
             else:
                 raise ValueError("customs must be an object")
     return load_building_bundle()
+
+
+def load_cloth_bundle() -> dict:
+    root = saves_root()
+    session = _read_json(root / "cloth-session.json")
+    designs = _read_json(root / "cloth-designs.json")
+    boards = _read_json(root / "cloth-boards.json")
+    ai = _read_json(root / "cloth-ai.json")
+    prompts = _read_json(root / "cloth-prompts.json")
+    return {
+        "session": session if isinstance(session, dict) else None,
+        "designs": designs if isinstance(designs, dict) else None,
+        "boards": boards if isinstance(boards, dict) else None,
+        "ai": ai if isinstance(ai, dict) else None,
+        "prompts": prompts if isinstance(prompts, dict) else None,
+    }
+
+
+def _write_cloth_items(path: Path, incoming: dict) -> None:
+    incoming_items = incoming.get("items") if isinstance(incoming.get("items"), list) else []
+    existing = _read_json(path)
+    existing_items = []
+    if isinstance(existing, dict) and isinstance(existing.get("items"), list):
+        existing_items = existing.get("items") or []
+    elif isinstance(existing, list):
+        existing_items = existing
+    incoming_at = int(incoming.get("savedAt") or 0)
+    existing_at = int(existing.get("savedAt") or 0) if isinstance(existing, dict) else 0
+    if not incoming_items and existing_items and (existing_at == 0 or incoming_at <= existing_at):
+        return
+    _atomic_write(path, incoming)
+
+
+def save_cloth_bundle(doc: dict) -> dict:
+    if not isinstance(doc, dict):
+        raise ValueError("cloth save must be an object")
+    with _LOCK:
+        root = saves_root()
+        if "session" in doc:
+            session = doc.get("session")
+            path = root / "cloth-session.json"
+            if session is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(session, dict):
+                _atomic_write(path, session)
+            else:
+                raise ValueError("session must be an object")
+        if "designs" in doc:
+            designs = doc.get("designs")
+            path = root / "cloth-designs.json"
+            if designs is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(designs, dict):
+                _write_cloth_items(path, designs)
+            else:
+                raise ValueError("designs must be an object")
+        if "boards" in doc:
+            boards = doc.get("boards")
+            path = root / "cloth-boards.json"
+            if boards is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(boards, dict):
+                _write_cloth_items(path, boards)
+            else:
+                raise ValueError("boards must be an object")
+        if "ai" in doc:
+            ai = doc.get("ai")
+            path = root / "cloth-ai.json"
+            if ai is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(ai, dict):
+                _atomic_write(path, ai)
+            else:
+                raise ValueError("ai must be an object")
+        if "prompts" in doc:
+            prompts = doc.get("prompts")
+            path = root / "cloth-prompts.json"
+            if prompts is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(prompts, dict):
+                _write_cloth_items(path, prompts)
+            else:
+                raise ValueError("prompts must be an object")
+    return load_cloth_bundle()

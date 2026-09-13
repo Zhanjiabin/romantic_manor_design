@@ -265,7 +265,8 @@ html.is-tablet-workspace {
 }
 
 html.is-tablet-workspace #desk.app,
-html.is-tablet-workspace .building-app {
+html.is-tablet-workspace .building-app,
+html.is-tablet-workspace .cloth-app {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
@@ -2443,7 +2444,8 @@ html.is-mobile-workspace .building-app .desk-switch-inline {
   flex-shrink: 0;
 }
 
-html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .brand {
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app .brand,
+html.is-mobile-workspace:not(.is-tablet-workspace) .cloth-app .brand {
   display: none;
 }
 
@@ -3251,7 +3253,8 @@ html.is-mobile-workspace .canvas-shell.mobile-pan-mode {
 }
 
 html.is-tablet-workspace #desk.app,
-html.is-tablet-workspace .building-app {
+html.is-tablet-workspace .building-app,
+html.is-tablet-workspace .cloth-app {
   grid-template-rows: auto minmax(0, 1fr);
 }
 

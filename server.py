@@ -35,6 +35,7 @@ from codec.terrain import dumps_document as dumps_terrain_document
 from codec.terrain import dumps_gbk as dumps_terrain
 from codec.terrain import loads_gbk as loads_terrain
 from export_xlsx import build_materials_xlsx
+from cloth_ai import generate_image, list_image_models, public_error
 from saves import (
     clear_building_papers,
     delete_building_paper,
@@ -42,6 +43,7 @@ from saves import (
     load_building_bundle,
     load_building_paper,
     load_building_papers,
+    load_cloth_bundle,
     load_paper_thumb,
     load_terrain_asset,
     load_terrain_index,
@@ -49,6 +51,7 @@ from saves import (
     paper_exists,
     save_building_bundle,
     save_building_papers,
+    save_cloth_bundle,
     save_paper_library_meta,
     save_paper_thumb,
     save_terrain_asset,
@@ -695,6 +698,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/saves/building/papers":
             body = json.dumps(load_building_papers(), ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
+        if path == "/api/saves/cloth":
+            body = json.dumps(load_cloth_bundle(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
         paper_prefix = "/api/saves/building/papers/"
         if path.startswith(paper_prefix):
             rest = path[len(paper_prefix) :]
@@ -812,6 +818,34 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             msg = str(e).encode("utf-8", errors="replace")
             return self._send(400, msg, "text/plain; charset=utf-8")
+        if path in ("/api/cloth-ai/models", "/api/cloth-ai/generate"):
+            try:
+                obj = json.loads(raw.decode("utf-8") or "null")
+            except json.JSONDecodeError:
+                return self._send(400, b'{"error":"bad json"}', "application/json; charset=utf-8")
+            if not isinstance(obj, dict):
+                return self._send(400, b'{"error":"bad json"}', "application/json; charset=utf-8")
+            try:
+                if path == "/api/cloth-ai/models":
+                    models = list_image_models(str(obj.get("apiKey") or ""), obj.get("baseUrl"))
+                    body = json.dumps({"models": models}, ensure_ascii=False).encode("utf-8")
+                    return self._send(200, body, "application/json; charset=utf-8")
+                png = generate_image(
+                    api_key=str(obj.get("apiKey") or ""),
+                    model=str(obj.get("model") or ""),
+                    prompt=str(obj.get("prompt") or ""),
+                    kind=str(obj.get("kind") or ""),
+                    width=obj.get("width"),
+                    height=obj.get("height"),
+                    reference_png=obj.get("referencePng"),
+                    base_url=obj.get("baseUrl"),
+                )
+                body = json.dumps({"png": png}, ensure_ascii=False).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                code, payload = public_error(exc)
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                return self._send(code, body, "application/json; charset=utf-8")
         return self._send(404, b"not found", "text/plain")
 
     def do_PUT(self):
@@ -855,6 +889,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(200, b'{"ok":true}', "application/json")
             if path == "/api/saves/building":
                 body = json.dumps(save_building_bundle(obj), ensure_ascii=False).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
+            if path == "/api/saves/cloth":
+                body = json.dumps(save_cloth_bundle(obj), ensure_ascii=False).encode("utf-8")
                 return self._send(200, body, "application/json; charset=utf-8")
             if path == "/api/saves/building/papers":
                 if obj.get("replace"):

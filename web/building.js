@@ -542,22 +542,21 @@ async function bootBuilding() {
   state.base =
     catalog.building.bases.find((base) => base.kind === 0) || catalog.building.bases[0] || null;
   const remoteSaves = await remoteSavesPromise;
-  if (remoteSaves && remoteSaves.customs) {
-    applyCustomsData(remoteSaves.customs);
-    try {
-      deskSet(
-        CUSTOMS_KEY,
-        JSON.stringify(
-          Array.isArray(remoteSaves.customs)
-            ? { items: remoteSaves.customs, folders: [] }
-            : remoteSaves.customs
-        )
-      );
-    } catch (error) {
-      console.warn(error);
+  loadCustoms();
+  if (remoteSaves && remoteSaves.customs != null) {
+    const merged = mergeCustomsData(readStoredCustomsBundle(), remoteSaves.customs);
+    applyCustomsData(merged);
+    persistCustomsLocal({
+      v: 1,
+      savedAt: merged.savedAt || Date.now(),
+      items: merged.items,
+      folders: merged.folders,
+    });
+    if (customsNeedRemoteSync(merged, remoteSaves.customs)) {
+      saveCustoms().catch((error) => console.warn(error));
     }
-  } else {
-    loadCustoms();
+  } else if (state.customs.length || state.customFolders.length) {
+    saveCustoms().catch((error) => console.warn(error));
   }
   bindBuilding();
   syncSmartBuildingUi();
@@ -612,10 +611,7 @@ async function bootBuilding() {
     sessionSnap &&
     Number(sessionSnap.savedAt) > Number(remoteSaves?.session?.savedAt || 0)
   ) {
-    putBuildingSaves({ session: sessionSnap }, false).catch((error) => console.warn(error));
-  }
-  if (!(remoteSaves && remoteSaves.customs) && (state.customs.length || state.customFolders.length)) {
-    saveCustoms();
+    putBuildingSaves({ session: sessionSnap }).catch((error) => console.warn(error));
   }
   if (!restored) {
     setPhase("select");
@@ -641,7 +637,8 @@ async function bootBuilding() {
   };
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
-  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=290"]);
+  warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=293"]);
+  warmOtherDesk("/web/cloth.html", ["/web/cloth.js?v=10", "/data/cloth_catalog.json"]);
 }
 
 function sortThemes(packs) {
@@ -4884,11 +4881,10 @@ async function fetchBuildingSaves() {
   }
 }
 
-function putBuildingSaves(payload, keepalive) {
+function putBuildingSaves(payload) {
   return fetch("/api/saves/building", {
     method: "PUT",
     credentials: "same-origin",
-    keepalive: !!keepalive,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   }).then((res) => {
@@ -4979,26 +4975,26 @@ function pickNewerBuildingSnap(a, b) {
   return Number(b.savedAt) > Number(a.savedAt) ? b : a;
 }
 
-function saveBuildingSession() {
+function persistBuildingSessionLocal() {
   const snap = buildingSessionSnapshot();
   try {
     deskSet(SESSION_KEY, JSON.stringify(snap));
     state.sessionDirty = false;
+    return snap;
   } catch (error) {
     console.warn("建筑会话保存失败", error);
+    return snap;
   }
-  putBuildingSaves({ session: snap }, true).catch((error) => console.warn(error));
+}
+
+function saveBuildingSession() {
+  const snap = persistBuildingSessionLocal();
+  return putBuildingSaves({ session: snap }).catch((error) => console.warn(error));
 }
 
 async function saveBuildingSessionForSwitch() {
-  const snap = buildingSessionSnapshot();
-  try {
-    deskSet(SESSION_KEY, JSON.stringify(snap));
-    state.sessionDirty = false;
-  } catch (error) {
-    console.warn("建筑会话保存失败", error);
-  }
-  putBuildingSaves({ session: snap }, false).catch((error) => console.warn(error));
+  const snap = persistBuildingSessionLocal();
+  putBuildingSaves({ session: snap }).catch((error) => console.warn(error));
 }
 
 function flashSaveDesignButton(ok) {
@@ -6707,16 +6703,99 @@ function finishCanvasPointer(event, shell, cancelled = false) {
 }
 
 function applyCustomsData(data) {
+  const bundle = customsBundle(data);
+  state.customs = bundle.items;
+  state.customFolders = bundle.folders;
+}
+
+function customsBundle(data) {
   if (Array.isArray(data)) {
-    state.customs = data;
-    state.customFolders = [];
-  } else {
-    state.customs = Array.isArray(data?.items) ? data.items : [];
-    state.customFolders = Array.isArray(data?.folders)
-      ? data.folders.map((folder) => String(folder || "").trim()).filter(Boolean)
-      : [];
+    return {
+      items: data.filter((item) => item && typeof item === "object"),
+      folders: [],
+      savedAt: 0,
+    };
   }
-  if (!Array.isArray(state.customs)) state.customs = [];
+  const folders = Array.isArray(data?.folders)
+    ? data.folders.map((folder) => String(folder || "").trim()).filter(Boolean)
+    : [];
+  return {
+    items: Array.isArray(data?.items)
+      ? data.items.filter((item) => item && typeof item === "object")
+      : [],
+    folders,
+    savedAt: Number(data?.savedAt) || 0,
+  };
+}
+
+function serializeCustomsData() {
+  return {
+    v: 1,
+    savedAt: Date.now(),
+    items: Array.isArray(state.customs) ? state.customs : [],
+    folders: customFolders(),
+  };
+}
+
+function mergeCustomsData(localData, remoteData) {
+  const local = customsBundle(localData);
+  const remote = customsBundle(remoteData);
+  const byId = new Map();
+  const extras = [];
+  const take = (item) => {
+    if (!item || typeof item !== "object") return;
+    const id = String(item.id || "");
+    if (!id) {
+      extras.push(item);
+      return;
+    }
+    const prev = byId.get(id);
+    if (!prev || Number(item.createdAt || 0) >= Number(prev.createdAt || 0)) {
+      byId.set(id, item);
+    }
+  };
+  if (!remote.items.length && local.items.length) {
+    return {
+      items: local.items,
+      folders: [...new Set([...local.folders, ...remote.folders])].sort((a, b) =>
+        a.localeCompare(b, "zh")
+      ),
+      savedAt: Math.max(local.savedAt, remote.savedAt),
+    };
+  }
+  local.items.forEach(take);
+  remote.items.forEach(take);
+  return {
+    items: [...byId.values(), ...extras],
+    folders: [...new Set([...local.folders, ...remote.folders])].sort((a, b) =>
+      a.localeCompare(b, "zh")
+    ),
+    savedAt: Math.max(local.savedAt, remote.savedAt),
+  };
+}
+
+function customsNeedRemoteSync(merged, remoteData) {
+  const remote = customsBundle(remoteData);
+  if (merged.items.length !== remote.items.length) return true;
+  const remoteIds = new Set(remote.items.map((item) => String(item?.id || "")));
+  return merged.items.some((item) => item?.id && !remoteIds.has(String(item.id)));
+}
+
+function persistCustomsLocal(customs) {
+  try {
+    deskSet(CUSTOMS_KEY, JSON.stringify(customs));
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function readStoredCustomsBundle() {
+  try {
+    const raw = deskGet(CUSTOMS_KEY);
+    return customsBundle(raw ? JSON.parse(raw) : []);
+  } catch {
+    return customsBundle([]);
+  }
 }
 
 function loadCustoms() {
@@ -6729,13 +6808,10 @@ function loadCustoms() {
   }
 }
 
-function saveCustoms() {
-  const customs = {
-    items: state.customs,
-    folders: customFolders(),
-  };
-  deskSet(CUSTOMS_KEY, JSON.stringify(customs));
-  putBuildingSaves({ customs }, true).catch((error) => console.warn(error));
+async function saveCustoms() {
+  const customs = serializeCustomsData();
+  persistCustomsLocal(customs);
+  await putBuildingSaves({ customs });
 }
 
 function customFolders() {
@@ -6749,10 +6825,10 @@ function customFolders() {
 function ensureCustomFolder(name) {
   const folder = String(name || "").trim();
   if (!folder) return "";
-  if (!(state.customFolders || []).includes(folder)) {
-    state.customFolders = [...(state.customFolders || []), folder];
-    saveCustoms();
-  }
+    if (!(state.customFolders || []).includes(folder)) {
+      state.customFolders = [...(state.customFolders || []), folder];
+      saveCustoms().catch((error) => console.warn(error));
+    }
   return folder;
 }
 
@@ -6950,7 +7026,7 @@ function fillCustoms() {
         if (!ok) return;
         state.customs = state.customs.filter((row) => row.id !== item.id);
         if (state.customBrush?.id === item.id) state.customBrush = null;
-        saveCustoms();
+        saveCustoms().catch((error) => console.warn(error));
         fillCategories();
         fillCustoms();
         updateSelectionCaption();
@@ -7042,12 +7118,17 @@ function confirmPresetDialog() {
     createdAt: Date.now(),
     records,
   });
-  saveCustoms();
   closePresetDialog();
   state.category = CUSTOM_CATEGORY;
   setRailTab("assets");
   fillCategories();
   fillCustoms();
+  saveCustoms().catch(async (error) => {
+    console.warn(error);
+    await appAlert("组件已记在本机，但没写到服务器。请检查登录后再保存一次。", {
+      title: "组件未同步",
+    });
+  });
 }
 
 function layerLabel(record, component) {
@@ -11014,7 +11095,7 @@ async function placeCurrentBuildingOnTerrain() {
     createdAt: Date.now(),
   };
   sessionStorage.setItem("manor-pending-preview-building", JSON.stringify(payload));
-  saveBuildingSession();
+  await saveBuildingSession();
   location.href = "/?placeBuilding=1";
 }
 

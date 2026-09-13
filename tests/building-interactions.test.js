@@ -1447,12 +1447,32 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(paperCore, /b > r \+ 8 && b >= g/);
   assert.match(terrainHtml, /paper-library-core\.js\?v=22/);
   assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
-  assert.match(terrainHtml, /app\.js\?v=290/);
+  assert.match(terrainHtml, /app\.js\?v=293/);
   assert.match(terrainHtml, /building-preview\.js\?v=10/);
   assert.match(buildingHtml, /paper-library-core\.js\?v=22/);
-  assert.match(buildingHtml, /building\.js\?v=275/);
+  assert.match(buildingHtml, /building\.js\?v=279/);
   assert.match(buildingHtml, /building-preview\.js\?v=10/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
+});
+
+test("building desk saves customs and sessions with a normal PUT", () => {
+  const buildingJs = fs.readFileSync(path.join(__dirname, "../web/building.js"), "utf8");
+  const put = buildingJs.slice(
+    buildingJs.indexOf("function putBuildingSaves"),
+    buildingJs.indexOf("function paperPackKey")
+  );
+  assert.match(buildingJs, /function mergeCustomsData/);
+  assert.match(buildingJs, /function readStoredCustomsBundle/);
+  assert.match(buildingJs, /await putBuildingSaves\(\{ customs \}\)/);
+  assert.match(put, /method: "PUT"/);
+  assert.doesNotMatch(put, /keepalive/);
+  assert.doesNotMatch(buildingJs, /KEEPALIVE_SAVE_MAX/);
+  const terrainJs = fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8");
+  const terrainDraft = terrainJs.slice(
+    terrainJs.indexOf("async function putTerrainDraft"),
+    terrainJs.indexOf("async function putTerrainVersion")
+  );
+  assert.doesNotMatch(terrainDraft, /keepalive/);
 });
 
 test("placing a house on the terrain desk keeps each sprite's building-desk pack", () => {
@@ -1630,7 +1650,7 @@ test("paper library can batch-assign groups on both desks", () => {
     assert.match(html, /id="btnPaperLibrarySelectVisible"/);
     assert.match(html, /id="btnPaperLibraryBatchClear"/);
     assert.match(html, /paper-library\.css\?v=15/);
-    assert.match(html, /mobile-workspace\.css\?v=110/);
+    assert.match(html, /mobile-workspace\.css\?v=111/);
     assert.match(html, /id="btnPaperLibraryArchive"/);
     assert.match(html, /id="btnPaperLibraryBatchArchive"/);
     assert.match(html, /id="btnPaperLibraryRenameGroup"/);
@@ -1716,7 +1736,8 @@ test("desk switching saves locally first and restores the newer session", () => 
     buildingJs.indexOf("async function saveBuildingSessionForSwitch"),
     buildingJs.indexOf("async function saveDesignNow")
   );
-  assert.match(buildingSwitch, /deskSet\(SESSION_KEY/);
+  assert.match(buildingJs, /function persistBuildingSessionLocal/);
+  assert.match(buildingSwitch, /persistBuildingSessionLocal\(\)/);
   assert.doesNotMatch(buildingSwitch, /await putBuildingSaves/);
   assert.match(appJs, /async function saveDraftForSwitch/);
   assert.match(appJs, /wireDeskSwitchSave\(saveDraftForSwitch\)/);

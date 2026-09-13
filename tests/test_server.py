@@ -147,6 +147,7 @@ def test_should_open_browser_skips_remote():
 
 def test_safe_next_path():
     assert safe_next_path("/web/building.html") == "/web/building.html"
+    assert safe_next_path("/web/cloth.html") == "/web/cloth.html"
     assert safe_next_path("//evil") == "/"
     assert safe_next_path("https://evil.example/") == "/"
     assert safe_next_path("/login") == "/"

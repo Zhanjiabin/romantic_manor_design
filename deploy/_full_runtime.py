@@ -26,7 +26,7 @@ REMOTE = "/opt/manor-desk"
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {"saves", "ale_png_cache", "__pycache__", ".git", ".pytest_cache"}
 SKIP_SUFFIX = {".pyc", ".pyo"}
-ROOT_FILES = ("server.py", "saves.py", "export_xlsx.py", "game_paths.py")
+ROOT_FILES = ("server.py", "saves.py", "export_xlsx.py", "game_paths.py", "cloth_ai.py")
 FOLDERS = ("web", "codec")
 DATA_SUFFIX = {".json", ".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
@@ -51,6 +51,14 @@ def collect():
     if data.is_dir():
         for path in sorted(data.iterdir()):
             if path.is_file() and path.suffix.lower() in DATA_SUFFIX:
+                files.append(path.relative_to(ROOT).as_posix())
+        cloth = data / "cloth"
+        if cloth.is_dir():
+            for path in sorted(cloth.rglob("*")):
+                if not path.is_file() or path.suffix in SKIP_SUFFIX:
+                    continue
+                if path.suffix.lower() not in DATA_SUFFIX:
+                    continue
                 files.append(path.relative_to(ROOT).as_posix())
     return files
 
@@ -97,7 +105,10 @@ def main():
         "curl -s -o /dev/null -w 'health:%{http_code}\\n' http://127.0.0.1:8095/api/health",
         "curl -s -o /dev/null -w 'login:%{http_code}\\n' http://127.0.0.1:8095/login",
         "curl -s -o /dev/null -w 'building:%{http_code}\\n' http://127.0.0.1:8095/web/building.html",
+        "curl -s -o /dev/null -w 'cloth:%{http_code}\\n' http://127.0.0.1:8095/web/cloth.html",
         "grep -n 'building.js?v=' /opt/manor-desk/web/building.html",
+        "grep -n 'cloth.js?v=' /opt/manor-desk/web/cloth.html",
+        "python3 -c \"import json; d=json.load(open('/opt/manor-desk/data/cloth_catalog.json',encoding='utf-8')); print('cloth', d.get('templateCount'))\"",
         "grep -n 'desk-account.js?v=' /opt/manor-desk/web/building.html /opt/manor-desk/web/index.html",
         "grep -n 'mobile-workspace.css?v=' /opt/manor-desk/web/building.html /opt/manor-desk/web/index.html",
         "grep -n 'data-account-switch' /opt/manor-desk/web/building.html /opt/manor-desk/web/index.html | head",

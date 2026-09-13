@@ -16,12 +16,14 @@ from saves import (
     load_building_bundle,
     load_building_paper,
     load_building_papers,
+    load_cloth_bundle,
     load_paper_thumb,
     load_terrain_bundle,
     load_terrain_index,
     load_terrain_version,
     save_building_bundle,
     save_building_papers,
+    save_cloth_bundle,
     save_paper_library_meta,
     save_paper_thumb,
     save_terrain_draft,
@@ -66,6 +68,63 @@ def test_terrain_and_building_roundtrip():
         built = load_building_bundle()
         assert built["session"]["v"] == 1
         assert built["customs"]["folders"] == ["x"]
+
+        save_building_bundle({"customs": {"items": [{"id": "wall", "name": "墙1"}], "folders": ["围栏"]}})
+        save_building_bundle({"customs": {"items": [], "folders": []}})
+        kept = load_building_bundle()["customs"]
+        assert kept["items"][0]["name"] == "墙1"
+        save_building_bundle({"customs": {"savedAt": 50, "items": [], "folders": []}})
+        still = load_building_bundle()["customs"]
+        assert still["items"][0]["name"] == "墙1"
+        save_building_bundle({"customs": {"savedAt": 100, "items": [{"id": "wall", "name": "墙1"}], "folders": ["围栏"]}})
+        save_building_bundle({"customs": {"savedAt": 200, "items": [], "folders": []}})
+        cleared = load_building_bundle()["customs"]
+        assert cleared.get("items") == []
+    finally:
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev
+
+
+def test_cloth_designs_refuse_empty_overwrite():
+    tmp = tempfile.mkdtemp(prefix="manor-cloth-saves-")
+    prev = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = tmp
+    try:
+        save_cloth_bundle({"session": {"v": 1, "kindId": "female-short"}, "designs": {"items": [{"id": "c1", "name": "裙"}]}})
+        kept = load_cloth_bundle()
+        assert kept["session"]["kindId"] == "female-short"
+        save_cloth_bundle({"designs": {"items": []}})
+        still = load_cloth_bundle()["designs"]
+        assert still["items"][0]["name"] == "裙"
+        save_cloth_bundle({"designs": {"savedAt": 50, "items": []}})
+        still = load_cloth_bundle()["designs"]
+        assert still["items"][0]["name"] == "裙"
+        save_cloth_bundle({"designs": {"savedAt": 100, "items": [{"id": "c1", "name": "裙"}]}})
+        save_cloth_bundle({"designs": {"savedAt": 200, "items": []}})
+        cleared = load_cloth_bundle()["designs"]
+        assert cleared.get("items") == []
+        save_cloth_bundle({"boards": {"items": [{"id": "b1", "name": "领结"}]}})
+        save_cloth_bundle({"boards": {"items": []}})
+        still_boards = load_cloth_bundle()["boards"]
+        assert still_boards["items"][0]["name"] == "领结"
+        save_cloth_bundle({"boards": {"savedAt": 100, "items": [{"id": "b1", "name": "领结"}]}})
+        save_cloth_bundle({"boards": {"savedAt": 200, "items": []}})
+        cleared_boards = load_cloth_bundle()["boards"]
+        assert cleared_boards.get("items") == []
+        save_cloth_bundle({"ai": {"apiKey": "sk-test", "model": "gpt-image-2", "savedAt": 1}})
+        save_cloth_bundle({"prompts": {"items": [{"id": "p1", "kind": "hair", "name": "丝巾", "prompt": "横图"}]}})
+        ai_bundle = load_cloth_bundle()
+        assert ai_bundle["ai"]["model"] == "gpt-image-2"
+        assert ai_bundle["prompts"]["items"][0]["name"] == "丝巾"
+        save_cloth_bundle({"prompts": {"items": []}})
+        still_prompts = load_cloth_bundle()["prompts"]
+        assert still_prompts["items"][0]["name"] == "丝巾"
+        save_cloth_bundle({"prompts": {"savedAt": 100, "items": [{"id": "p1", "kind": "hair", "name": "丝巾", "prompt": "横图"}]}})
+        save_cloth_bundle({"prompts": {"savedAt": 200, "items": []}})
+        cleared_prompts = load_cloth_bundle()["prompts"]
+        assert cleared_prompts.get("items") == []
     finally:
         if prev is None:
             os.environ.pop("MANOR_SAVES", None)

@@ -10,17 +10,19 @@
   const PAPER = "#f4f0ea";
   const FAIR_SIZE = [512, 256];
   const CLOTH_SIZE = [256, 256];
-  const SWATCHES = ["#000000", "#ffffff", "#c45c6a", "#e8a0b0", "#f2d38a", "#7bb38a", "#5a8fbf", "#6b4f3a"];
+  const SWATCHES = ["#000000", "#ffffff", "#3a2a24", "#c45c6a", "#e8a0b0", "#f2d38a", "#d98a3a", "#7bb38a", "#5a8fbf", "#6b4f3a", "#7a6aa8", "#ece6dc"];
+  const SIZE_MAX = 40;
   const TOOLS = [
-    { id: "pencil", label: "细笔" },
-    { id: "round", label: "圆笔" },
-    { id: "spray", label: "喷点" },
-    { id: "eraser", label: "橡皮" },
-    { id: "line", label: "直线" },
-    { id: "fill", label: "填充" },
-    { id: "eyedrop", label: "吸色" },
-    { id: "pan", label: "移动" },
+    { id: "pencil", label: "细笔", glyph: "·" },
+    { id: "round", label: "圆笔", glyph: "●" },
+    { id: "spray", label: "喷点", glyph: "◌" },
+    { id: "eraser", label: "橡皮", glyph: "⌫" },
+    { id: "line", label: "直线", glyph: "/" },
+    { id: "fill", label: "填充", glyph: "▣" },
+    { id: "eyedrop", label: "吸色", glyph: "◎" },
+    { id: "pan", label: "移动", glyph: "✥" },
   ];
+  const TOOL_KEYS = { 1: "pencil", 2: "round", 3: "spray", 4: "eraser", 5: "line", 6: "fill", 7: "eyedrop", 8: "pan" };
 
   const canvas = document.getElementById("paintCanvas");
   const view = document.getElementById("paintView");
@@ -69,7 +71,11 @@
   let painting = false;
   let lineStart = null;
   let lastPoint = null;
+  let strokeOrigin = null;
+  let smoothPoint = null;
   let gesture = null;
+  let spacePan = false;
+  let toolBeforePan = "";
   let sessionTimer = 0;
   let fitTimer = 0;
   let previewBodyKind = "";
@@ -147,6 +153,11 @@
     if (canvas.height !== height) canvas.height = height;
     if (templateCanvas.width !== width) templateCanvas.width = width;
     if (templateCanvas.height !== height) templateCanvas.height = height;
+    const ghost = document.getElementById("paintGhost");
+    if (ghost) {
+      if (ghost.width !== width) ghost.width = width;
+      if (ghost.height !== height) ghost.height = height;
+    }
     ctx.imageSmoothingEnabled = false;
     templateCtx.imageSmoothingEnabled = false;
     document.getElementById("canvasSizeLabel").textContent = `${width}×${height}`;
@@ -292,11 +303,18 @@
     };
   }
 
-  function toolRadius() {
+  function pressureOf(event) {
+    if (!event || event.pointerType === "mouse") return 1;
+    if (typeof event.pressure !== "number") return 1;
+    return Math.max(0.18, Math.min(1, event.pressure || 0.5));
+  }
+
+  function toolRadius(event) {
     const size = Math.max(1, Number(state.size) || 4);
-    if (state.tool === "pencil") return Math.max(0.6, size * 0.45);
-    if (state.tool === "spray") return size * 1.4;
-    return size;
+    let radius = size;
+    if (state.tool === "pencil") radius = Math.max(0.6, size * 0.42);
+    if (state.tool === "spray") radius = size * 1.35;
+    return radius * pressureOf(event);
   }
 
   function hexToRgb(hex) {
@@ -306,8 +324,8 @@
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 255];
   }
 
-  function stamp(x, y) {
-    const radius = toolRadius();
+  function stamp(x, y, event) {
+    const radius = toolRadius(event);
     if (state.tool === "eraser") {
       ctx.save();
       ctx.beginPath();
@@ -318,22 +336,15 @@
       return;
     }
     if (state.tool === "spray") {
-      const rgb = hexToRgb(state.color);
-      const dots = Math.max(8, Math.round(radius * 6));
-      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = state.color;
+      const dots = Math.max(10, Math.round(radius * 7));
       for (let i = 0; i < dots; i += 1) {
         const angle = Math.random() * Math.PI * 2;
         const dist = Math.random() * radius;
-        const px = Math.round(x + Math.cos(angle) * dist);
-        const py = Math.round(y + Math.sin(angle) * dist);
-        if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) continue;
-        const index = (py * canvas.width + px) * 4;
-        image.data[index] = rgb[0];
-        image.data[index + 1] = rgb[1];
-        image.data[index + 2] = rgb[2];
-        image.data[index + 3] = 255;
+        const px = x + Math.cos(angle) * dist;
+        const py = y + Math.sin(angle) * dist;
+        ctx.fillRect(px, py, 1, 1);
       }
-      ctx.putImageData(image, 0, 0);
       return;
     }
     ctx.fillStyle = state.color;
@@ -342,13 +353,45 @@
     ctx.fill();
   }
 
-  function stroke(from, to) {
+  function stroke(from, to, event) {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
-    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / Math.max(1, toolRadius() * 0.45)));
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / Math.max(0.6, toolRadius(event) * 0.32)));
     for (let i = 0; i <= steps; i += 1) {
-      stamp(from.x + (dx * i) / steps, from.y + (dy * i) / steps);
+      stamp(from.x + (dx * i) / steps, from.y + (dy * i) / steps, event);
     }
+  }
+
+  function lockAxis(point) {
+    if (!strokeOrigin) return point;
+    if (Math.abs(point.x - strokeOrigin.x) >= Math.abs(point.y - strokeOrigin.y)) {
+      return { x: point.x, y: strokeOrigin.y };
+    }
+    return { x: strokeOrigin.x, y: point.y };
+  }
+
+  function ghostCanvas() {
+    return document.getElementById("paintGhost");
+  }
+
+  function clearGhost() {
+    const ghost = ghostCanvas();
+    const gtx = ghost?.getContext("2d");
+    if (gtx) gtx.clearRect(0, 0, ghost.width, ghost.height);
+  }
+
+  function drawLineGhost(from, to, event) {
+    const ghost = ghostCanvas();
+    const gtx = ghost?.getContext("2d");
+    if (!gtx || !from || !to) return;
+    gtx.clearRect(0, 0, ghost.width, ghost.height);
+    gtx.strokeStyle = state.color;
+    gtx.lineWidth = Math.max(1, toolRadius(event) * 2);
+    gtx.lineCap = "round";
+    gtx.beginPath();
+    gtx.moveTo(from.x, from.y);
+    gtx.lineTo(to.x, to.y);
+    gtx.stroke();
   }
 
   function pickColor(x, y) {
@@ -399,29 +442,50 @@
     ctx.putImageData(image, 0, 0);
   }
 
+  function setBrushSize(size) {
+    state.size = Math.max(1, Math.min(SIZE_MAX, Math.round(Number(size) || 4)));
+    const input = document.getElementById("brushSize");
+    if (input) input.value = String(state.size);
+    const label = document.getElementById("brushSizeLabel");
+    if (label) label.textContent = String(state.size);
+    document.querySelectorAll("#sizePresets [data-size]").forEach((button) => {
+      button.classList.toggle("on", Number(button.dataset.size) === state.size);
+    });
+  }
+
   function setTool(id) {
     state.tool = id;
+    if (board) board.dataset.tool = id;
     document.querySelectorAll("#toolGrid .tool").forEach((button) => {
       button.classList.toggle("on", button.dataset.tool === id);
     });
     const panBtn = document.getElementById("btnClothMobilePan");
     panBtn?.classList.toggle("on", id === "pan");
     panBtn?.setAttribute("aria-pressed", String(id === "pan"));
+    clearGhost();
   }
 
   function fillTools() {
     const grid = document.getElementById("toolGrid");
     if (!grid) return;
     grid.replaceChildren();
-    TOOLS.forEach((tool) => {
+    TOOLS.forEach((tool, index) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "tool" + (tool.id === state.tool ? " on" : "");
+      button.className = "tool brush-tool" + (tool.id === state.tool ? " on" : "");
       button.dataset.tool = tool.id;
-      button.textContent = tool.label;
+      button.title = tool.label + "（" + (index + 1) + "）";
+      const glyph = document.createElement("span");
+      glyph.className = "brush-glyph";
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.textContent = tool.glyph;
+      const label = document.createElement("span");
+      label.textContent = tool.label;
+      button.append(glyph, label);
       button.addEventListener("click", () => setTool(tool.id));
       grid.append(button);
     });
+    if (board) board.dataset.tool = state.tool;
   }
 
   function fillSwatches() {
@@ -774,6 +838,21 @@
       if (!ok) return;
     }
     await applyTemplate(stockTemplate() || { id: BLANK_ID, blank: true });
+  }
+
+  async function startNewDesign() {
+    if (state.dirty) {
+      const ok = typeof appConfirm === "function"
+        ? await appConfirm("画布上已经动过笔。新建设计会盖掉正在画的内容。", { title: "新建设计", okLabel: "新建" })
+        : window.confirm("新建设计？未保存的绘制会丢掉。");
+      if (!ok) return;
+    }
+    state.designName = "";
+    const nameInput = document.getElementById("clothSaveName");
+    if (nameInput) nameInput.value = "";
+    await applyTemplate(stockTemplate() || { id: BLANK_ID, blank: true });
+    setSaveStatus("未保存");
+    closeClothSheets();
   }
 
   function importImageFile(file) {
@@ -1460,11 +1539,18 @@
     return pointers.size;
   }
 
-  function beginPaint(event) {
+  function paintPointFrom(event) {
     const point = boardPoint(event);
+    return event.shiftKey ? lockAxis(point) : point;
+  }
+
+  function beginPaint(event) {
+    const point = paintPointFrom(event);
+    strokeOrigin = point;
     if (state.tool === "pan") return;
     if (state.tool === "eyedrop") {
       pickColor(point.x, point.y);
+      painting = true;
       return;
     }
     if (state.tool === "fill") {
@@ -1481,28 +1567,51 @@
     }
     painting = true;
     lastPoint = point;
+    smoothPoint = point;
     pushHistory();
-    stamp(point.x, point.y);
+    stamp(point.x, point.y, event);
     markDirty();
   }
 
   function movePaint(event) {
-    if (!painting || state.tool === "pan" || state.tool === "fill" || state.tool === "eyedrop") return;
-    const point = boardPoint(event);
-    if (state.tool === "line") return;
-    if (lastPoint) stroke(lastPoint, point);
-    lastPoint = point;
+    if (!painting || state.tool === "pan" || state.tool === "fill") return;
+    const samples = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [event];
+    const list = samples.length ? samples : [event];
+    list.forEach((sample) => {
+      const point = paintPointFrom(sample);
+      if (state.tool === "eyedrop") {
+        pickColor(point.x, point.y);
+        return;
+      }
+      if (state.tool === "line") {
+        drawLineGhost(lineStart, point, sample);
+        return;
+      }
+      if (lastPoint && smoothPoint) {
+        const mid = { x: (smoothPoint.x + point.x) / 2, y: (smoothPoint.y + point.y) / 2 };
+        stroke(lastPoint, mid, sample);
+        lastPoint = mid;
+      } else if (lastPoint) {
+        stroke(lastPoint, point, sample);
+        lastPoint = point;
+      }
+      smoothPoint = point;
+    });
   }
 
   function endPaint(event) {
     if (state.tool === "line" && painting && lineStart) {
-      const point = boardPoint(event);
-      stroke(lineStart, point);
+      const point = paintPointFrom(event);
+      clearGhost();
+      stroke(lineStart, point, event);
       markDirty();
     }
     painting = false;
     lineStart = null;
     lastPoint = null;
+    strokeOrigin = null;
+    smoothPoint = null;
+    clearGhost();
   }
 
   function beginGesture() {
@@ -1671,8 +1780,11 @@
       saveAiSettings();
     });
     document.getElementById("brushSize")?.addEventListener("input", (event) => {
-      state.size = Math.max(1, Number(event.target.value) || 4);
-      document.getElementById("brushSizeLabel").textContent = String(state.size);
+      setBrushSize(event.target.value);
+    });
+    document.getElementById("sizePresets")?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-size]");
+      if (button) setBrushSize(button.dataset.size);
     });
     document.getElementById("paintColor")?.addEventListener("input", (event) => {
       state.color = event.target.value || "#000000";
@@ -1683,6 +1795,9 @@
     document.getElementById("btnClothMobilePan")?.addEventListener("click", () => {
       setTool(state.tool === "pan" ? "round" : "pan");
     });
+    document.getElementById("btnClothMobileNew")?.addEventListener("click", () => startNewDesign());
+    document.getElementById("btnNewDesign")?.addEventListener("click", () => startNewDesign());
+    document.getElementById("btnNewDesignRail")?.addEventListener("click", () => startNewDesign());
     document.getElementById("btnImportPng")?.addEventListener("click", () => document.getElementById("fileClothImage")?.click());
     document.getElementById("btnExportPng")?.addEventListener("click", () => exportJpg());
     document.getElementById("btnRestore")?.addEventListener("click", () => restoreDefault());
@@ -1701,6 +1816,7 @@
     document.querySelectorAll("[data-cloth-io]").forEach((button) => {
       button.addEventListener("click", () => {
         const action = button.dataset.clothIo;
+        if (action === "new") startNewDesign();
         if (action === "import") document.getElementById("fileClothImage")?.click();
         if (action === "export") exportJpg();
         if (action === "restore") restoreDefault();
@@ -1725,6 +1841,10 @@
     board.addEventListener("pointercancel", onPointerUp);
     board.addEventListener("wheel", (event) => {
       event.preventDefault();
+      if (event.altKey) {
+        setBrushSize(state.size + (event.deltaY < 0 ? 1 : -1));
+        return;
+      }
       const point = { x: event.clientX, y: event.clientY };
       const before = boardPoint(event);
       const next = Math.min(12, Math.max(0.2, state.zoom * (event.deltaY < 0 ? 1.12 : 0.9)));
@@ -1735,11 +1855,31 @@
       applyCamera();
     }, { passive: false });
     document.addEventListener("keydown", (event) => {
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || "");
       if (event.key === "Escape") {
         closeClothSheets();
         setModalVisible("dlgClothPreview", false);
         setModalVisible("dlgClothSave", false);
         closeAiDialog();
+        return;
+      }
+      if (!typing && event.code === "Space" && !event.repeat) {
+        event.preventDefault();
+        if (!spacePan) {
+          spacePan = true;
+          toolBeforePan = state.tool;
+          setTool("pan");
+        }
+        return;
+      }
+      if (!typing && (event.key === "[" || event.key === "]")) {
+        event.preventDefault();
+        setBrushSize(state.size + (event.key === "]" ? 1 : -1));
+        return;
+      }
+      if (!typing && !event.ctrlKey && !event.metaKey && !event.altKey && TOOL_KEYS[event.key]) {
+        event.preventDefault();
+        setTool(TOOL_KEYS[event.key]);
         return;
       }
       const meta = event.ctrlKey || event.metaKey;
@@ -1751,6 +1891,12 @@
       if (meta && event.key.toLowerCase() === "y") {
         event.preventDefault();
         redo();
+      }
+    });
+    document.addEventListener("keyup", (event) => {
+      if (event.code === "Space" && spacePan) {
+        spacePan = false;
+        setTool(toolBeforePan || "round");
       }
     });
     window.addEventListener("resize", () => {
@@ -1798,12 +1944,8 @@
     state.size = Math.max(1, Number(snap.size) || state.size);
     state.designName = snap.designName || "";
     const color = document.getElementById("paintColor");
-    const size = document.getElementById("brushSize");
     if (color) color.value = state.color;
-    if (size) {
-      size.value = String(state.size);
-      document.getElementById("brushSizeLabel").textContent = String(state.size);
-    }
+    setBrushSize(state.size);
     document.getElementById("clothSaveName").value = state.designName;
     document.querySelectorAll("#genderRow [data-gender]").forEach((node) => {
       const on = node.dataset.gender === state.gender;
@@ -1835,6 +1977,7 @@
     window.MobileWorkspace?.init();
     fillTools();
     fillSwatches();
+    setBrushSize(state.size);
     bindSheets();
     bindUi();
     const [catalog, remote, promptDoc] = await Promise.all([

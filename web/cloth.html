@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=11" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=10" />
+  <link rel="stylesheet" href="/web/cloth.css?v=17" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -40,6 +40,7 @@
         <button type="button" class="btn btn-compact" id="btnRestore" title="恢复当前种类的默认 UV">恢复默认</button>
         <button type="button" class="btn btn-compact" id="btnPreview" title="查看当前贴图">设计预览</button>
         <button type="button" class="btn btn-compact" id="btnClothAi" title="用第三方图片模型按 UV 出图">AI 设计</button>
+        <button type="button" class="btn btn-compact cloth-new-btn" id="btnNewDesign" title="回到当前种类的默认 UV，另开一张">新建</button>
         <button type="button" class="btn btn-compact btn-primary" id="btnSaveDesign" title="保存到本桌作品">完成设计</button>
         <button type="button" class="top-command-btn top-account-btn" id="btnSwitchAccount" data-account-switch hidden title="切换账号">
           <span class="top-account-kicker">账号</span>
@@ -57,7 +58,7 @@
         </div>
         <div class="rail-block" data-mobile-sheet-scroll>
           <div class="rail-head">性别</div>
-          <div class="tool-row tool-row-2" id="genderRow" role="tablist" aria-label="性别">
+          <div class="cloth-seg" id="genderRow" role="tablist" aria-label="性别">
             <button type="button" class="tool on" data-gender="female" aria-selected="true">女装</button>
             <button type="button" class="tool" data-gender="male" aria-selected="false">男装</button>
           </div>
@@ -79,9 +80,10 @@
         <div class="paint-board" id="paintBoard" tabindex="0" aria-label="衣服贴图画布">
           <div class="paint-view" id="paintView">
             <canvas id="paintCanvas" width="256" height="256" aria-label="衣服设计画布"></canvas>
+            <canvas id="paintGhost" width="256" height="256" aria-hidden="true"></canvas>
           </div>
         </div>
-        <p class="paint-hint" id="paintHint">一指绘制，双指拖动缩放。进游戏请导出 JPG，不要用 PNG。</p>
+        <p class="paint-hint" id="paintHint">一指绘制，双指拖动缩放。数字键 1–8 换笔，[ ] 调粗细，空格移动。进游戏请导出 JPG。</p>
       </main>
 
       <aside class="rail rail-right mobile-sheet" id="clothToolSheet">
@@ -93,18 +95,29 @@
         <div class="rail-block" data-mobile-sheet-scroll>
           <div class="rail-head">笔触</div>
           <div class="brush-grid" id="toolGrid"></div>
-          <label class="field">
-            <span>画笔大小 <b id="brushSizeLabel">4</b></span>
-            <input id="brushSize" type="range" min="1" max="32" value="4" />
-          </label>
-          <div class="color-well-row">
-            <label class="color-well" title="当前画笔颜色">
-              <span>当前画笔颜色</span>
-              <input id="paintColor" type="color" value="#000000" aria-label="画笔颜色" />
-            </label>
+          <div class="brush-settings">
+            <div class="brush-size-field">
+              <div class="size-presets" id="sizePresets">
+                <button type="button" data-size="1">细</button>
+                <button type="button" data-size="4">中</button>
+                <button type="button" data-size="10">粗</button>
+                <button type="button" data-size="22">大</button>
+              </div>
+              <label class="field">
+                <span>画笔大小 <b id="brushSizeLabel">4</b></span>
+                <input id="brushSize" type="range" min="1" max="40" value="4" />
+              </label>
+            </div>
+            <div class="color-panel">
+              <label class="color-well" title="当前画笔颜色">
+                <span>颜色</span>
+                <input id="paintColor" type="color" value="#000000" aria-label="画笔颜色" />
+              </label>
+              <div class="swatch-row" id="swatchRow" aria-label="常用颜色"></div>
+            </div>
           </div>
-          <div class="swatch-row" id="swatchRow" aria-label="常用颜色"></div>
           <div class="io-row">
+            <button type="button" class="btn btn-compact" data-cloth-io="new">新建设计</button>
             <button type="button" class="btn btn-compact" data-cloth-io="import">导入图片</button>
             <button type="button" class="btn btn-compact" data-cloth-io="export">导出图片</button>
             <button type="button" class="btn btn-compact" data-cloth-io="restore">恢复默认</button>
@@ -112,6 +125,7 @@
             <button type="button" class="btn btn-compact" id="btnClothAiRail">AI 设计</button>
           </div>
           <div class="rail-head">作品</div>
+          <button type="button" class="btn btn-compact btn-block" id="btnNewDesignRail" title="回到当前种类的默认 UV，另开一张">新建设计</button>
           <div class="design-list" id="designList"></div>
           <button type="button" class="btn btn-wide phone-account-btn" data-account-switch hidden title="切换账号">
             <span class="desk-account-name">切换账号</span>
@@ -121,6 +135,9 @@
     </div>
 
     <nav class="mobile-bottom-dock cloth-mobile-dock" id="clothMobileDock" aria-label="移动端衣服工具">
+      <button type="button" class="mobile-dock-button" id="btnClothMobileNew" title="新建设计">
+        <span class="mobile-dock-glyph">＋</span><span>新建</span>
+      </button>
       <button type="button" class="mobile-dock-button" id="btnClothMobileTemplates" aria-expanded="false">
         <span class="mobile-dock-glyph">▦</span><span>模板</span>
       </button>
@@ -150,9 +167,12 @@
         <button type="button" class="icon-x" data-close-modal="dlgClothPreview" aria-label="关闭"></button>
       </div>
       <div class="modal-body cloth-tryon-body" data-mobile-sheet-scroll>
-        <p class="dlg-desc" id="previewHint">拖动看正反面。衣服、头巾、表情和面饰都可以一起选，不必先限定短款长裙。</p>
+        <p class="dlg-desc" id="previewHint">拖动看正反面。衣服、头巾、表情和面饰都可以一起选。</p>
         <div class="cloth-tryon-layout">
-          <canvas id="previewCanvas" width="280" height="440" aria-label="拖动旋转角色试穿"></canvas>
+          <div class="preview-stage">
+            <canvas id="previewCanvas" width="520" height="680" aria-label="拖动旋转角色试穿"></canvas>
+            <p class="preview-rotate-hint">拖动旋转</p>
+          </div>
           <div class="preview-outfit" id="previewOutfit">
             <div class="preview-outfit-row">
               <span>身体</span>
@@ -186,47 +206,53 @@
         <span id="clothAiTitle">AI 设计</span>
         <button type="button" class="icon-x" data-close-modal="dlgClothAi" aria-label="关闭"></button>
       </div>
-      <div class="modal-body" data-mobile-sheet-scroll>
-        <p class="dlg-desc">接入巧匠图片模型。选提示词模板只会填进下面的编辑框，要按「生成到画布」才会出图。可选用当前种类的 UV / 底板当布局参考。</p>
-        <label class="field">
-          <span>API Key</span>
-          <input class="input" id="clothAiKey" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴你自己的 Key" />
-        </label>
-        <div class="cloth-ai-model-row">
-          <label class="field">
-            <span>图片模型</span>
-            <select class="input" id="clothAiModel" aria-label="图片模型"></select>
-          </label>
-          <button type="button" class="btn btn-compact" id="btnClothAiModels">刷新列表</button>
+      <div class="modal-body cloth-ai-body" data-mobile-sheet-scroll>
+        <div class="cloth-ai-layout">
+          <section class="cloth-ai-main">
+            <label class="field">
+              <span>提示词模板 · <b id="clothAiKindLabel">短款女装</b></span>
+              <select class="input" id="clothAiPromptPick" aria-label="提示词模板"></select>
+            </label>
+            <div class="cloth-ai-prompt-actions">
+              <button type="button" class="btn btn-compact" id="btnClothAiPromptNew">新建</button>
+              <button type="button" class="btn btn-compact" id="btnClothAiPromptSave">保存</button>
+              <button type="button" class="btn btn-compact" id="btnClothAiPromptDel">删除</button>
+              <button type="button" class="btn btn-compact" id="btnClothAiPromptReset">恢复本类默认</button>
+            </div>
+            <label class="field cloth-ai-prompt-field">
+              <span>提示词</span>
+              <textarea class="input cloth-ai-prompt" id="clothAiPrompt" rows="14" maxlength="4000"></textarea>
+            </label>
+            <p class="cloth-ai-note">选模板只会填进编辑框，要按右侧「生成到画布」才会出图。可把当前 UV / 底板当参考。</p>
+          </section>
+          <aside class="cloth-ai-side">
+            <label class="field">
+              <span>API Key</span>
+              <input class="input" id="clothAiKey" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴你自己的 Key" />
+            </label>
+            <div class="cloth-ai-model-row">
+              <label class="field">
+                <span>图片模型</span>
+                <select class="input" id="clothAiModel" aria-label="图片模型"></select>
+              </label>
+              <button type="button" class="btn btn-compact" id="btnClothAiModels">刷新列表</button>
+            </div>
+            <label class="field">
+              <span>其他模型</span>
+              <input class="input" id="clothAiModelCustom" maxlength="80" placeholder="列表里没有时手填" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>参考图</span>
+              <select class="input" id="clothAiRef" aria-label="参考图"></select>
+            </label>
+            <details class="cloth-ai-rules">
+              <summary>生成时自动附上的画布规则</summary>
+              <p id="clothAiContract">输出必须是游戏 UV 贴图，按当前种类尺寸铺满，不要人物试穿。</p>
+            </details>
+            <p class="kind-meta" id="clothAiStatus" role="status"></p>
+            <button type="button" class="btn btn-primary btn-block" id="btnClothAiGenerate">生成到画布</button>
+          </aside>
         </div>
-        <label class="field">
-          <span>没有想要的模型时，可手填</span>
-          <input class="input" id="clothAiModelCustom" maxlength="80" placeholder="例如 gpt-image-2" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>提示词模板 · <b id="clothAiKindLabel">短款女装</b></span>
-          <select class="input" id="clothAiPromptPick" aria-label="提示词模板"></select>
-        </label>
-        <div class="cloth-ai-prompt-actions">
-          <button type="button" class="btn btn-compact" id="btnClothAiPromptNew">新建</button>
-          <button type="button" class="btn btn-compact" id="btnClothAiPromptSave">保存</button>
-          <button type="button" class="btn btn-compact" id="btnClothAiPromptDel">删除</button>
-          <button type="button" class="btn btn-compact" id="btnClothAiPromptReset">恢复本类默认</button>
-        </div>
-        <label class="field">
-          <span>提示词（选模板后仍可改，不会自动发送）</span>
-          <textarea class="input cloth-ai-prompt" id="clothAiPrompt" rows="10" maxlength="4000"></textarea>
-        </label>
-        <label class="field">
-          <span>参考图</span>
-          <select class="input" id="clothAiRef" aria-label="参考图"></select>
-        </label>
-        <details class="cloth-ai-rules">
-          <summary>生成时会自动附上的画布规则</summary>
-          <p id="clothAiContract">输出必须是游戏 UV 贴图，按当前种类尺寸铺满，不要人物试穿。</p>
-        </details>
-        <p class="kind-meta" id="clothAiStatus" role="status"></p>
-        <button type="button" class="btn btn-primary btn-block" id="btnClothAiGenerate">生成到画布</button>
       </div>
     </div>
   </div>
@@ -272,7 +298,7 @@
   <script src="/web/app-dialog.js?v=2"></script>
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
-  <script src="/web/cloth-preview.js?v=10"></script>
-  <script src="/web/cloth.js?v=13"></script>
+  <script src="/web/cloth-preview.js?v=13"></script>
+  <script src="/web/cloth.js?v=17"></script>
 </body>
 </html>

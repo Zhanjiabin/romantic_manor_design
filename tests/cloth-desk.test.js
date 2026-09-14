@@ -41,6 +41,20 @@ test("clothes desk keeps native paint sizes and one stock board per kind", () =>
   assert.equal(catalog.templateCount, catalog.kinds.length);
 });
 
+test("clothes desk exposes a new-design entry on phone chrome", () => {
+  assert.match(clothHtml, /id="btnNewDesign"/);
+  assert.match(clothHtml, /id="btnClothMobileNew"/);
+  assert.match(clothHtml, /id="btnNewDesignRail"/);
+  assert.match(clothHtml, /data-cloth-io="new"/);
+  assert.match(clothJs, /function startNewDesign/);
+  assert.match(clothJs, /btnClothMobileNew/);
+  assert.match(clothJs, /action === "new"/);
+  assert.match(clothJs, /setSaveStatus\("未保存"\)/);
+  assert.match(clothCss, /#btnNewDesign/);
+  assert.match(clothCss, /:not\(#btnNewDesign\)/);
+  assert.match(clothCss, /min-width:\s*44px/);
+});
+
 test("clothes desk is a mobile workspace with pointer painting and jpg export", () => {
   assert.match(clothHtml, /viewport-fit=cover/);
   assert.doesNotMatch(clothHtml, /maximum-scale|user-scalable=no/);
@@ -111,6 +125,7 @@ test("clothes desk AI design fills prompt templates without sending them", () =>
   assert.doesNotMatch(clothJs, /console\.log\([^)]*apiKey/);
   assert.match(clothCss, /min-height:\s*44px/);
   assert.match(clothCss, /\.cloth-ai-prompt/);
+  assert.match(clothCss, /\.cloth-ai-layout/);
 });
 
 test("clothes desk try-on preview uses native CMZ meshes and drag rotate", () => {
@@ -130,8 +145,9 @@ test("clothes desk try-on preview uses native CMZ meshes and drag rotate", () =>
   assert.ok(preview.shared["female-head"].positions.length);
   assert.ok(preview.shared["male-hair"].indices.length);
   assert.match(clothHtml, /id="previewCanvas"/);
-  assert.match(clothHtml, /width="280"/);
-  assert.match(clothHtml, /height="440"/);
+  assert.match(clothHtml, /width="520"/);
+  assert.match(clothHtml, /height="680"/);
+  assert.match(clothHtml, /preview-stage/);
   assert.match(clothHtml, /cloth-preview\.js/);
   assert.match(clothHtml, /id="previewHint"/);
   assert.match(clothHtml, /id="previewClothPick"/);
@@ -139,12 +155,17 @@ test("clothes desk try-on preview uses native CMZ meshes and drag rotate", () =>
   assert.match(clothHtml, /id="previewExprPick"/);
   assert.match(clothHtml, /id="previewFacePick"/);
   assert.match(clothHtml, /id="previewBodyPicks"/);
+  assert.match(clothHtml, /id="paintGhost"/);
+  assert.match(clothHtml, /id="sizePresets"/);
+  assert.match(clothHtml, /cloth-seg/);
   assert.match(clothJs, /ClothTryOn\.open/);
   assert.match(clothJs, /ClothTryOn\?\.close/);
   assert.match(clothJs, /snapshotCurrentSlot/);
   assert.match(clothJs, /applyPreviewSlots/);
   assert.match(clothJs, /slots\.hair/);
   assert.match(clothJs, /当前画布/);
+  assert.match(clothJs, /getCoalescedEvents/);
+  assert.match(clothJs, /SIZE_MAX/);
   assert.match(previewJs, /pointerdown/);
   assert.match(previewJs, /yaw \+= dx/);
   assert.match(previewJs, /yaw = Math\.PI/);
@@ -152,12 +173,17 @@ test("clothes desk try-on preview uses native CMZ meshes and drag rotate", () =>
   assert.match(previewJs, /\/data\/cloth\/preview\//);
   assert.match(previewJs, /setYaw/);
   assert.match(previewJs, /POLYGON_OFFSET_FILL/);
-  assert.match(previewJs, /lookAt\(\[0, 300, 86\]/);
+  assert.match(previewJs, /horizRadius/);
+  assert.match(previewJs, /viewCamera/);
   assert.match(previewJs, /setSlot/);
   assert.match(previewJs, /slot:face/);
+  assert.match(previewJs, /uFill/);
   assert.match(clothCss, /touch-action:\s*none/);
-  assert.match(clothCss, /#12121c/);
+  assert.match(clothCss, /preview-stage/);
   assert.match(clothCss, /preview-body-pick/);
-  assert.match(clothCss, /height:\s*440px/);
+  assert.match(clothCss, /680px/);
   assert.match(clothCss, /is-tablet-workspace/);
+  assert.match(clothCss, /\.cloth-ai-layout/);
+  assert.match(clothHtml, /cloth-ai-layout/);
+  assert.match(clothHtml, /cloth-ai-side/);
 });

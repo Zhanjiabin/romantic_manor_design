@@ -22,14 +22,22 @@
     varying vec3 vN;
     uniform sampler2D uTex;
     uniform vec3 uLight;
+    uniform vec3 uFill;
     uniform float uCutBlack;
     void main() {
       vec3 n = normalize(vN);
-      float ndl = 0.55 + 0.45 * max(dot(n, uLight), 0.0);
+      float key = max(dot(n, uLight), 0.0);
+      float fill = max(dot(n, uFill), 0.0);
+      float wrap = 0.46 + 0.42 * key + 0.20 * fill;
+      vec3 view = vec3(0.04, 0.94, 0.22);
+      float rim = pow(1.0 - max(dot(n, view), 0.0), 2.15) * 0.18;
+      vec3 h = normalize(uLight + view);
+      float spec = pow(max(dot(n, h), 0.0), 26.0) * 0.11;
       vec4 c = texture2D(uTex, vUv);
       if (c.a < 0.08) discard;
       if (uCutBlack > 0.5 && (c.r + c.g + c.b) < 0.18) discard;
-      gl_FragColor = vec4(c.rgb * ndl, 1.0);
+      vec3 lit = c.rgb * wrap + spec * vec3(1.0, 0.97, 0.92) + c.rgb * rim * vec3(0.72, 0.86, 1.0);
+      gl_FragColor = vec4(lit, 1.0);
     }
   `;
 
@@ -55,6 +63,7 @@
   let currentGender = "female";
   let currentBody = "female-short";
   let resizeObs = null;
+  let bounds = null;
 
   function loadManifest() {
     if (manifest) return Promise.resolve(manifest);
@@ -86,7 +95,7 @@
   }
 
   function initGl(canvas) {
-    gl = canvas.getContext("webgl", { alpha: false, antialias: true, preserveDrawingBuffer: true });
+    gl = canvas.getContext("webgl", { alpha: true, antialias: true, preserveDrawingBuffer: true, premultipliedAlpha: false });
     if (!gl) throw new Error("WebGL 不可用");
     const vs = compile(gl.VERTEX_SHADER, VS);
     const fs = compile(gl.FRAGMENT_SHADER, FS);
@@ -105,12 +114,13 @@
       uN: gl.getUniformLocation(program, "uN"),
       uTex: gl.getUniformLocation(program, "uTex"),
       uLight: gl.getUniformLocation(program, "uLight"),
+      uFill: gl.getUniformLocation(program, "uFill"),
       uCutBlack: gl.getUniformLocation(program, "uCutBlack"),
     };
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
-    gl.clearColor(0.07, 0.07, 0.11, 1);
+    gl.clearColor(0, 0, 0, 0);
   }
 
   function buffer(data, target) {
@@ -120,7 +130,53 @@
     return { buf, count: data.length };
   }
 
+  function resetBounds() {
+    bounds = {
+      min: [Infinity, Infinity, Infinity],
+      max: [-Infinity, -Infinity, -Infinity],
+    };
+  }
+
+  function includeBounds(positions) {
+    if (!bounds) resetBounds();
+    for (let i = 0; i + 2 < positions.length; i += 3) {
+      bounds.min[0] = Math.min(bounds.min[0], positions[i]);
+      bounds.min[1] = Math.min(bounds.min[1], positions[i + 1]);
+      bounds.min[2] = Math.min(bounds.min[2], positions[i + 2]);
+      bounds.max[0] = Math.max(bounds.max[0], positions[i]);
+      bounds.max[1] = Math.max(bounds.max[1], positions[i + 1]);
+      bounds.max[2] = Math.max(bounds.max[2], positions[i + 2]);
+    }
+  }
+
+  function horizRadius() {
+    if (!bounds) return 70;
+    let radius = 40;
+    const xs = [bounds.min[0], bounds.max[0]];
+    const ys = [bounds.min[1], bounds.max[1]];
+    for (const x of xs) {
+      for (const y of ys) radius = Math.max(radius, Math.hypot(x, y));
+    }
+    return radius;
+  }
+
+  function viewCamera(aspect) {
+    const cz = bounds ? (bounds.min[2] + bounds.max[2]) / 2 : 80;
+    const halfH = bounds ? Math.max(48, (bounds.max[2] - bounds.min[2]) / 2) : 80;
+    const rx = horizRadius();
+    const fov = 30 * Math.PI / 180;
+    const pad = 1.08;
+    const t = Math.tan(fov / 2);
+    const dist = Math.max(rx * pad / Math.max(0.05, t * aspect), halfH * pad / t, 220);
+    return {
+      fov,
+      proj: perspective(fov, aspect, Math.max(8, dist * 0.05), dist + 420),
+      view: lookAt([0, dist, cz + 6], [0, 0, cz - 2], [0, 0, 1]),
+    };
+  }
+
   function makePart(part) {
+    includeBounds(part.positions || []);
     return {
       slot: part.slot,
       texture: part.texture,
@@ -244,8 +300,8 @@
   function sizeCanvas() {
     if (!gl || !canvasEl) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const cssW = Math.max(160, canvasEl.clientWidth || 280);
-    const cssH = Math.max(240, canvasEl.clientHeight || 440);
+    const cssW = Math.max(200, canvasEl.clientWidth || 400);
+    const cssH = Math.max(300, canvasEl.clientHeight || 620);
     const nextW = Math.round(cssW * dpr);
     const nextH = Math.round(cssH * dpr);
     if (canvasEl.width !== nextW || canvasEl.height !== nextH) {
@@ -279,13 +335,13 @@
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.useProgram(program);
     const aspect = canvasEl.width / Math.max(1, canvasEl.height);
-    const proj = perspective(30 * Math.PI / 180, aspect, 8, 900);
-    const view = lookAt([0, 300, 86], [0, 0, 78], [0, 0, 1]);
+    const cam = viewCamera(aspect);
     const model = rotateZ(yaw);
-    const mvp = mat4Multiply(proj, mat4Multiply(view, model));
+    const mvp = mat4Multiply(cam.proj, mat4Multiply(cam.view, model));
     gl.uniformMatrix4fv(loc.uMVP, false, mvp);
     gl.uniformMatrix3fv(loc.uN, false, normalFromModel(model));
-    gl.uniform3f(loc.uLight, 0.12, 0.86, 0.48);
+    gl.uniform3f(loc.uLight, 0.32, 0.74, 0.58);
+    gl.uniform3f(loc.uFill, -0.48, 0.18, 0.42);
     gl.uniform1i(loc.uTex, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.enable(gl.DEPTH_TEST);
@@ -406,6 +462,7 @@
   function buildParts(bodyKind, gender) {
     const info = manifest.kinds[bodyKind];
     if (!info) throw new Error("没有这款身体");
+    resetBounds();
     const shared = [manifest.shared[`${gender}-head`], manifest.shared[`${gender}-hair`]];
     return info.body.concat(shared).sort((a, b) => (SLOT_ORDER[a.slot] ?? 9) - (SLOT_ORDER[b.slot] ?? 9)).map(makePart);
   }
@@ -448,27 +505,33 @@
     canvasEl = document.getElementById("previewCanvas");
     hintEl = document.getElementById("previewHint");
     if (!canvasEl) return;
+    canvasEl.parentElement?.classList.add("is-loading");
     yaw = Math.PI;
-    await loadManifest();
-    if (gen !== openGen) return;
-    if (!gl || gl.isContextLost()) initGl(canvasEl);
-    disposeAll();
-    sizeCanvas();
-    currentGender = options.gender === "male" ? "male" : "female";
-    currentBody = tryOnKind(options.bodyKind || options.kindId, currentGender);
-    parts = buildParts(currentBody, currentGender);
-    await loadDefaultTextures(currentBody, currentGender);
-    if (gen !== openGen) return;
-    const slots = options.slots || {};
-    await applySlot("cloth", slots.cloth);
-    await applySlot("hair", slots.hair);
-    await applySlot("expression", slots.expression);
-    await applySlot("face", slots.face);
-    if (gen !== openGen) return;
-    bindCanvas();
-    if (hintEl) hintEl.textContent = "拖动看正反面。衣服、头巾、表情和面饰都可以一起选。";
-    draw();
-    requestAnimationFrame(() => draw());
+    try {
+      await loadManifest();
+      if (gen !== openGen) return;
+      if (!gl || gl.isContextLost()) initGl(canvasEl);
+      disposeAll();
+      sizeCanvas();
+      currentGender = options.gender === "male" ? "male" : "female";
+      currentBody = tryOnKind(options.bodyKind || options.kindId, currentGender);
+      parts = buildParts(currentBody, currentGender);
+      await loadDefaultTextures(currentBody, currentGender);
+      if (gen !== openGen) return;
+      const slots = options.slots || {};
+      await applySlot("cloth", slots.cloth);
+      await applySlot("hair", slots.hair);
+      await applySlot("expression", slots.expression);
+      await applySlot("face", slots.face);
+      if (gen !== openGen) return;
+      bindCanvas();
+      if (hintEl) hintEl.textContent = "拖动看正反面。衣服、头巾、表情和面饰都可以一起选。";
+      sizeCanvas();
+      draw();
+      requestAnimationFrame(() => draw());
+    } finally {
+      if (gen === openGen) canvasEl.parentElement?.classList.remove("is-loading");
+    }
   }
 
   async function setBodyKind(bodyKind, gender) {

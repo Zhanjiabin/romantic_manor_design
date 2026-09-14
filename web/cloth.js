@@ -20,9 +20,10 @@
     { id: "line", label: "直线", glyph: "/" },
     { id: "fill", label: "填充", glyph: "▣" },
     { id: "eyedrop", label: "吸色", glyph: "◎" },
+    { id: "patch", label: "圈选", glyph: "◍" },
     { id: "pan", label: "移动", glyph: "✥" },
   ];
-  const TOOL_KEYS = { 1: "pencil", 2: "round", 3: "spray", 4: "eraser", 5: "line", 6: "fill", 7: "eyedrop", 8: "pan" };
+  const TOOL_KEYS = { 1: "pencil", 2: "round", 3: "spray", 4: "eraser", 5: "line", 6: "fill", 7: "eyedrop", 8: "patch", 9: "pan" };
 
   const canvas = document.getElementById("paintCanvas");
   const view = document.getElementById("paintView");
@@ -78,6 +79,8 @@
   let toolBeforePan = "";
   let sessionTimer = 0;
   let fitTimer = 0;
+  let historyBusy = false;
+  let strokeDirty = false;
   let previewBodyKind = "";
 
   function kindById(id) {
@@ -158,6 +161,11 @@
       if (ghost.width !== width) ghost.width = width;
       if (ghost.height !== height) ghost.height = height;
     }
+    const mask = document.getElementById("paintMask");
+    if (mask) {
+      if (mask.width !== width) mask.width = width;
+      if (mask.height !== height) mask.height = height;
+    }
     ctx.imageSmoothingEnabled = false;
     templateCtx.imageSmoothingEnabled = false;
     document.getElementById("canvasSizeLabel").textContent = `${width}×${height}`;
@@ -229,10 +237,11 @@
     if (!options.keepHistory) {
       state.history = [];
       state.redo = [];
-      pushHistory();
+      commitHistory();
     }
     if (!options.keepDirty) state.dirty = false;
     if (options.fit !== false) fitCanvas();
+    if (!options.keepMask) clearMask();
     renderTemplates();
   }
 
@@ -240,10 +249,36 @@
     return canvas.toDataURL("image/png");
   }
 
-  function pushHistory() {
-    state.history.push(snapshotPng());
+  function commitHistory() {
+    const png = snapshotPng();
+    if (state.history[state.history.length - 1] === png) {
+      syncHistoryButtons();
+      return;
+    }
+    state.history.push(png);
     while (state.history.length > 24) state.history.shift();
     state.redo = [];
+    syncHistoryButtons();
+  }
+
+  function rememberCurrentHistory() {
+    const png = snapshotPng();
+    if (state.history[state.history.length - 1] === png) return;
+    state.history.push(png);
+    while (state.history.length > 24) state.history.shift();
+  }
+
+  function syncHistoryButtons() {
+    const undoable = state.history.length >= 2;
+    const redoable = state.redo.length > 0;
+    ["btnUndo", "btnClothMobileUndo", "btnClothHudUndo"].forEach((id) => {
+      const node = document.getElementById(id);
+      if (node) node.disabled = !undoable;
+    });
+    ["btnRedo", "btnClothMobileRedo", "btnClothHudRedo"].forEach((id) => {
+      const node = document.getElementById(id);
+      if (node) node.disabled = !redoable;
+    });
   }
 
   async function restorePng(png) {
@@ -254,19 +289,36 @@
   }
 
   async function undo() {
-    if (state.history.length < 2) return;
-    const current = state.history.pop();
-    state.redo.push(current);
-    await restorePng(state.history[state.history.length - 1]);
-    markDirty();
+    if (historyBusy) return;
+    historyBusy = true;
+    try {
+      rememberCurrentHistory();
+      if (state.history.length < 2) return;
+      state.redo.push(state.history.pop());
+      await restorePng(state.history[state.history.length - 1]);
+      markDirty();
+      syncHistoryButtons();
+    } finally {
+      historyBusy = false;
+    }
   }
 
   async function redo() {
+    if (historyBusy) return;
     const next = state.redo.pop();
-    if (!next) return;
-    state.history.push(next);
-    await restorePng(next);
-    markDirty();
+    if (!next) {
+      syncHistoryButtons();
+      return;
+    }
+    historyBusy = true;
+    try {
+      state.history.push(next);
+      await restorePng(next);
+      markDirty();
+      syncHistoryButtons();
+    } finally {
+      historyBusy = false;
+    }
   }
 
   function markDirty() {
@@ -325,6 +377,10 @@
   }
 
   function stamp(x, y, event) {
+    if (state.tool === "patch") {
+      stampMask(x, y, event, event.shiftKey);
+      return;
+    }
     const radius = toolRadius(event);
     if (state.tool === "eraser") {
       ctx.save();
@@ -378,6 +434,73 @@
     const ghost = ghostCanvas();
     const gtx = ghost?.getContext("2d");
     if (gtx) gtx.clearRect(0, 0, ghost.width, ghost.height);
+  }
+
+  function maskNode() {
+    return document.getElementById("paintMask");
+  }
+
+  function maskContext() {
+    const node = maskNode();
+    return node ? node.getContext("2d") : null;
+  }
+
+  function clearMask() {
+    const node = maskNode();
+    const context = maskContext();
+    if (node && context) context.clearRect(0, 0, node.width, node.height);
+    const patch = document.getElementById("clothAiPatch");
+    if (patch) patch.checked = false;
+    syncMaskChrome();
+  }
+
+  function maskHasInk() {
+    const node = maskNode();
+    const context = maskContext();
+    if (!node || !context || !node.width) return false;
+    const data = context.getImageData(0, 0, node.width, node.height).data;
+    for (let i = 3; i < data.length; i += 16) {
+      if (data[i] > 18) return true;
+    }
+    return false;
+  }
+
+  function exportMaskPng() {
+    const node = maskNode();
+    return node && maskHasInk() ? node.toDataURL("image/png") : null;
+  }
+
+  function stampMask(x, y, event, erase) {
+    const node = maskNode();
+    const context = maskContext();
+    if (!node || !context) return;
+    const radius = Math.max(3, toolRadius(event) * 1.15);
+    context.save();
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    if (erase) {
+      context.globalCompositeOperation = "destination-out";
+      context.fillStyle = "rgba(0,0,0,1)";
+    } else {
+      context.globalCompositeOperation = "source-over";
+      context.fillStyle = "rgba(226, 72, 128, 0.55)";
+    }
+    context.fill();
+    context.restore();
+  }
+
+  function syncMaskChrome() {
+    const ink = maskHasInk();
+    const clear = document.getElementById("btnClearMask");
+    if (clear) clear.hidden = !ink;
+    const patch = document.getElementById("clothAiPatch");
+    if (patch && ink && document.getElementById("dlgClothAi") && !document.getElementById("dlgClothAi").hidden) {
+      patch.checked = true;
+    }
+    const label = document.getElementById("designerLabel");
+    if (label) label.textContent = state.tool === "patch" ? (ink ? "涂要改的区域 · Shift 擦掉" : "涂要改的区域") : "图案设计";
+    const generate = document.getElementById("btnClothAiGenerate");
+    if (generate) generate.textContent = patch?.checked && ink ? "只改圈选" : "生成到画布";
   }
 
   function drawLineGhost(from, to, event) {
@@ -463,6 +586,7 @@
     panBtn?.classList.toggle("on", id === "pan");
     panBtn?.setAttribute("aria-pressed", String(id === "pan"));
     clearGhost();
+    syncMaskChrome();
   }
 
   function fillTools() {
@@ -537,14 +661,37 @@
     }
   }
 
+  function sheetListScroller(node) {
+    return node?.closest("[data-mobile-sheet-scroll]") || node?.closest(".rail-block") || node;
+  }
+
+  function preserveListScroll(scroller, rebuild) {
+    if (!scroller) {
+      rebuild();
+      return;
+    }
+    const top = scroller.scrollTop;
+    const left = scroller.scrollLeft;
+    const active = document.activeElement;
+    if (active && scroller.contains(active) && typeof active.blur === "function") active.blur();
+    rebuild();
+    const restore = () => {
+      scroller.scrollTop = top;
+      scroller.scrollLeft = left;
+    };
+    restore();
+    requestAnimationFrame(restore);
+  }
+
   function renderTemplates() {
     const grid = document.getElementById("templateGrid");
     const count = document.getElementById("templateCount");
     const templates = currentTemplates();
     if (count) count.textContent = String(Math.max(0, templates.length - 1));
     if (!grid) return;
-    grid.replaceChildren();
-    templates.forEach((template) => {
+    preserveListScroll(sheetListScroller(grid), () => {
+      grid.replaceChildren();
+      templates.forEach((template) => {
       const button = document.createElement("div");
       button.className = "template-card" + (template.id === (state.templateId || BLANK_ID) ? " on" : "");
       button.setAttribute("role", "button");
@@ -588,6 +735,7 @@
         }
       });
       grid.append(button);
+      });
     });
   }
 
@@ -860,10 +1008,10 @@
     const url = URL.createObjectURL(file);
     loadImage(url)
       .then((image) => {
-        pushHistory();
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
         URL.revokeObjectURL(url);
+        commitHistory();
         markDirty();
       })
       .catch(() => URL.revokeObjectURL(url));
@@ -1044,7 +1192,11 @@
       "这是换装网格贴图，不要画完整人物试穿。",
     ];
     if (kind?.id === "hair") parts.push("头巾必须是 512×256 横图：左头发或布料，右饰品展开。");
-    parts.push("若勾选了参考图，必须沿用参考图里每个 UV 岛的位置和轮廓，只改花色。");
+    if (document.getElementById("clothAiPatch")?.checked) {
+      parts.push("局部重绘时只改圈选，圈外像素由本桌锁在当前画布上。");
+    } else {
+      parts.push("若勾选了参考图，必须沿用参考图里每个 UV 岛的位置和轮廓，只改花色。");
+    }
     return parts.join("");
   }
 
@@ -1131,6 +1283,9 @@
     fillAiRefs();
     const contract = document.getElementById("clothAiContract");
     if (contract) contract.textContent = aiContractText();
+    const patch = document.getElementById("clothAiPatch");
+    if (patch && maskHasInk()) patch.checked = true;
+    syncMaskChrome();
     if (!options.keepPrompt) {
       const textarea = document.getElementById("clothAiPrompt");
       if (textarea && !textarea.value.trim()) {
@@ -1348,7 +1503,13 @@
       setAiStatus("提示词是空的。可以先选一份模板再改。");
       return;
     }
-    if (state.dirty) {
+    const patchOn = Boolean(document.getElementById("clothAiPatch")?.checked);
+    const maskPng = patchOn ? exportMaskPng() : null;
+    if (patchOn && !maskPng) {
+      setAiStatus("先用笔触里的「圈选」涂要改的地方，再勾「只改圈选区域」。");
+      return;
+    }
+    if (state.dirty && !maskPng) {
       const ok = typeof appConfirm === "function"
         ? await appConfirm("生成结果会画到当前画布上。未保存的笔触会被盖住。", { title: "生成到画布", okLabel: "生成" })
         : window.confirm("生成会盖住当前画布，继续？");
@@ -1362,7 +1523,7 @@
     setAiStatus("正在生成，可能要等一会儿…");
     try {
       const { width, height } = canvasSize();
-      const referencePng = await aiReferencePng();
+      const referencePng = maskPng ? snapshotPng() : await aiReferencePng();
       const res = await fetch("/api/cloth-ai/generate", {
         method: "POST",
         credentials: "same-origin",
@@ -1375,16 +1536,17 @@
           width,
           height,
           referencePng,
+          maskPng,
           baseUrl: "https://ai.qiaojiangapp.cn/v1",
         }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload.error || ("HTTP " + res.status));
       if (!payload.png) throw new Error("没有返回图片");
-      pushHistory();
       await restorePng(payload.png);
+      commitHistory();
       markDirty();
-      setAiStatus("已画到画布，可继续改提示词再生成。");
+      setAiStatus(maskPng ? "圈选已改，圈外像素锁在原画上。不满意可再圈、再生成。" : "已画到画布，可继续改提示词再生成。");
     } catch (error) {
       setAiStatus(String(error.message || error));
     } finally {
@@ -1554,23 +1716,27 @@
       return;
     }
     if (state.tool === "fill") {
-      pushHistory();
       floodFill(point.x, point.y);
+      commitHistory();
       markDirty();
       return;
     }
     if (state.tool === "line") {
       lineStart = point;
       painting = true;
-      pushHistory();
+      strokeDirty = true;
       return;
     }
     painting = true;
     lastPoint = point;
     smoothPoint = point;
-    pushHistory();
+    if (state.tool !== "patch") {
+      strokeDirty = true;
+      stamp(point.x, point.y, event);
+      markDirty();
+      return;
+    }
     stamp(point.x, point.y, event);
-    markDirty();
   }
 
   function movePaint(event) {
@@ -1606,17 +1772,22 @@
       stroke(lineStart, point, event);
       markDirty();
     }
+    if (strokeDirty) commitHistory();
+    strokeDirty = false;
     painting = false;
     lineStart = null;
     lastPoint = null;
     strokeOrigin = null;
     smoothPoint = null;
     clearGhost();
+    if (state.tool === "patch") syncMaskChrome();
   }
 
   function beginGesture() {
     const pts = [...pointers.values()];
     if (pts.length < 2) return;
+    if (strokeDirty) commitHistory();
+    strokeDirty = false;
     painting = false;
     const dx = pts[1].x - pts[0].x;
     const dy = pts[1].y - pts[0].y;
@@ -1756,6 +1927,17 @@
     document.getElementById("btnClothAiPromptDel")?.addEventListener("click", () => deletePromptTemplate());
     document.getElementById("btnClothAiPromptReset")?.addEventListener("click", () => resetKindPrompts());
     document.getElementById("btnClothAiGenerate")?.addEventListener("click", () => generateAiDesign());
+    document.getElementById("btnClearMask")?.addEventListener("click", () => clearMask());
+    document.getElementById("clothAiPatch")?.addEventListener("change", () => {
+      const on = Boolean(document.getElementById("clothAiPatch")?.checked);
+      if (on && !maskHasInk()) {
+        setTool("patch");
+        closeAiDialog();
+      }
+      const contract = document.getElementById("clothAiContract");
+      if (contract) contract.textContent = aiContractText();
+      syncMaskChrome();
+    });
     document.getElementById("clothAiPromptPick")?.addEventListener("change", (event) => {
       const id = event.target.value;
       state.aiPromptId = id;
@@ -1792,6 +1974,7 @@
     document.getElementById("btnUndo")?.addEventListener("click", () => undo());
     document.getElementById("btnRedo")?.addEventListener("click", () => redo());
     document.getElementById("btnClothMobileUndo")?.addEventListener("click", () => undo());
+    document.getElementById("btnClothMobileRedo")?.addEventListener("click", () => redo());
     document.getElementById("btnClothMobilePan")?.addEventListener("click", () => {
       setTool(state.tool === "pan" ? "round" : "pan");
     });
@@ -1907,6 +2090,7 @@
       fitCanvas();
       if (!workspaceMode().mobile) closeClothSheets();
     });
+    syncHistoryButtons();
   }
 
   function wireDeskSwitchSave(saveFn) {
@@ -2070,7 +2254,7 @@
       persistSessionLocal(snap);
       putClothSaves({ session: snap }).catch((error) => console.warn(error));
     });
-    warmOtherDesk("/web/building.html", ["/web/building.js?v=279"]);
+    warmOtherDesk("/web/building.html", ["/web/building.js?v=280"]);
     warmOtherDesk("/", ["/web/app.js?v=293"]);
     requestAnimationFrame(() => {
       document.documentElement.classList.remove("boot-pending");

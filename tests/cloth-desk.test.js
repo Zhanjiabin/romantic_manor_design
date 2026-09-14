@@ -102,6 +102,29 @@ test("clothes desk is a mobile workspace with pointer painting and jpg export", 
   assert.match(clothCss, /outline-offset:\s*-2px/);
 });
 
+test("clicking a clothes board keeps the template list scroll position", () => {
+  assert.match(clothJs, /function preserveListScroll/);
+  assert.match(clothJs, /function sheetListScroller/);
+  assert.match(clothJs, /data-mobile-sheet-scroll/);
+  const render = clothJs.slice(clothJs.indexOf("function renderTemplates"), clothJs.indexOf("function renderDesigns"));
+  assert.match(render, /preserveListScroll\(sheetListScroller\(grid\)/);
+  assert.doesNotMatch(render, /scrollIntoView/);
+});
+
+test("clothes desk commits one history step per stroke and exposes redo on the phone dock", () => {
+  assert.match(clothJs, /function commitHistory/);
+  assert.match(clothJs, /function rememberCurrentHistory/);
+  assert.match(clothJs, /historyBusy/);
+  assert.match(clothJs, /strokeDirty/);
+  assert.doesNotMatch(clothJs, /function pushHistory/);
+  assert.match(clothJs, /floodFill\(point\.x, point\.y\);\s*commitHistory\(\);/);
+  assert.match(clothJs, /if \(strokeDirty\) commitHistory\(\);/);
+  assert.match(clothJs, /await restorePng\(payload\.png\);\s*commitHistory\(\);/);
+  assert.match(clothHtml, /id="btnClothMobileRedo"/);
+  assert.match(clothHtml, /id="btnRedo"/);
+  assert.match(clothJs, /btnClothMobileRedo/);
+});
+
 test("clothes desk AI design fills prompt templates without sending them", () => {
   const prompts = JSON.parse(fs.readFileSync(path.join(root, "data/cloth_ai_prompts.json"), "utf8"));
   const kinds = catalog.kinds.map((kind) => kind.id);
@@ -120,7 +143,13 @@ test("clothes desk AI design fills prompt templates without sending them", () =>
   assert.match(clothHtml, /id="btnClothMobileAi"/);
   assert.match(clothHtml, /viewport-fit=cover/);
   assert.match(clothJs, /\/api\/cloth-ai\/models/);
-  assert.match(clothJs, /\/api\/cloth-ai\/generate/);
+    assert.match(clothJs, /\/api\/cloth-ai\/generate/);
+    assert.match(clothJs, /maskPng/);
+    assert.match(clothJs, /function stampMask/);
+    assert.match(clothHtml, /id="paintMask"/);
+    assert.match(clothHtml, /id="clothAiPatch"/);
+    assert.match(clothHtml, /id="btnClearMask"/);
+    assert.match(clothCss, /\.cloth-ai-patch/);
   assert.match(clothJs, /function openAiDialog/);
   assert.match(clothJs, /clothAiPromptPick/);
   assert.doesNotMatch(clothJs, /clothAiPromptPick[\s\S]{0,400}generateAiDesign/);

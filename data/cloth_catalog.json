@@ -42,9 +42,9 @@
           "id": "female-short:短款白-1",
           "name": "默认 UV",
           "file": "短款白-1.jpg",
-          "url": "/data/cloth/templates/female-short/短款白-1.jpg",
-          "width": 252,
-          "height": 255,
+          "url": "/data/cloth/templates/female-short/短款白-1.jpg?v=2",
+          "width": 256,
+          "height": 256,
           "index": 0
         }
       ]
@@ -65,7 +65,7 @@
           "id": "female-long:女长白-1",
           "name": "默认 UV",
           "file": "女长白-1.jpg",
-          "url": "/data/cloth/templates/female-long/女长白-1.jpg",
+          "url": "/data/cloth/templates/female-long/女长白-1.jpg?v=2",
           "width": 256,
           "height": 256,
           "index": 0
@@ -88,7 +88,7 @@
           "id": "female-skirt:长裙白-1",
           "name": "默认 UV",
           "file": "长裙白-1.jpg",
-          "url": "/data/cloth/templates/female-skirt/长裙白-1.jpg",
+          "url": "/data/cloth/templates/female-skirt/长裙白-1.jpg?v=2",
           "width": 256,
           "height": 256,
           "index": 0
@@ -111,9 +111,9 @@
           "id": "male-short:男短白-1",
           "name": "默认 UV",
           "file": "男短白-1.jpg",
-          "url": "/data/cloth/templates/male-short/男短白-1.jpg",
-          "width": 258,
-          "height": 255,
+          "url": "/data/cloth/templates/male-short/男短白-1.jpg?v=2",
+          "width": 256,
+          "height": 256,
           "index": 0
         }
       ]
@@ -134,7 +134,7 @@
           "id": "male-long:男长白-1",
           "name": "默认 UV",
           "file": "男长白-1.jpg",
-          "url": "/data/cloth/templates/male-long/男长白-1.jpg",
+          "url": "/data/cloth/templates/male-long/男长白-1.jpg?v=2",
           "width": 256,
           "height": 256,
           "index": 0
@@ -170,7 +170,7 @@
           "id": "expression:脸形-1",
           "name": "默认 UV",
           "file": "脸形-1.jpg",
-          "url": "/data/cloth/templates/expression/脸形-1.jpg",
+          "url": "/data/cloth/templates/expression/脸形-1.jpg?v=2",
           "width": 256,
           "height": 256,
           "index": 0

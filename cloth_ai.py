@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 ROOT = Path(__file__).resolve().parent
 PROMPTS_PATH = ROOT / "data" / "cloth_ai_prompts.json"
@@ -128,7 +128,7 @@ def canvas_size(kind: str, width: int | None = None, height: int | None = None) 
     return default_w, default_h
 
 
-def layout_contract(kind: str, width: int, height: int, has_ref: bool) -> str:
+def layout_contract(kind: str, width: int, height: int, has_ref: bool, has_mask: bool = False) -> str:
     size = f"{width}×{height}"
     lines = [
         f"硬性规则：输出必须是一张 {size} 的游戏 UV 贴图，铺满画布，不要黑边、白边、字母水印。",
@@ -137,7 +137,9 @@ def layout_contract(kind: str, width: int, height: int, has_ref: bool) -> str:
     ]
     if kind == "hair":
         lines.append("头巾必须是 512×256 横图：左头发/布料，右饰品展开。")
-    if has_ref:
+    if has_mask:
+        lines.append("这是局部重绘：只改蒙版标明的区域。未圈选的 UV 岛必须与参考图像素一致，不要重排岛，不要重画袖口、裙褶或接缝。")
+    elif has_ref:
         lines.append("若提供了参考图，必须沿用参考图里每个 UV 岛的位置、轮廓和接缝，只改花色与图案，不要重排岛。")
     return "\n".join(lines)
 
@@ -278,6 +280,54 @@ def bytes_to_png_data_url(raw: bytes, width: int, height: int) -> str:
     except Exception as exc:
         raise ClothAiError("模型返回的不是可用图片") from exc
     return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+
+
+def mask_coverage(raw: bytes, width: int, height: int) -> Image.Image | None:
+    try:
+        image = Image.open(io.BytesIO(raw)).convert("RGBA")
+    except Exception:
+        return None
+    if image.size != (width, height):
+        image = image.resize((width, height), Image.Resampling.BILINEAR)
+    _r, _g, _b, alpha = image.split()
+    extrema = alpha.getextrema()
+    if not extrema or extrema[1] < 18:
+        return None
+    return alpha.filter(ImageFilter.GaussianBlur(radius=1.2))
+
+
+def openai_inpaint_mask(coverage: Image.Image) -> bytes:
+    keep = Image.eval(coverage, lambda value: 255 - value)
+    image = Image.new("RGBA", coverage.size, (255, 255, 255, 255))
+    image.putalpha(keep)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def mask_preview_jpeg(coverage: Image.Image) -> bytes:
+    image = Image.merge("RGB", (coverage, coverage, coverage))
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=88)
+    return buf.getvalue()
+
+
+def composite_locked(original: bytes, generated: bytes, mask: bytes, width: int, height: int) -> bytes:
+    coverage = mask_coverage(mask, width, height)
+    orig = Image.open(io.BytesIO(original)).convert("RGBA")
+    gen = Image.open(io.BytesIO(generated)).convert("RGBA")
+    if orig.size != (width, height):
+        orig = orig.resize((width, height), Image.Resampling.LANCZOS)
+    if gen.size != (width, height):
+        gen = gen.resize((width, height), Image.Resampling.LANCZOS)
+    if coverage is None:
+        buf = io.BytesIO()
+        orig.save(buf, format="PNG")
+        return buf.getvalue()
+    out = Image.composite(gen, orig, coverage)
+    buf = io.BytesIO()
+    out.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def reference_jpeg(raw: bytes, max_edge: int = 1024) -> bytes:
@@ -569,6 +619,7 @@ def generate_image(
     width: int | None = None,
     height: int | None = None,
     reference_png: str | None = None,
+    mask_png: str | None = None,
     base_url: str | None = None,
 ) -> str:
     key = str(api_key or "").strip()
@@ -582,13 +633,23 @@ def generate_image(
         raise ClothAiError("请先填写提示词")
     w, h = canvas_size(kind, width, height)
     ref = decode_data_url(reference_png)
+    mask_bytes = decode_data_url(mask_png)
+    coverage = mask_coverage(mask_bytes, w, h) if mask_bytes else None
+    has_mask = coverage is not None
+    if has_mask and not ref:
+        raise ClothAiError("局部改图需要当前画布作参考")
     has_ref = bool(ref)
-    full_prompt = layout_contract(kind, w, h, has_ref) + "\n\n" + user_prompt
+    full_prompt = layout_contract(kind, w, h, has_ref, has_mask) + "\n\n" + user_prompt
     base = normalize_base_url(base_url)
     route = image_route(model_id, has_ref)
     errors: list[str] = []
 
-    if route == "generations":
+    def finish(raw_bytes: bytes) -> str:
+        if ref and has_mask and mask_bytes:
+            raw_bytes = composite_locked(ref, raw_bytes, mask_bytes, w, h)
+        return bytes_to_png_data_url(raw_bytes, w, h)
+
+    if route == "generations" and not has_mask:
         for size_w, size_h in fallback_sizes(w, h):
             size_val, aspect = images_api_size_fields(model_id, size_w, size_h)
             body = {
@@ -603,7 +664,7 @@ def generate_image(
             status, parsed, raw = _post_json(base, "/images/generations", key, body)
             if status < 400 and parsed is not None:
                 try:
-                    return bytes_to_png_data_url(_image_from_payload(parsed), w, h)
+                    return finish(_image_from_payload(parsed))
                 except ClothAiError as exc:
                     errors.append(str(exc))
                     continue
@@ -613,6 +674,9 @@ def generate_image(
 
     if route == "edits" and ref:
         jpeg = reference_jpeg(ref)
+        files = [("image", "uv.jpg", "image/jpeg", jpeg)]
+        if has_mask and coverage is not None:
+            files.append(("mask", "mask.png", "image/png", openai_inpaint_mask(coverage)))
         for size_w, size_h in fallback_sizes(w, h):
             size_val, aspect = images_api_size_fields(model_id, size_w, size_h)
             fields = [
@@ -624,7 +688,7 @@ def generate_image(
             ]
             if aspect:
                 fields.append(("aspect_ratio", aspect))
-            data, content_type = _multipart(fields, [("image", "uv.jpg", "image/jpeg", jpeg)])
+            data, content_type = _multipart(fields, files)
             status, raw = http_request(
                 "POST",
                 f"{base}/images/edits",
@@ -640,7 +704,7 @@ def generate_image(
                     parsed = None
             if status < 400 and parsed is not None:
                 try:
-                    return bytes_to_png_data_url(_image_from_payload(parsed), w, h)
+                    return finish(_image_from_payload(parsed))
                 except ClothAiError as exc:
                     errors.append(str(exc))
                     continue
@@ -648,21 +712,25 @@ def generate_image(
             if "size" not in errors[-1].lower():
                 break
 
-    if route == "chat" or (not is_openai_images_model(model_id) and errors):
+    if route == "chat" or (not is_openai_images_model(model_id) and errors) or has_mask:
         content: Any
         if has_ref and ref:
             data_url = "data:image/jpeg;base64," + base64.b64encode(reference_jpeg(ref)).decode("ascii")
             content = [
                 {"type": "text", "text": CHAT_IMAGE_INTENT},
                 {"type": "image_url", "image_url": {"url": data_url}},
-                {"type": "text", "text": full_prompt},
             ]
+            if has_mask and coverage is not None:
+                mask_url = "data:image/jpeg;base64," + base64.b64encode(mask_preview_jpeg(coverage)).decode("ascii")
+                content.append({"type": "image_url", "image_url": {"url": mask_url}})
+                content.append({"type": "text", "text": "第二张图是蒙版：白=只改这里，黑=必须保持参考图像素。"})
+            content.append({"type": "text", "text": full_prompt})
         else:
             content = f"{CHAT_IMAGE_INTENT}\n{full_prompt}"
         body = {"model": model_id, "messages": [{"role": "user", "content": content}], "stream": False}
         status, parsed, raw = _post_json(base, "/chat/completions", key, body)
         if status < 400 and parsed is not None:
-            return bytes_to_png_data_url(_image_from_payload(parsed), w, h)
+            return finish(_image_from_payload(parsed))
         errors.append(_json_error(raw, f"chat/completions HTTP {status}"))
 
     raise ClothAiError("生图失败：" + " | ".join(errors[:3]), 502)

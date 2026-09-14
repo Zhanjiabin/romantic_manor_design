@@ -638,7 +638,7 @@ async function bootBuilding() {
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
   warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=293"]);
-  warmOtherDesk("/web/cloth.html", ["/web/cloth.js?v=10", "/data/cloth_catalog.json"]);
+  warmOtherDesk("/web/cloth.html", ["/web/cloth.js?v=21", "/data/cloth_catalog.json"]);
 }
 
 function sortThemes(packs) {
@@ -2936,7 +2936,7 @@ function paintAssetWindow(force = false) {
     fragment.appendChild(botPad);
   }
   list.replaceChildren(fragment);
-  if (virtual) list.scrollTop = scrollTop;
+  list.scrollTop = scrollTop;
 }
 
 function fillComponents() {
@@ -7788,8 +7788,10 @@ function paintLayerWindow() {
     botPad.style.height = `${(items.length - end) * rowH}px`;
     fragment.appendChild(botPad);
   }
+  const active = document.activeElement;
+  if (active && list.contains(active) && typeof active.blur === "function") active.blur();
   list.replaceChildren(fragment);
-  if (virtual) list.scrollTop = scrollTop;
+  list.scrollTop = scrollTop;
 }
 
 function bindLayerListScroll() {
@@ -7821,22 +7823,6 @@ function fillLayers() {
   syncLayerInsertBanner();
   if (state.railTab !== "layers") return;
   bindLayerListScroll();
-  if (state.selected.length && !state.dragging && !state.marquee) {
-    const focus = state.selected[state.selected.length - 1];
-    const focusGroup = state.records[focus]?.group;
-    let itemIndex = layerItemsCache.findIndex((item) => item.kind === "row" && item.index === focus);
-    if (itemIndex < 0 && focusGroup) {
-      itemIndex = layerItemsCache.findIndex(
-        (item) => item.kind === "group" && item.groupId === focusGroup
-      );
-    }
-    if (itemIndex >= 0) {
-      const top = itemIndex * layerRowHeight();
-      if (top < list.scrollTop || top + layerRowHeight() > list.scrollTop + list.clientHeight) {
-        list.scrollTop = Math.max(0, top - Math.floor((list.clientHeight || 0) / 3));
-      }
-    }
-  }
   paintLayerWindow();
 }
 

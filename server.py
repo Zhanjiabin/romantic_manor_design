@@ -838,6 +838,7 @@ class Handler(SimpleHTTPRequestHandler):
                     width=obj.get("width"),
                     height=obj.get("height"),
                     reference_png=obj.get("referencePng"),
+                    mask_png=obj.get("maskPng"),
                     base_url=obj.get("baseUrl"),
                 )
                 body = json.dumps({"png": png}, ensure_ascii=False).encode("utf-8")

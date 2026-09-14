@@ -128,3 +128,64 @@ def test_list_models_filters_and_adds_gemini(monkeypatch):
     assert "gpt-image-2" in models
     assert "flux-1" in models
     assert "gemini-2.5-flash-image" in models
+
+
+def _png_url(image: Image.Image) -> str:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def test_composite_locked_keeps_unmasked_pixels():
+    mask = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    for y in range(10, 22):
+        for x in range(10, 22):
+            mask.putpixel((x, y), (226, 72, 128, 220))
+    out = Image.open(io.BytesIO(cloth_ai.composite_locked(
+        _png_bytes((32, 32), (200, 40, 40, 255)),
+        _png_bytes((32, 32), (40, 80, 200, 255)),
+        _encode(mask),
+        32,
+        32,
+    )))
+    corner = out.getpixel((1, 1))
+    center = out.getpixel((16, 16))
+    assert corner[0] > 160 and corner[2] < 80
+    assert center[2] > 140 and center[0] < 90
+
+
+def _encode(image: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_generate_with_mask_sends_mask_and_locks_outside(monkeypatch):
+    gen_png = _png_bytes((256, 256), (40, 80, 200, 255))
+    ref = _png_url(Image.new("RGBA", (256, 256), (200, 40, 40, 255)))
+    mask_img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    for y in range(80, 176):
+        for x in range(80, 176):
+            mask_img.putpixel((x, y), (226, 72, 128, 220))
+    payloads = []
+
+    def fake_http(method, url, *, headers=None, data=None, timeout=60):
+        payloads.append((url, data or b""))
+        return 200, json.dumps({"data": [{"b64_json": base64.b64encode(gen_png).decode("ascii")}]}).encode("utf-8")
+
+    monkeypatch.setattr(cloth_ai, "http_request", fake_http)
+    result = cloth_ai.generate_image(
+        api_key="sk-test-key",
+        model="gpt-image-2",
+        prompt="只修领结",
+        kind="female-short",
+        reference_png=ref,
+        mask_png=_png_url(mask_img),
+    )
+    assert any(url.endswith("/images/edits") and b'name="mask"' in data for url, data in payloads)
+    image = Image.open(io.BytesIO(base64.b64decode(result.split(",", 1)[1])))
+    corner = image.getpixel((4, 4))
+    center = image.getpixel((128, 128))
+    assert corner[0] > 160 and corner[2] < 80
+    assert center[2] > 140 and center[0] < 90
+    assert "局部重绘" in cloth_ai.layout_contract("female-short", 256, 256, True, True)

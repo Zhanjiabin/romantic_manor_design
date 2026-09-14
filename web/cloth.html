@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=11" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=17" />
+  <link rel="stylesheet" href="/web/cloth.css?v=19" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -75,15 +75,17 @@
         <div class="paint-hud">
           <strong id="canvasSizeLabel">256×256</strong>
           <span id="designerLabel">图案设计</span>
+          <button type="button" class="btn btn-compact" id="btnClearMask" hidden title="去掉圈选，下次 AI 会整张重画">清空圈选</button>
           <button type="button" class="btn btn-compact btn-primary" id="btnClothAiHud" title="用第三方图片模型按 UV 出图">AI 设计</button>
         </div>
         <div class="paint-board" id="paintBoard" tabindex="0" aria-label="衣服贴图画布">
           <div class="paint-view" id="paintView">
             <canvas id="paintCanvas" width="256" height="256" aria-label="衣服设计画布"></canvas>
             <canvas id="paintGhost" width="256" height="256" aria-hidden="true"></canvas>
+            <canvas id="paintMask" width="256" height="256" aria-hidden="true"></canvas>
           </div>
         </div>
-        <p class="paint-hint" id="paintHint">一指绘制，双指拖动缩放。数字键 1–8 换笔，[ ] 调粗细，空格移动。进游戏请导出 JPG。</p>
+        <p class="paint-hint" id="paintHint">一指绘制，双指拖动缩放。数字键 1–9 换笔，[ ] 调粗细，空格移动。局部瑕疵用「圈选」涂上再开 AI。</p>
       </main>
 
       <aside class="rail rail-right mobile-sheet" id="clothToolSheet">
@@ -147,8 +149,11 @@
       <button type="button" class="mobile-dock-button" id="btnClothMobilePan" aria-pressed="false">
         <span class="mobile-dock-glyph">✥</span><span>移动</span>
       </button>
-      <button type="button" class="mobile-dock-button" id="btnClothMobileUndo">
+      <button type="button" class="mobile-dock-button" id="btnClothMobileUndo" title="撤销一步">
         <span class="mobile-dock-glyph">↶</span><span>撤销</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnClothMobileRedo" title="重做一步">
+        <span class="mobile-dock-glyph">↷</span><span>重做</span>
       </button>
       <button type="button" class="mobile-dock-button" id="btnClothMobileAi">
         <span class="mobile-dock-glyph">✦</span><span>AI</span>
@@ -223,7 +228,7 @@
               <span>提示词</span>
               <textarea class="input cloth-ai-prompt" id="clothAiPrompt" rows="14" maxlength="4000"></textarea>
             </label>
-            <p class="cloth-ai-note">选模板只会填进编辑框，要按右侧「生成到画布」才会出图。可把当前 UV / 底板当参考。</p>
+            <p class="cloth-ai-note">选模板只会填进编辑框。局部改请先用「圈选」涂要改的地方，圈外像素由本桌锁住，不靠模型自觉。</p>
           </section>
           <aside class="cloth-ai-side">
             <label class="field">
@@ -244,6 +249,10 @@
             <label class="field">
               <span>参考图</span>
               <select class="input" id="clothAiRef" aria-label="参考图"></select>
+            </label>
+            <label class="cloth-ai-patch">
+              <input type="checkbox" id="clothAiPatch" />
+              <span>只改圈选区域（圈外锁住）</span>
             </label>
             <details class="cloth-ai-rules">
               <summary>生成时自动附上的画布规则</summary>
@@ -299,6 +308,6 @@
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/cloth-preview.js?v=13"></script>
-  <script src="/web/cloth.js?v=18"></script>
+  <script src="/web/cloth.js?v=21"></script>
 </body>
 </html>

@@ -630,7 +630,9 @@ test("locked rendering invariants stay explicit in building.js", () => {
   assert.match(source, /Number\(record\.x\) > MAX_CONTENT_COORD/);
   assert.match(source, /event\.shiftKey \? "redo" : "undo"/);
   assert.match(source, /const scrollTop = list\.scrollTop;/);
-  assert.match(source, /if \(virtual\) list\.scrollTop = scrollTop;/);
+  assert.match(source, /list\.replaceChildren\(fragment\);\s*list\.scrollTop = scrollTop;/);
+  assert.doesNotMatch(source, /if \(virtual\) list\.scrollTop = scrollTop;/);
+  assert.doesNotMatch(source, /top - Math\.floor\(\(list\.clientHeight \|\| 0\) \/ 3\)/);
   const html = fs.readFileSync(path.join(__dirname, "../web/building.html"), "utf8");
   const buildingCss = fs.readFileSync(path.join(__dirname, "../web/building.css"), "utf8");
   const mobileCss = fs.readFileSync(path.join(__dirname, "../web/mobile-workspace.css"), "utf8");
@@ -723,7 +725,7 @@ test("locked rendering invariants stay explicit in building.js", () => {
   assert.match(source, /function zoomPaperInspectAt/);
   assert.match(source, /async function importDesign\(file, options = \{\}\)/);
   assert.match(source, /options\.mode === "merge"/);
-  assert.match(source, /item\.kind === "group" && item\.groupId === focusGroup/);
+  assert.match(source, /function fillLayers\(\) \{[\s\S]*?bindLayerListScroll\(\);\s*paintLayerWindow\(\);/);
   assert.match(source, /function buildingMaterialReport/);
   assert.match(source, /function buildingMaterialGroups/);
   assert.match(source, /function openBuildingMaterialLedger/);
@@ -1450,7 +1452,7 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(terrainHtml, /app\.js\?v=293/);
   assert.match(terrainHtml, /building-preview\.js\?v=10/);
   assert.match(buildingHtml, /paper-library-core\.js\?v=22/);
-  assert.match(buildingHtml, /building\.js\?v=279/);
+  assert.match(buildingHtml, /building\.js\?v=280/);
   assert.match(buildingHtml, /building-preview\.js\?v=10/);
   assert.match(buildingHtml, /building-image-convert\.js\?v=5/);
 });

@@ -40,7 +40,7 @@
         <button type="button" class="btn btn-compact" id="btnRestore" title="恢复当前种类的默认 UV">恢复默认</button>
         <button type="button" class="btn btn-compact" id="btnPreview" title="查看当前贴图">设计预览</button>
         <button type="button" class="btn btn-compact" id="btnClothAi" title="用第三方图片模型按 UV 出图">AI 设计</button>
-        <button type="button" class="btn btn-compact cloth-new-btn" id="btnNewDesign" title="回到当前种类的默认 UV，另开一张">新建</button>
+        <button type="button" class="btn btn-compact cloth-new-btn" id="btnNewDesign" title="清空为空白画布，另开一张">新建</button>
         <button type="button" class="btn btn-compact btn-primary" id="btnSaveDesign" title="保存到本桌作品">完成设计</button>
         <button type="button" class="top-command-btn top-account-btn" id="btnSwitchAccount" data-account-switch hidden title="切换账号">
           <span class="top-account-kicker">账号</span>
@@ -125,7 +125,7 @@
             <button type="button" class="btn btn-compact" id="btnClothAiRail">AI 设计</button>
           </div>
           <div class="rail-head">作品</div>
-          <button type="button" class="btn btn-compact btn-block" id="btnNewDesignRail" title="回到当前种类的默认 UV，另开一张">新建设计</button>
+          <button type="button" class="btn btn-compact btn-block" id="btnNewDesignRail" title="清空为空白画布，另开一张">新建设计</button>
           <div class="design-list" id="designList"></div>
           <button type="button" class="btn btn-wide phone-account-btn" data-account-switch hidden title="切换账号">
             <span class="desk-account-name">切换账号</span>
@@ -135,7 +135,7 @@
     </div>
 
     <nav class="mobile-bottom-dock cloth-mobile-dock" id="clothMobileDock" aria-label="移动端衣服工具">
-      <button type="button" class="mobile-dock-button" id="btnClothMobileNew" title="新建设计">
+      <button type="button" class="mobile-dock-button" id="btnClothMobileNew" title="清空为空白画布，另开一张">
         <span class="mobile-dock-glyph">＋</span><span>新建</span>
       </button>
       <button type="button" class="mobile-dock-button" id="btnClothMobileTemplates" aria-expanded="false">
@@ -299,6 +299,6 @@
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/cloth-preview.js?v=13"></script>
-  <script src="/web/cloth.js?v=17"></script>
+  <script src="/web/cloth.js?v=18"></script>
 </body>
 </html>

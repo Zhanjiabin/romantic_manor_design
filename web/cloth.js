@@ -850,7 +850,7 @@
     state.designName = "";
     const nameInput = document.getElementById("clothSaveName");
     if (nameInput) nameInput.value = "";
-    await applyTemplate(stockTemplate() || { id: BLANK_ID, blank: true });
+    await applyTemplate({ id: BLANK_ID, blank: true });
     setSaveStatus("未保存");
     closeClothSheets();
   }

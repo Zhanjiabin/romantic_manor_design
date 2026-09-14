@@ -49,6 +49,9 @@ test("clothes desk exposes a new-design entry on phone chrome", () => {
   assert.match(clothJs, /function startNewDesign/);
   assert.match(clothJs, /btnClothMobileNew/);
   assert.match(clothJs, /action === "new"/);
+  const newDesign = clothJs.slice(clothJs.indexOf("async function startNewDesign"), clothJs.indexOf("function importImageFile"));
+  assert.match(newDesign, /applyTemplate\(\{ id: BLANK_ID, blank: true \}\)/);
+  assert.doesNotMatch(newDesign, /stockTemplate/);
   assert.match(clothJs, /setSaveStatus\("未保存"\)/);
   assert.match(clothCss, /#btnNewDesign/);
   assert.match(clothCss, /:not\(#btnNewDesign\)/);

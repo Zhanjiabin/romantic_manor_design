@@ -21,9 +21,19 @@
     { id: "fill", label: "填充", glyph: "▣" },
     { id: "eyedrop", label: "吸色", glyph: "◎" },
     { id: "patch", label: "圈选", glyph: "◍" },
-    { id: "pan", label: "移动", glyph: "✥" },
+    { id: "pan", label: "画布", glyph: "✥" },
   ];
   const TOOL_KEYS = { 1: "pencil", 2: "round", 3: "spray", 4: "eraser", 5: "line", 6: "fill", 7: "eyedrop", 8: "patch", 9: "pan" };
+  const BEAUTY_FAMILIES = [
+    { id: "face", label: "面部重塑", glyph: "☺", hint: "智能找脸。滑眼距、眼大、下巴、鼻子。" },
+    { id: "slim", label: "瘦脸瘦身", glyph: "◇", hint: "滑块瘦脸、瘦身。" },
+    { id: "body", label: "身材塑形", glyph: "〰", hint: "滑块瘦腰瘦腿，或在图上拖动推挤。" },
+    { id: "heal", label: "消除笔", glyph: "✕", hint: "涂在要去掉的地方，从周围补上。" },
+    { id: "cutout", label: "抠图", glyph: "✂", hint: "点背景去掉，或一键去底。" },
+  ];
+  const MASK_RGB = [226, 72, 128];
+  const MASK_INK = 18;
+  const MASK_OVERLAY_A = 80;
 
   const canvas = document.getElementById("paintCanvas");
   const view = document.getElementById("paintView");
@@ -82,6 +92,40 @@
   let historyBusy = false;
   let strokeDirty = false;
   let previewBodyKind = "";
+  let cutoutDragged = false;
+  let selDockCollapsed = true;
+  try {
+    const saved = sessionStorage.getItem("manor-cloth-sel-dock");
+    if (saved === "0") selDockCollapsed = false;
+    if (saved === "1") selDockCollapsed = true;
+  } catch {
+    selDockCollapsed = true;
+  }
+  const beauty = {
+    family: "",
+    snap: null,
+    heal: null,
+    layout: null,
+    values: { eyeGap: 0, eyeSize: 0, chin: 0, nose: 0, slimFace: 0, slimBody: 0, waist: 0, legs: 0 },
+  };
+  const DESIGN_FILTER_KEY = "manor-cloth-design-filter";
+  const designFilter = {
+    kind: "all",
+    query: "",
+    sortBy: "savedAt",
+    sortDir: "desc",
+  };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(DESIGN_FILTER_KEY) || "null");
+    if (saved && typeof saved === "object") {
+      if (typeof saved.kind === "string") designFilter.kind = saved.kind;
+      if (typeof saved.query === "string") designFilter.query = saved.query;
+      if (saved.sortBy === "name" || saved.sortBy === "savedAt") designFilter.sortBy = saved.sortBy;
+      if (saved.sortDir === "asc" || saved.sortDir === "desc") designFilter.sortDir = saved.sortDir;
+    }
+  } catch {
+    /* ignore quota */
+  }
 
   function kindById(id) {
     return (state.catalog?.kinds || []).find((kind) => kind.id === id) || null;
@@ -381,6 +425,14 @@
       stampMask(x, y, event, event.shiftKey);
       return;
     }
+    if (state.tool === "heal") {
+      healStamp(x, y, event);
+      return;
+    }
+    if (state.tool === "cutout") {
+      cutoutStamp(x, y, event);
+      return;
+    }
     const radius = toolRadius(event);
     if (state.tool === "eraser") {
       ctx.save();
@@ -449,6 +501,7 @@
     const node = maskNode();
     const context = maskContext();
     if (node && context) context.clearRect(0, 0, node.width, node.height);
+    setMaskPeek(false);
     const patch = document.getElementById("clothAiPatch");
     if (patch) patch.checked = false;
     syncMaskChrome();
@@ -460,7 +513,7 @@
     if (!node || !context || !node.width) return false;
     const data = context.getImageData(0, 0, node.width, node.height).data;
     for (let i = 3; i < data.length; i += 16) {
-      if (data[i] > 18) return true;
+      if (data[i] > MASK_INK) return true;
     }
     return false;
   }
@@ -483,10 +536,33 @@
       context.fillStyle = "rgba(0,0,0,1)";
     } else {
       context.globalCompositeOperation = "source-over";
-      context.fillStyle = "rgba(226, 72, 128, 0.55)";
+      context.fillStyle = `rgba(${MASK_RGB[0]}, ${MASK_RGB[1]}, ${MASK_RGB[2]}, ${MASK_OVERLAY_A / 255})`;
     }
     context.fill();
     context.restore();
+  }
+
+  function setMaskPeek(on) {
+    maskNode()?.classList.toggle("is-peek", Boolean(on));
+  }
+
+  function setSelDockCollapsed(on) {
+    selDockCollapsed = Boolean(on);
+    try {
+      sessionStorage.setItem("manor-cloth-sel-dock", selDockCollapsed ? "1" : "0");
+    } catch {
+      /* ignore quota */
+    }
+    syncSelDock();
+  }
+
+  function syncSelDock() {
+    const dock = document.getElementById("clothSelDock");
+    if (!dock) return;
+    dock.classList.toggle("is-collapsed", selDockCollapsed);
+    dock.querySelectorAll("[data-sel-dock-toggle]").forEach((button) => {
+      button.setAttribute("aria-expanded", String(!selDockCollapsed));
+    });
   }
 
   function syncMaskChrome() {
@@ -498,9 +574,513 @@
       patch.checked = true;
     }
     const label = document.getElementById("designerLabel");
-    if (label) label.textContent = state.tool === "patch" ? (ink ? "涂要改的区域 · Shift 擦掉" : "涂要改的区域") : "图案设计";
+    if (label) {
+      if (state.tool === "patch") label.textContent = ink ? "涂要改的区域 · Shift 擦掉" : "涂要改的区域";
+      else if (state.tool === "heal") label.textContent = "消除笔 · 涂抹去掉瑕疵";
+      else if (state.tool === "cutout") label.textContent = "抠图 · 点背景或涂掉";
+      else if (state.tool === "sculpt") label.textContent = "身材塑形 · 拖动推挤";
+      else label.textContent = "图案设计";
+    }
     const generate = document.getElementById("btnClothAiGenerate");
     if (generate) generate.textContent = patch?.checked && ink ? "只改圈选" : "生成到画布";
+    document.querySelectorAll("[data-selection-bar]").forEach((bar) => {
+      bar.hidden = !ink;
+    });
+    if (!ink) setMaskPeek(false);
+  }
+
+  function cloneImageData(image) {
+    return new ImageData(new Uint8ClampedArray(image.data), image.width, image.height);
+  }
+
+  function readMaskImage() {
+    const node = maskNode();
+    const context = maskContext();
+    if (!node || !context) return null;
+    return context.getImageData(0, 0, node.width, node.height);
+  }
+
+  function selectionBounds(maskData, width, height) {
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        if (maskData[(y * width + x) * 4 + 3] <= MASK_INK) continue;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return null;
+    return { minX, minY, maxX, maxY, width: maxX - minX + 1, height: maxY - minY + 1 };
+  }
+
+  function punchMasked(dest, maskData, width, height, fill) {
+    for (let i = 0; i < maskData.length; i += 4) {
+      if (maskData[i + 3] <= MASK_INK) continue;
+      dest[i] = fill[0];
+      dest[i + 1] = fill[1];
+      dest[i + 2] = fill[2];
+      dest[i + 3] = 255;
+    }
+  }
+
+  function restoreMasked(dest, maskData, width, height) {
+    const tmpl = templateCtx.getImageData(0, 0, width, height).data;
+    for (let i = 0; i < maskData.length; i += 4) {
+      if (maskData[i + 3] <= MASK_INK) continue;
+      dest[i] = tmpl[i];
+      dest[i + 1] = tmpl[i + 1];
+      dest[i + 2] = tmpl[i + 2];
+      dest[i + 3] = tmpl[i + 3];
+    }
+  }
+
+  function sampleBilinear(src, width, height, x, y, dest, di) {
+    const x0 = Math.max(0, Math.min(width - 1, Math.floor(x)));
+    const y0 = Math.max(0, Math.min(height - 1, Math.floor(y)));
+    const x1 = Math.min(width - 1, x0 + 1);
+    const y1 = Math.min(height - 1, y0 + 1);
+    const fx = Math.max(0, Math.min(1, x - Math.floor(x)));
+    const fy = Math.max(0, Math.min(1, y - Math.floor(y)));
+    const i00 = (y0 * width + x0) * 4;
+    const i10 = (y0 * width + x1) * 4;
+    const i01 = (y1 * width + x0) * 4;
+    const i11 = (y1 * width + x1) * 4;
+    for (let c = 0; c < 4; c += 1) {
+      const top = src[i00 + c] + (src[i10 + c] - src[i00 + c]) * fx;
+      const bot = src[i01 + c] + (src[i11 + c] - src[i01 + c]) * fx;
+      dest[di + c] = top + (bot - top) * fy;
+    }
+  }
+
+  function isLikelySkin(r, g, b) {
+    if (r < 70 || g < 38 || b < 18) return false;
+    if (r < g - 6 || r < b - 18) return false;
+    if (r + g + b > 745) return false;
+    if (r - b < 14 && r > 198 && g > 186) return false;
+    return (r - b) >= 14 && g < 232;
+  }
+
+  function fallbackFaceBox(width, height) {
+    const kind = state.kindId;
+    if (kind === "expression" || kind === "face") {
+      return { minX: Math.floor(width * 0.1), minY: Math.floor(height * 0.06), maxX: Math.ceil(width * 0.9), maxY: Math.ceil(height * 0.94) };
+    }
+    return { minX: Math.floor(width * 0.18), minY: Math.floor(height * 0.05), maxX: Math.ceil(width * 0.82), maxY: Math.ceil(height * 0.68) };
+  }
+
+  function detectFaceBox(image) {
+    const width = image.width;
+    const height = image.height;
+    const data = image.data;
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    let count = 0;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const i = (y * width + x) * 4;
+        if (!isLikelySkin(data[i], data[i + 1], data[i + 2])) continue;
+        count += 1;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (count < width * height * 0.03 || maxX < 0) return fallbackFaceBox(width, height);
+    return { minX, minY, maxX, maxY };
+  }
+
+  function faceLayoutFromBox(box) {
+    const w = box.maxX - box.minX + 1;
+    const h = box.maxY - box.minY + 1;
+    return {
+      cx: box.minX + w / 2,
+      cy: box.minY + h * 0.48,
+      leftEye: { x: box.minX + w * 0.32, y: box.minY + h * 0.38 },
+      rightEye: { x: box.minX + w * 0.68, y: box.minY + h * 0.38 },
+      nose: { x: box.minX + w / 2, y: box.minY + h * 0.54 },
+      chin: { x: box.minX + w / 2, y: box.minY + h * 0.9 },
+      faceR: Math.max(w, h) * 0.52,
+      eyeR: Math.max(8, w * 0.16),
+      noseR: Math.max(7, w * 0.14),
+      chinR: Math.max(10, w * 0.28),
+      box,
+    };
+  }
+
+  function warpRadial(src, dest, width, height, cx, cy, radius, amount, scaleX, scaleY) {
+    if (Math.abs(amount) < 0.004 || radius < 2) return;
+    const sx = scaleX || 1;
+    const sy = scaleY || 1;
+    const minX = Math.max(0, Math.floor(cx - radius * sx - 1));
+    const maxX = Math.min(width - 1, Math.ceil(cx + radius * sx + 1));
+    const minY = Math.max(0, Math.floor(cy - radius * sy - 1));
+    const maxY = Math.min(height - 1, Math.ceil(cy + radius * sy + 1));
+    const k = Math.max(-0.72, Math.min(0.72, amount));
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const vx = (x - cx) / sx;
+        const vy = (y - cy) / sy;
+        const dist = Math.hypot(vx, vy);
+        if (dist >= radius) continue;
+        const falloff = (1 - dist / radius) ** 2;
+        const factor = Math.max(0.2, 1 + k * falloff);
+        sampleBilinear(src, width, height, cx + (vx / factor) * sx, cy + (vy / factor) * sy, dest, (y * width + x) * 4);
+      }
+    }
+  }
+
+  function warpShift(src, dest, width, height, cx, cy, radius, dx, dy) {
+    if ((Math.abs(dx) < 0.15 && Math.abs(dy) < 0.15) || radius < 2) return;
+    const minX = Math.max(0, Math.floor(cx - radius - 1));
+    const maxX = Math.min(width - 1, Math.ceil(cx + radius + 1));
+    const minY = Math.max(0, Math.floor(cy - radius - 1));
+    const maxY = Math.min(height - 1, Math.ceil(cy + radius + 1));
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const dist = Math.hypot(x - cx, y - cy);
+        if (dist >= radius) continue;
+        const falloff = (1 - dist / radius) ** 2;
+        sampleBilinear(src, width, height, x - dx * falloff, y - dy * falloff, dest, (y * width + x) * 4);
+      }
+    }
+  }
+
+  function warpBand(src, dest, width, height, axisX, y0, y1, radius, amount) {
+    if (Math.abs(amount) < 0.004 || radius < 2) return;
+    const top = Math.max(0, Math.floor(y0));
+    const bot = Math.min(height - 1, Math.ceil(y1));
+    const k = Math.max(-0.7, Math.min(0.7, amount));
+    const mid = (y0 + y1) / 2;
+    const half = Math.max(8, (y1 - y0) / 2);
+    for (let y = top; y <= bot; y += 1) {
+      const yFall = (1 - Math.min(1, Math.abs(y - mid) / half)) ** 2;
+      for (let x = 0; x < width; x += 1) {
+        const dx = x - axisX;
+        if (Math.abs(dx) >= radius) continue;
+        const falloff = (1 - Math.abs(dx) / radius) ** 2 * yFall;
+        const factor = Math.max(0.22, 1 + k * falloff);
+        sampleBilinear(src, width, height, axisX + dx / factor, y, dest, (y * width + x) * 4);
+      }
+    }
+  }
+
+  function beautyValues() {
+    const next = { ...beauty.values };
+    document.querySelectorAll("[data-beauty-slider]").forEach((node) => {
+      next[node.dataset.beautySlider] = Number(node.value) || 0;
+    });
+    beauty.values = next;
+    return next;
+  }
+
+  function sliderAmount(value) {
+    return (Number(value) || 0) / 40 * 0.55;
+  }
+
+  function applyBeautyFromSnap() {
+    if (!beauty.snap) return;
+    const width = beauty.snap.width;
+    const height = beauty.snap.height;
+    let srcImage = cloneImageData(beauty.snap);
+    const values = beautyValues();
+    const layout = beauty.layout || faceLayoutFromBox(detectFaceBox(beauty.snap));
+    const steps = [];
+    if (beauty.family === "face") {
+      if (values.eyeGap) {
+        steps.push((src, dest) => {
+          const shift = sliderAmount(values.eyeGap) * layout.eyeR * 1.6;
+          warpShift(src, dest, width, height, layout.leftEye.x, layout.leftEye.y, layout.eyeR * 1.45, -shift, 0);
+          warpShift(src, dest, width, height, layout.rightEye.x, layout.rightEye.y, layout.eyeR * 1.45, shift, 0);
+        });
+      }
+      if (values.eyeSize) {
+        steps.push((src, dest) => {
+          const amt = sliderAmount(values.eyeSize);
+          warpRadial(src, dest, width, height, layout.leftEye.x, layout.leftEye.y, layout.eyeR, amt, 1, 0.85);
+          warpRadial(src, dest, width, height, layout.rightEye.x, layout.rightEye.y, layout.eyeR, amt, 1, 0.85);
+        });
+      }
+      if (values.chin) {
+        steps.push((src, dest) => {
+          warpRadial(src, dest, width, height, layout.chin.x, layout.chin.y, layout.chinR, sliderAmount(values.chin), 0.85, 1.15);
+        });
+      }
+      if (values.nose) {
+        steps.push((src, dest) => {
+          warpRadial(src, dest, width, height, layout.nose.x, layout.nose.y, layout.noseR, -Math.abs(sliderAmount(values.nose)), 1.2, 0.7);
+        });
+      }
+    }
+    if (beauty.family === "slim") {
+      if (values.slimFace) {
+        steps.push((src, dest) => {
+          warpRadial(src, dest, width, height, layout.cx, layout.cy, layout.faceR, -sliderAmount(values.slimFace), 1.25, 0.72);
+        });
+      }
+      if (values.slimBody) {
+        steps.push((src, dest) => {
+          warpBand(src, dest, width, height, width / 2, height * 0.28, height * 0.98, width * 0.48, -sliderAmount(values.slimBody));
+        });
+      }
+    }
+    if (beauty.family === "body") {
+      if (values.waist) {
+        steps.push((src, dest) => {
+          warpBand(src, dest, width, height, width / 2, height * 0.32, height * 0.7, width * 0.42, -sliderAmount(values.waist));
+        });
+      }
+      if (values.legs) {
+        steps.push((src, dest) => {
+          warpBand(src, dest, width, height, width * 0.38, height * 0.62, height * 0.99, width * 0.22, -sliderAmount(values.legs));
+          warpBand(src, dest, width, height, width * 0.62, height * 0.62, height * 0.99, width * 0.22, -sliderAmount(values.legs));
+        });
+      }
+    }
+    steps.forEach((step) => {
+      const destImage = cloneImageData(srcImage);
+      destImage.data.set(srcImage.data);
+      step(srcImage.data, destImage.data);
+      srcImage = destImage;
+    });
+    ctx.putImageData(srcImage, 0, 0);
+  }
+
+  function beginBeautySnap() {
+    beauty.snap = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    beauty.layout = faceLayoutFromBox(detectFaceBox(beauty.snap));
+  }
+
+  function previewBeautySlider(name, value) {
+    if (!beauty.family || beauty.family === "heal" || beauty.family === "cutout") return;
+    if (!beauty.snap) beginBeautySnap();
+    document.querySelectorAll(`[data-beauty-slider="${name}"]`).forEach((node) => {
+      if (node.value !== String(value)) node.value = String(value);
+    });
+    document.querySelectorAll(`[data-beauty-value="${name}"]`).forEach((node) => {
+      node.textContent = String(value);
+    });
+    applyBeautyFromSnap();
+  }
+
+  function commitBeautySliders() {
+    if (!beauty.snap) return;
+    applyBeautyFromSnap();
+    beauty.snap = null;
+    commitHistory();
+    markDirty();
+    resetBeautySliderValues();
+  }
+
+  function resetBeautySliderValues() {
+    Object.keys(beauty.values).forEach((key) => {
+      beauty.values[key] = 0;
+    });
+    document.querySelectorAll("[data-beauty-slider]").forEach((node) => {
+      node.value = "0";
+    });
+    document.querySelectorAll("[data-beauty-value]").forEach((node) => {
+      node.textContent = "0";
+    });
+  }
+
+  function beautyHintFor(id) {
+    return BEAUTY_FAMILIES.find((row) => row.id === id)?.hint || "点一项开始。";
+  }
+
+  function syncBeautyChrome() {
+    document.querySelectorAll("[data-beauty-family]").forEach((button) => {
+      button.classList.toggle("on", button.dataset.beautyFamily === beauty.family);
+    });
+    document.querySelectorAll("[data-beauty-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.beautyPanel !== beauty.family;
+    });
+    document.querySelectorAll("[data-beauty-hint]").forEach((node) => {
+      node.textContent = beauty.family ? beautyHintFor(beauty.family) : "点一项开始，在画布上改，不必反复出图。";
+    });
+    if (board) board.dataset.beauty = beauty.family || "";
+  }
+
+  function setBeautyFamily(id) {
+    if (beauty.family && beauty.family !== id && beauty.snap) commitBeautySliders();
+    beauty.family = beauty.family === id ? "" : id;
+    beauty.snap = null;
+    resetBeautySliderValues();
+    if (beauty.family === "heal") {
+      setTool("heal");
+      if (state.size < 8) setBrushSize(12);
+      closeClothSheets();
+    } else if (beauty.family === "cutout") {
+      setTool("cutout");
+      if (state.size < 8) setBrushSize(14);
+      closeClothSheets();
+    } else if (beauty.family === "body") {
+      setTool("sculpt");
+      closeClothSheets();
+    } else if (state.tool === "heal" || state.tool === "cutout" || state.tool === "sculpt") {
+      setTool("round");
+    }
+    if (beauty.family) {
+      selDockCollapsed = false;
+      syncSelDock();
+    }
+    syncBeautyChrome();
+  }
+
+  function fillBeautyFamilies() {
+    document.querySelectorAll("[data-beauty-families]").forEach((grid) => {
+      grid.replaceChildren();
+      BEAUTY_FAMILIES.forEach((row) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "beauty-family" + (beauty.family === row.id ? " on" : "");
+        button.dataset.beautyFamily = row.id;
+        button.title = row.hint;
+        const glyph = document.createElement("span");
+        glyph.className = "beauty-glyph";
+        glyph.setAttribute("aria-hidden", "true");
+        glyph.textContent = row.glyph;
+        const label = document.createElement("span");
+        label.textContent = row.label;
+        button.append(glyph, label);
+        button.addEventListener("click", () => setBeautyFamily(row.id));
+        grid.append(button);
+      });
+    });
+  }
+
+  function healStamp(x, y, event) {
+    if (!beauty.heal) beauty.heal = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const radius = Math.max(4, toolRadius(event) * 1.2);
+    const width = canvas.width;
+    const height = canvas.height;
+    const src = beauty.heal.data;
+    const destImage = ctx.getImageData(0, 0, width, height);
+    const dest = destImage.data;
+    const minX = Math.max(0, Math.floor(x - radius - 1));
+    const maxX = Math.min(width - 1, Math.ceil(x + radius + 1));
+    const minY = Math.max(0, Math.floor(y - radius - 1));
+    const maxY = Math.min(height - 1, Math.ceil(y + radius + 1));
+    for (let py = minY; py <= maxY; py += 1) {
+      for (let px = minX; px <= maxX; px += 1) {
+        const dist = Math.hypot(px - x, py - y);
+        if (dist >= radius) continue;
+        const ux = dist < 0.001 ? 1 : (px - x) / dist;
+        const uy = dist < 0.001 ? 0 : (py - y) / dist;
+        const sampleX = x + ux * (radius + 3);
+        const sampleY = y + uy * (radius + 3);
+        const di = (py * width + px) * 4;
+        const mix = (1 - dist / radius) ** 2;
+        const tmp = [0, 0, 0, 0];
+        sampleBilinear(src, width, height, sampleX, sampleY, tmp, 0);
+        dest[di] += (tmp[0] - dest[di]) * mix;
+        dest[di + 1] += (tmp[1] - dest[di + 1]) * mix;
+        dest[di + 2] += (tmp[2] - dest[di + 2]) * mix;
+      }
+    }
+    ctx.putImageData(destImage, 0, 0);
+  }
+
+  function cutoutStamp(x, y, event) {
+    const radius = Math.max(3, toolRadius(event));
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(templateCanvas, 0, 0);
+    ctx.restore();
+  }
+
+  function cutoutFlood(x, y) {
+    const width = canvas.width;
+    const height = canvas.height;
+    const image = ctx.getImageData(0, 0, width, height);
+    const data = image.data;
+    const tmpl = templateCtx.getImageData(0, 0, width, height).data;
+    const px = Math.max(0, Math.min(width - 1, Math.round(x)));
+    const py = Math.max(0, Math.min(height - 1, Math.round(y)));
+    const start = (py * width + px) * 4;
+    const tr = data[start];
+    const tg = data[start + 1];
+    const tb = data[start + 2];
+    const stack = [px, py];
+    const seen = new Uint8Array(width * height);
+    while (stack.length) {
+      const cy = stack.pop();
+      const cx = stack.pop();
+      const id = cy * width + cx;
+      if (seen[id]) continue;
+      seen[id] = 1;
+      const index = id * 4;
+      if (Math.abs(data[index] - tr) > 18 || Math.abs(data[index + 1] - tg) > 18 || Math.abs(data[index + 2] - tb) > 18) continue;
+      data[index] = tmpl[index];
+      data[index + 1] = tmpl[index + 1];
+      data[index + 2] = tmpl[index + 2];
+      data[index + 3] = tmpl[index + 3];
+      if (cx > 0) stack.push(cx - 1, cy);
+      if (cx + 1 < width) stack.push(cx + 1, cy);
+      if (cy > 0) stack.push(cx, cy - 1);
+      if (cy + 1 < height) stack.push(cx, cy + 1);
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+
+  function cutoutAuto() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const image = ctx.getImageData(0, 0, width, height);
+    const corners = [
+      [1, 1],
+      [width - 2, 1],
+      [1, height - 2],
+      [width - 2, height - 2],
+    ];
+    corners.forEach(([x, y]) => cutoutFlood(x, y));
+    commitHistory();
+    markDirty();
+  }
+
+  function sculptPush(from, to, event) {
+    const width = canvas.width;
+    const height = canvas.height;
+    const srcImage = ctx.getImageData(0, 0, width, height);
+    const destImage = cloneImageData(srcImage);
+    destImage.data.set(srcImage.data);
+    const radius = Math.max(8, toolRadius(event) * 2.2);
+    const mx = to.x - from.x;
+    const my = to.y - from.y;
+    const mag = Math.hypot(mx, my) || 1;
+    const strength = Math.min(radius * 0.9, mag * 1.15);
+    const nx = mx / mag;
+    const ny = my / mag;
+    const minX = Math.max(0, Math.floor(Math.min(from.x, to.x) - radius - 1));
+    const maxX = Math.min(width - 1, Math.ceil(Math.max(from.x, to.x) + radius + 1));
+    const minY = Math.max(0, Math.floor(Math.min(from.y, to.y) - radius - 1));
+    const maxY = Math.min(height - 1, Math.ceil(Math.max(from.y, to.y) + radius + 1));
+    const src = srcImage.data;
+    const dest = destImage.data;
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const vx = x - from.x;
+        const vy = y - from.y;
+        const along = vx * nx + vy * ny;
+        if (along < -2 || along > mag + 2) continue;
+        const px = from.x + nx * Math.max(0, Math.min(mag, along));
+        const py = from.y + ny * Math.max(0, Math.min(mag, along));
+        const dist = Math.hypot(x - px, y - py);
+        if (dist >= radius) continue;
+        const falloff = (1 - dist / radius) ** 2;
+        sampleBilinear(src, width, height, x - nx * strength * falloff, y - ny * strength * falloff, dest, (y * width + x) * 4);
+      }
+    }
+    ctx.putImageData(destImage, 0, 0);
   }
 
   function drawLineGhost(from, to, event) {
@@ -577,6 +1157,7 @@
   }
 
   function setTool(id) {
+    if (id === "lift") id = "patch";
     state.tool = id;
     if (board) board.dataset.tool = id;
     document.querySelectorAll("#toolGrid .tool").forEach((button) => {
@@ -587,6 +1168,7 @@
     panBtn?.setAttribute("aria-pressed", String(id === "pan"));
     clearGhost();
     syncMaskChrome();
+    syncBeautyChrome();
   }
 
   function fillTools() {
@@ -606,7 +1188,9 @@
       const label = document.createElement("span");
       label.textContent = tool.label;
       button.append(glyph, label);
-      button.addEventListener("click", () => setTool(tool.id));
+      button.addEventListener("click", () => {
+        setTool(tool.id);
+      });
       grid.append(button);
     });
     if (board) board.dataset.tool = state.tool;
@@ -739,29 +1323,127 @@
     });
   }
 
+  function persistDesignFilter() {
+    try {
+      sessionStorage.setItem(DESIGN_FILTER_KEY, JSON.stringify(designFilter));
+    } catch {
+      /* ignore quota */
+    }
+  }
+
+  function designKindLabel(item) {
+    return kindById(item?.kind)?.label || item?.kind || "未分类";
+  }
+
+  function designSearchBlob(item) {
+    const kind = kindById(item.kind);
+    const gender = item.gender === "male" ? "男装" : item.gender === "female" ? "女装" : "";
+    return [item.name, kind?.label, kind?.id, gender, item.kind].filter(Boolean).join(" ").toLowerCase();
+  }
+
+  function visibleDesigns() {
+    const query = String(designFilter.query || "").trim().toLowerCase();
+    const items = (state.designs || []).filter((item) => {
+      if (designFilter.kind !== "all" && item.kind !== designFilter.kind) return false;
+      if (query && !designSearchBlob(item).includes(query)) return false;
+      return true;
+    });
+    const dir = designFilter.sortDir === "asc" ? 1 : -1;
+    items.sort((a, b) => {
+      if (designFilter.sortBy === "name") {
+        const cmp = String(a.name || "").localeCompare(String(b.name || ""), "zh");
+        if (cmp) return cmp * dir;
+        return ((Number(a.savedAt) || 0) - (Number(b.savedAt) || 0)) * dir;
+      }
+      const cmp = (Number(a.savedAt) || 0) - (Number(b.savedAt) || 0);
+      if (cmp) return cmp * dir;
+      return String(a.name || "").localeCompare(String(b.name || ""), "zh") * dir;
+    });
+    return items;
+  }
+
+  function fillDesignKindFilter() {
+    const select = document.getElementById("designKindFilter");
+    if (!select) return;
+    const kinds = state.catalog?.kinds || [];
+    const ids = ["all", ...kinds.map((kind) => kind.id)].join(",");
+    if (select.dataset.kindIds !== ids) {
+      select.dataset.kindIds = ids;
+      select.replaceChildren();
+      const all = document.createElement("option");
+      all.value = "all";
+      all.textContent = "全部种类";
+      select.append(all);
+      kinds.forEach((kind) => {
+        const option = document.createElement("option");
+        option.value = kind.id;
+        option.textContent = kind.label;
+        select.append(option);
+      });
+    }
+    const known = kinds.some((kind) => kind.id === designFilter.kind);
+    if (!known) designFilter.kind = "all";
+    if (select.value !== designFilter.kind) select.value = designFilter.kind;
+  }
+
+  function syncDesignFilterChrome() {
+    fillDesignKindFilter();
+    const search = document.getElementById("designSearch");
+    if (search && search.value !== designFilter.query) search.value = designFilter.query;
+    const sortBy = document.getElementById("designSortBy");
+    if (sortBy && sortBy.value !== designFilter.sortBy) sortBy.value = designFilter.sortBy;
+    const dirBtn = document.getElementById("designSortDir");
+    if (dirBtn) {
+      const desc = designFilter.sortDir !== "asc";
+      dirBtn.textContent = desc ? "逆序" : "正序";
+      dirBtn.setAttribute("aria-pressed", String(desc));
+      dirBtn.title = desc ? "当前逆序，点此改为正序" : "当前正序，点此改为逆序";
+    }
+  }
+
   function renderDesigns() {
     const list = document.getElementById("designList");
     if (!list) return;
-    list.replaceChildren();
-    if (!state.designs.length) {
-      const empty = document.createElement("p");
-      empty.className = "kind-meta";
-      empty.textContent = "还没有保存的衣服作品。";
-      list.append(empty);
-      return;
-    }
-    state.designs.slice().reverse().forEach((item) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "design-card";
-      const img = document.createElement("img");
-      img.alt = item.name;
-      img.src = item.png;
-      const label = document.createElement("span");
-      label.textContent = item.name;
-      button.append(img, label);
-      button.addEventListener("click", () => openDesign(item));
-      list.append(button);
+    syncDesignFilterChrome();
+    const items = visibleDesigns();
+    const count = document.getElementById("designCount");
+    if (count) count.textContent = String(items.length);
+    preserveListScroll(sheetListScroller(list), () => {
+      list.replaceChildren();
+      if (!(state.designs || []).length) {
+        const empty = document.createElement("p");
+        empty.className = "kind-meta";
+        empty.textContent = "还没有保存的衣服作品。";
+        list.append(empty);
+        return;
+      }
+      if (!items.length) {
+        const empty = document.createElement("p");
+        empty.className = "kind-meta";
+        empty.textContent = "没有符合条件的作品。";
+        list.append(empty);
+        return;
+      }
+      items.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "design-card";
+        const img = document.createElement("img");
+        img.alt = item.name;
+        img.src = item.png;
+        const meta = document.createElement("span");
+        meta.className = "design-card-meta";
+        const label = document.createElement("span");
+        label.className = "design-card-name";
+        label.textContent = item.name;
+        const kind = document.createElement("span");
+        kind.className = "design-card-kind";
+        kind.textContent = designKindLabel(item);
+        meta.append(label, kind);
+        button.append(img, meta);
+        button.addEventListener("click", () => openDesign(item));
+        list.append(button);
+      });
     });
   }
 
@@ -1710,6 +2392,8 @@
     const point = paintPointFrom(event);
     strokeOrigin = point;
     if (state.tool === "pan") return;
+    if (state.tool === "heal") beauty.heal = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if (state.tool === "cutout") cutoutDragged = false;
     if (state.tool === "eyedrop") {
       pickColor(point.x, point.y);
       painting = true;
@@ -1730,6 +2414,10 @@
     painting = true;
     lastPoint = point;
     smoothPoint = point;
+    if (state.tool === "cutout" || state.tool === "sculpt") {
+      if (state.tool === "sculpt") strokeDirty = true;
+      return;
+    }
     if (state.tool !== "patch") {
       strokeDirty = true;
       stamp(point.x, point.y, event);
@@ -1753,6 +2441,13 @@
         drawLineGhost(lineStart, point, sample);
         return;
       }
+      if (state.tool === "sculpt") {
+        if (lastPoint) sculptPush(lastPoint, point, sample);
+        lastPoint = point;
+        strokeDirty = true;
+        return;
+      }
+      if (state.tool === "cutout") cutoutDragged = true;
       if (lastPoint && smoothPoint) {
         const mid = { x: (smoothPoint.x + point.x) / 2, y: (smoothPoint.y + point.y) / 2 };
         stroke(lastPoint, mid, sample);
@@ -1766,6 +2461,17 @@
   }
 
   function endPaint(event) {
+    if (state.tool === "cutout" && painting && !cutoutDragged && strokeOrigin) {
+      cutoutFlood(strokeOrigin.x, strokeOrigin.y);
+      commitHistory();
+      markDirty();
+      painting = false;
+      lastPoint = null;
+      strokeOrigin = null;
+      smoothPoint = null;
+      cutoutDragged = false;
+      return;
+    }
     if (state.tool === "line" && painting && lineStart) {
       const point = paintPointFrom(event);
       clearGhost();
@@ -1781,11 +2487,12 @@
     smoothPoint = null;
     clearGhost();
     if (state.tool === "patch") syncMaskChrome();
+    beauty.heal = null;
+    cutoutDragged = false;
   }
 
   function beginGesture() {
     const pts = [...pointers.values()];
-    if (pts.length < 2) return;
     if (strokeDirty) commitHistory();
     strokeDirty = false;
     painting = false;
@@ -1928,6 +2635,22 @@
     document.getElementById("btnClothAiPromptReset")?.addEventListener("click", () => resetKindPrompts());
     document.getElementById("btnClothAiGenerate")?.addEventListener("click", () => generateAiDesign());
     document.getElementById("btnClearMask")?.addEventListener("click", () => clearMask());
+    document.querySelectorAll("[data-sel-dock-toggle]").forEach((button) => {
+      button.addEventListener("click", () => setSelDockCollapsed(!selDockCollapsed));
+    });
+    document.querySelectorAll("[data-beauty-slider]").forEach((slider) => {
+      slider.addEventListener("pointerdown", () => {
+        if (!beauty.snap) beginBeautySnap();
+      });
+      slider.addEventListener("input", () => previewBeautySlider(slider.dataset.beautySlider, slider.value));
+      slider.addEventListener("change", () => commitBeautySliders());
+      slider.addEventListener("pointerup", () => commitBeautySliders());
+    });
+    document.querySelectorAll("[data-cutout]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.dataset.cutout === "auto") cutoutAuto();
+      });
+    });
     document.getElementById("clothAiPatch")?.addEventListener("change", () => {
       const on = Boolean(document.getElementById("clothAiPatch")?.checked);
       if (on && !maskHasInk()) {
@@ -1981,6 +2704,26 @@
     document.getElementById("btnClothMobileNew")?.addEventListener("click", () => startNewDesign());
     document.getElementById("btnNewDesign")?.addEventListener("click", () => startNewDesign());
     document.getElementById("btnNewDesignRail")?.addEventListener("click", () => startNewDesign());
+    document.getElementById("designSearch")?.addEventListener("input", (event) => {
+      designFilter.query = String(event.target.value || "");
+      persistDesignFilter();
+      renderDesigns();
+    });
+    document.getElementById("designKindFilter")?.addEventListener("change", (event) => {
+      designFilter.kind = String(event.target.value || "all");
+      persistDesignFilter();
+      renderDesigns();
+    });
+    document.getElementById("designSortBy")?.addEventListener("change", (event) => {
+      designFilter.sortBy = event.target.value === "name" ? "name" : "savedAt";
+      persistDesignFilter();
+      renderDesigns();
+    });
+    document.getElementById("designSortDir")?.addEventListener("click", () => {
+      designFilter.sortDir = designFilter.sortDir === "asc" ? "desc" : "asc";
+      persistDesignFilter();
+      renderDesigns();
+    });
     document.getElementById("btnImportPng")?.addEventListener("click", () => document.getElementById("fileClothImage")?.click());
     document.getElementById("btnExportPng")?.addEventListener("click", () => exportJpg());
     document.getElementById("btnRestore")?.addEventListener("click", () => restoreDefault());
@@ -2090,6 +2833,8 @@
       fitCanvas();
       if (!workspaceMode().mobile) closeClothSheets();
     });
+    syncSelDock();
+    syncBeautyChrome();
     syncHistoryButtons();
   }
 
@@ -2160,6 +2905,7 @@
     document.documentElement.classList.add("boot-pending");
     window.MobileWorkspace?.init();
     fillTools();
+    fillBeautyFamilies();
     fillSwatches();
     setBrushSize(state.size);
     bindSheets();

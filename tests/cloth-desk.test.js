@@ -111,6 +111,54 @@ test("clicking a clothes board keeps the template list scroll position", () => {
   assert.doesNotMatch(render, /scrollIntoView/);
 });
 
+test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", () => {
+  assert.doesNotMatch(clothJs, /id: "lift"/);
+  assert.doesNotMatch(clothHtml, /data-sel="lift"/);
+  assert.doesNotMatch(clothHtml, /data-liq="pinch"/);
+  assert.doesNotMatch(clothJs, /label: "美发"/);
+  assert.doesNotMatch(clothJs, /label: "磨皮"/);
+  assert.doesNotMatch(clothJs, /label: "皮肤美化"/);
+  assert.match(clothJs, /function detectFaceBox/);
+  assert.match(clothJs, /function setBeautyFamily/);
+  assert.match(clothJs, /function healStamp/);
+  assert.match(clothJs, /function cutoutFlood/);
+  assert.match(clothJs, /function sculptPush/);
+  assert.match(clothJs, /function applyBeautyFromSnap/);
+  assert.match(clothHtml, /面部重塑/);
+  assert.match(clothHtml, /瘦脸瘦身/);
+  assert.match(clothHtml, /身材塑形/);
+  assert.match(clothHtml, /消除笔/);
+  assert.match(clothHtml, /抠图/);
+  assert.match(clothHtml, /一键去底/);
+  assert.match(clothHtml, /data-beauty-slider="eyeGap"/);
+  assert.match(clothHtml, /data-beauty-slider="slimFace"/);
+  assert.match(clothHtml, /data-beauty-slider="waist"/);
+  assert.match(clothCss, /\.beauty-families/);
+  assert.match(clothCss, /\.beauty-family\.on/);
+  assert.match(clothJs, /id: "heal"/);
+  assert.match(clothJs, /id: "cutout"/);
+  assert.match(clothJs, /setTool\("sculpt"\)/);
+  assert.match(clothHtml, /cloth\.js\?v=27/);
+  assert.match(clothHtml, /cloth\.css\?v=25/);
+});
+
+test("clothes desk work list can filter, search, and sort", () => {
+  assert.match(clothHtml, /id="designSearch"/);
+  assert.match(clothHtml, /id="designKindFilter"/);
+  assert.match(clothHtml, /id="designSortBy"/);
+  assert.match(clothHtml, /id="designSortDir"/);
+  assert.match(clothHtml, /option value="savedAt">设计时间/);
+  assert.match(clothHtml, /option value="name">作品名/);
+  assert.match(clothJs, /function visibleDesigns/);
+  assert.match(clothJs, /function fillDesignKindFilter/);
+  assert.match(clothJs, /function persistDesignFilter/);
+  assert.match(clothJs, /localeCompare\(String\(b\.name \|\| ""\), "zh"\)/);
+  assert.match(clothJs, /designFilter\.sortDir === "asc" \? "desc" : "asc"/);
+  assert.match(clothCss, /\.design-filter/);
+  assert.match(clothCss, /#designSortDir/);
+  assert.match(clothCss, /\.design-card-kind/);
+});
+
 test("clothes desk commits one history step per stroke and exposes redo on the phone dock", () => {
   assert.match(clothJs, /function commitHistory/);
   assert.match(clothJs, /function rememberCurrentHistory/);

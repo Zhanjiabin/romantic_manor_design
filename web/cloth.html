@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=11" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=19" />
+  <link rel="stylesheet" href="/web/cloth.css?v=25" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -73,10 +73,39 @@
 
       <main class="cloth-stage" id="clothStage">
         <div class="paint-hud">
+          <div class="paint-hud-row">
           <strong id="canvasSizeLabel">256×256</strong>
           <span id="designerLabel">图案设计</span>
           <button type="button" class="btn btn-compact" id="btnClearMask" hidden title="去掉圈选，下次 AI 会整张重画">清空圈选</button>
           <button type="button" class="btn btn-compact btn-primary" id="btnClothAiHud" title="用第三方图片模型按 UV 出图">AI 设计</button>
+          </div>
+          <div class="sel-dock beauty-dock" id="clothSelDock">
+            <div class="sel-dock-body" id="clothSelDockBody">
+              <div class="sel-dock-tools">
+                <div class="beauty-families" data-beauty-families></div>
+                <button type="button" class="btn btn-compact sel-dock-fold" data-sel-dock-toggle aria-expanded="true" aria-controls="clothSelDockBody" title="收起美图工具，不挡画布">收起</button>
+              </div>
+              <p class="beauty-hint" data-beauty-hint>点一项开始，在画布上改，不必反复出图。</p>
+              <div class="beauty-sliders" data-beauty-panel="face" hidden>
+                <label class="beauty-slider-field"><span>眼距</span><input type="range" data-beauty-slider="eyeGap" min="-40" max="40" value="0" step="1" /><b data-beauty-value="eyeGap">0</b></label>
+                <label class="beauty-slider-field"><span>眼大</span><input type="range" data-beauty-slider="eyeSize" min="-40" max="40" value="0" step="1" /><b data-beauty-value="eyeSize">0</b></label>
+                <label class="beauty-slider-field"><span>下巴</span><input type="range" data-beauty-slider="chin" min="-40" max="40" value="0" step="1" /><b data-beauty-value="chin">0</b></label>
+                <label class="beauty-slider-field"><span>鼻子</span><input type="range" data-beauty-slider="nose" min="-40" max="40" value="0" step="1" /><b data-beauty-value="nose">0</b></label>
+              </div>
+              <div class="beauty-sliders" data-beauty-panel="slim" hidden>
+                <label class="beauty-slider-field"><span>瘦脸</span><input type="range" data-beauty-slider="slimFace" min="0" max="40" value="0" step="1" /><b data-beauty-value="slimFace">0</b></label>
+                <label class="beauty-slider-field"><span>瘦身</span><input type="range" data-beauty-slider="slimBody" min="0" max="40" value="0" step="1" /><b data-beauty-value="slimBody">0</b></label>
+              </div>
+              <div class="beauty-sliders" data-beauty-panel="body" hidden>
+                <label class="beauty-slider-field"><span>瘦腰</span><input type="range" data-beauty-slider="waist" min="0" max="40" value="0" step="1" /><b data-beauty-value="waist">0</b></label>
+                <label class="beauty-slider-field"><span>瘦腿</span><input type="range" data-beauty-slider="legs" min="0" max="40" value="0" step="1" /><b data-beauty-value="legs">0</b></label>
+              </div>
+              <div class="beauty-sliders" data-beauty-panel="cutout" hidden>
+                <button type="button" class="btn btn-compact" data-cutout="auto">一键去底</button>
+              </div>
+            </div>
+            <button type="button" class="btn btn-compact sel-dock-open" data-sel-dock-toggle aria-expanded="false" aria-controls="clothSelDockBody" title="展开美图工具">美图</button>
+          </div>
         </div>
         <div class="paint-board" id="paintBoard" tabindex="0" aria-label="衣服贴图画布">
           <div class="paint-view" id="paintView">
@@ -85,7 +114,7 @@
             <canvas id="paintMask" width="256" height="256" aria-hidden="true"></canvas>
           </div>
         </div>
-        <p class="paint-hint" id="paintHint">一指绘制，双指拖动缩放。数字键 1–9 换笔，[ ] 调粗细，空格移动。局部瑕疵用「圈选」涂上再开 AI。</p>
+          <p class="paint-hint" id="paintHint">一指绘制，双指拖动缩放。美图里有面部重塑、瘦脸瘦身、身材塑形、消除笔和抠图。</p>
       </main>
 
       <aside class="rail rail-right mobile-sheet" id="clothToolSheet">
@@ -97,6 +126,26 @@
         <div class="rail-block" data-mobile-sheet-scroll>
           <div class="rail-head">笔触</div>
           <div class="brush-grid" id="toolGrid"></div>
+          <div class="rail-head">美图</div>
+          <div class="beauty-families" data-beauty-families></div>
+          <p class="beauty-hint" data-beauty-hint>点一项开始，在画布上改，不必反复出图。</p>
+          <div class="beauty-sliders" data-beauty-panel="face" hidden>
+            <label class="beauty-slider-field"><span>眼距</span><input type="range" data-beauty-slider="eyeGap" min="-40" max="40" value="0" step="1" /><b data-beauty-value="eyeGap">0</b></label>
+            <label class="beauty-slider-field"><span>眼大</span><input type="range" data-beauty-slider="eyeSize" min="-40" max="40" value="0" step="1" /><b data-beauty-value="eyeSize">0</b></label>
+            <label class="beauty-slider-field"><span>下巴</span><input type="range" data-beauty-slider="chin" min="-40" max="40" value="0" step="1" /><b data-beauty-value="chin">0</b></label>
+            <label class="beauty-slider-field"><span>鼻子</span><input type="range" data-beauty-slider="nose" min="-40" max="40" value="0" step="1" /><b data-beauty-value="nose">0</b></label>
+          </div>
+          <div class="beauty-sliders" data-beauty-panel="slim" hidden>
+            <label class="beauty-slider-field"><span>瘦脸</span><input type="range" data-beauty-slider="slimFace" min="0" max="40" value="0" step="1" /><b data-beauty-value="slimFace">0</b></label>
+            <label class="beauty-slider-field"><span>瘦身</span><input type="range" data-beauty-slider="slimBody" min="0" max="40" value="0" step="1" /><b data-beauty-value="slimBody">0</b></label>
+          </div>
+          <div class="beauty-sliders" data-beauty-panel="body" hidden>
+            <label class="beauty-slider-field"><span>瘦腰</span><input type="range" data-beauty-slider="waist" min="0" max="40" value="0" step="1" /><b data-beauty-value="waist">0</b></label>
+            <label class="beauty-slider-field"><span>瘦腿</span><input type="range" data-beauty-slider="legs" min="0" max="40" value="0" step="1" /><b data-beauty-value="legs">0</b></label>
+          </div>
+          <div class="beauty-sliders" data-beauty-panel="cutout" hidden>
+            <button type="button" class="btn btn-compact" data-cutout="auto">一键去底</button>
+          </div>
           <div class="brush-settings">
             <div class="brush-size-field">
               <div class="size-presets" id="sizePresets">
@@ -126,7 +175,27 @@
             <button type="button" class="btn btn-compact" data-cloth-io="preview">预览</button>
             <button type="button" class="btn btn-compact" id="btnClothAiRail">AI 设计</button>
           </div>
-          <div class="rail-head">作品</div>
+          <div class="rail-head">作品 <span class="project-count" id="designCount">0</span></div>
+          <div class="design-filter" id="designFilterBar">
+            <label class="field">
+              <span class="sr-only">搜索作品</span>
+              <input class="input" id="designSearch" type="search" placeholder="搜索作品名、种类…" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>分类</span>
+              <select class="input" id="designKindFilter" aria-label="按种类筛选作品"></select>
+            </label>
+            <div class="design-sort-row">
+              <label class="field">
+                <span>排序</span>
+                <select class="input" id="designSortBy" aria-label="排序依据">
+                  <option value="savedAt">设计时间</option>
+                  <option value="name">作品名</option>
+                </select>
+              </label>
+              <button type="button" class="btn btn-compact" id="designSortDir" aria-pressed="true" title="切换正序或逆序">逆序</button>
+            </div>
+          </div>
           <button type="button" class="btn btn-compact btn-block" id="btnNewDesignRail" title="清空为空白画布，另开一张">新建设计</button>
           <div class="design-list" id="designList"></div>
           <button type="button" class="btn btn-wide phone-account-btn" data-account-switch hidden title="切换账号">
@@ -308,6 +377,6 @@
   <script src="/web/desk-account.js?v=6"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/cloth-preview.js?v=13"></script>
-  <script src="/web/cloth.js?v=21"></script>
+  <script src="/web/cloth.js?v=27"></script>
 </body>
 </html>

@@ -560,41 +560,91 @@
     return [medianChannel(rs), medianChannel(gs), medianChannel(bs)];
   }
 
+  function floodBackgroundMask(src, width, height, br, bg, bb, tol) {
+    const bgMask = new Uint8Array(width * height);
+    const stack = [];
+    const patch = 6;
+    const distBg = (i) => colorDist(src[i], src[i + 1], src[i + 2], br, bg, bb);
+    const seedPatch = (x0, y0) => {
+      const x1 = Math.min(width, Math.max(0, x0) + patch);
+      const y1 = Math.min(height, Math.max(0, y0) + patch);
+      for (let y = Math.max(0, y0); y < y1; y += 1) {
+        for (let x = Math.max(0, x0); x < x1; x += 1) {
+          const p = y * width + x;
+          if (bgMask[p]) continue;
+          if (distBg(p * 4) <= tol) {
+            bgMask[p] = 1;
+            stack.push(p);
+          }
+        }
+      }
+    };
+    seedPatch(0, 0);
+    seedPatch(width - patch, 0);
+    seedPatch(0, height - patch);
+    seedPatch(width - patch, height - patch);
+    while (stack.length) {
+      const p = stack.pop();
+      const y = (p / width) | 0;
+      const x = p - y * width;
+      const i = p * 4;
+      const cr = src[i];
+      const cg = src[i + 1];
+      const cb = src[i + 2];
+      const tryPush = (n) => {
+        if (bgMask[n]) return;
+        const ni = n * 4;
+        if (colorDist(src[ni], src[ni + 1], src[ni + 2], cr, cg, cb) > tol) return;
+        if (distBg(ni) > tol + 18) return;
+        bgMask[n] = 1;
+        stack.push(n);
+      };
+      if (x > 0) tryPush(p - 1);
+      if (x < width - 1) tryPush(p + 1);
+      if (y > 0) tryPush(p - width);
+      if (y < height - 1) tryPush(p + width);
+    }
+    return bgMask;
+  }
+
+  function closeIslandMask(mask, width, height) {
+    const dilated = new Uint8Array(mask);
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const p = y * width + x;
+        if (mask[p]) continue;
+        if (mask[p - 1] || mask[p + 1] || mask[p - width] || mask[p + width]) dilated[p] = 1;
+      }
+    }
+    const closed = new Uint8Array(dilated);
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const p = y * width + x;
+        if (!dilated[p]) continue;
+        if (!dilated[p - 1] || !dilated[p + 1] || !dilated[p - width] || !dilated[p + width]) closed[p] = 0;
+      }
+    }
+    return closed;
+  }
+
   function extractUvOutline(imageData, options = {}) {
     const width = imageData.width;
     const height = imageData.height;
     const src = imageData.data;
     const fillIslands = Boolean(options.fillIslands);
     const [br, bg, bb] = sampleCornerBg(src, width, height);
-    const content = new Uint8Array(width * height);
+    const bgMask = floodBackgroundMask(src, width, height, br, bg, bb, 46);
+    const island = new Uint8Array(width * height);
     let filled = 0;
-    for (let p = 0, i = 0; p < content.length; p += 1, i += 4) {
-      const r = src[i];
-      const g = src[i + 1];
-      const b = src[i + 2];
-      const dark = Math.max(r, g, b) < 28 && Math.max(r, g, b) - Math.min(r, g, b) < 12;
-      const on = !dark && src[i + 3] > 8 && colorDist(r, g, b, br, bg, bb) > 42;
-      content[p] = on ? 1 : 0;
-      if (on) filled += 1;
-    }
-    const cleaned = new Uint8Array(content);
-    for (let y = 1; y < height - 1; y += 1) {
-      for (let x = 1; x < width - 1; x += 1) {
-        const p = y * width + x;
-        if (!content[p]) continue;
-        let neighbors = 0;
-        for (let dy = -1; dy <= 1; dy += 1) {
-          for (let dx = -1; dx <= 1; dx += 1) {
-            if (dx || dy) neighbors += content[p + dy * width + dx];
-          }
-        }
-        if (neighbors < 3) {
-          cleaned[p] = 0;
-          filled -= 1;
-        }
+    for (let p = 0; p < island.length; p += 1) {
+      if (!bgMask[p] && src[p * 4 + 3] > 8) {
+        island[p] = 1;
+        filled += 1;
       }
     }
-    content.set(cleaned);
+    const content = closeIslandMask(island, width, height);
+    filled = 0;
+    for (let p = 0; p < content.length; p += 1) if (content[p]) filled += 1;
     const out = new ImageData(width, height);
     const dst = out.data;
     const MAGENTA = [255, 20, 168];

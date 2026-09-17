@@ -185,7 +185,9 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /id: "heal"/);
   assert.match(clothJs, /id: "cutout"/);
   assert.match(clothJs, /setTool\("sculpt"\)/);
-  assert.match(clothHtml, /cloth\.js\?v=46/);
+  assert.match(clothJs, /function kindHasUvIslands/);
+  assert.match(clothJs, /kindId !== "expression"/);
+  assert.match(clothHtml, /cloth\.js\?v=47/);
   assert.match(clothHtml, /cloth\.css\?v=42/);
 });
 

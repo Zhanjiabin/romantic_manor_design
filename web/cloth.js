@@ -711,14 +711,32 @@
     return out;
   }
 
+  function kindHasUvIslands(kindId) {
+    return kindId !== "expression";
+  }
+
   function syncUvGuideButton() {
     const btn = document.getElementById("btnUvGuide");
     if (!btn) return;
+    const allowed = kindHasUvIslands(state.kindId);
+    btn.hidden = !allowed;
+    if (!allowed) {
+      btn.classList.remove("on");
+      btn.setAttribute("aria-pressed", "false");
+      btn.title = "表情贴图铺满脸，不描岛轮廓";
+      const uvRow = document.getElementById("clothAiUv")?.closest(".cloth-ai-patch");
+      if (uvRow) uvRow.hidden = true;
+      return;
+    }
+    btn.title = "在当前作品上显示默认 UV 岛的外轮廓，导出时一并带上";
     btn.classList.toggle("on", uvGuideOn);
     btn.setAttribute("aria-pressed", String(uvGuideOn));
+    const uvRow = document.getElementById("clothAiUv")?.closest(".cloth-ai-patch");
+    if (uvRow) uvRow.hidden = !allowed;
   }
 
   async function uvOutlineForKind(kindId, options = {}) {
+    if (!kindHasUvIslands(kindId)) return null;
     const kind = kindById(kindId);
     const stock = kind?.templates?.[0];
     const url = stock?.url;
@@ -759,7 +777,7 @@
     if (!node || !gtx) return;
     gtx.clearRect(0, 0, node.width, node.height);
     syncUvGuideButton();
-    if (!uvGuideOn) return;
+    if (!uvGuideOn || !kindHasUvIslands(state.kindId)) return;
     try {
       const outline = await uvOutlineForKind(state.kindId);
       if (!uvGuideOn || !outline) return;
@@ -2272,6 +2290,7 @@
   }
 
   function aiUvMapOn() {
+    if (!kindHasUvIslands(state.kindId)) return false;
     return document.getElementById("clothAiUv")?.checked !== false;
   }
 

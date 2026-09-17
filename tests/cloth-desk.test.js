@@ -116,6 +116,18 @@ test("clicking a clothes board keeps the template list scroll position", () => {
   const render = clothJs.slice(clothJs.indexOf("function renderTemplates"), clothJs.indexOf("function renderDesigns"));
   assert.match(render, /preserveListScroll\(sheetListScroller\(grid\)/);
   assert.doesNotMatch(render, /scrollIntoView/);
+  assert.match(render, /template\.custom && boardEditOn/);
+});
+
+test("clothes boards hide delete until edit mode, and AI can send the kind UV map", () => {
+  assert.match(clothHtml, /id="btnBoardEdit"/);
+  assert.match(clothJs, /function setBoardEditOn/);
+  assert.match(clothCss, /\.cloth-board-edit/);
+  assert.match(clothHtml, /id="clothAiUv"/);
+  assert.match(clothHtml, /checked/);
+  assert.match(clothJs, /uvMapPngForKind\(state\.kindId\)/);
+  assert.match(clothJs, /useUvMap/);
+  assert.match(clothJs, /templates\?\.\[0\]/);
 });
 
 test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", () => {
@@ -143,17 +155,23 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothCss, /\.beauty-families/);
   assert.match(clothCss, /\.beauty-family\.on/);
   assert.match(clothHtml, /id="btnUvGuide"/);
+  assert.match(clothHtml, /id="btnBeautyDock"/);
   assert.match(clothHtml, /id="paintGuide"/);
   assert.match(clothHtml, />底图</);
+  assert.match(clothHtml, />修图</);
+  assert.match(clothCss, /\.canvas-hud-actions/);
+  assert.match(clothCss, /\.canvas-hud-btn \{[\s\S]*?height:\s*36px/);
   assert.match(clothJs, /function extractUvOutline/);
+  assert.match(clothJs, /255,\s*20,\s*168/);
   assert.match(clothJs, /function setUvGuideOn/);
   assert.match(clothJs, /function refreshUvGuide/);
+  assert.match(clothJs, /function uvMapPngForKind/);
   assert.match(clothJs, /if \(uvGuideOn\) \{\s*const guide = guideCanvas\(\);/);
   assert.match(clothJs, /id: "heal"/);
   assert.match(clothJs, /id: "cutout"/);
   assert.match(clothJs, /setTool\("sculpt"\)/);
-  assert.match(clothHtml, /cloth\.js\?v=41/);
-  assert.match(clothHtml, /cloth\.css\?v=39/);
+  assert.match(clothHtml, /cloth\.js\?v=43/);
+  assert.match(clothHtml, /cloth\.css\?v=40/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {
@@ -226,6 +244,7 @@ test("clothes desk AI design fills prompt templates without sending them", () =>
     assert.match(clothJs, /function stampMask/);
     assert.match(clothHtml, /id="paintMask"/);
     assert.match(clothHtml, /id="clothAiPatch"/);
+    assert.match(clothHtml, /id="clothAiUv"/);
     assert.match(clothHtml, /id="btnClearMask"/);
     assert.match(clothCss, /\.cloth-ai-patch/);
   assert.match(clothJs, /function openAiDialog/);

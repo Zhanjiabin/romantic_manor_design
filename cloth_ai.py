@@ -128,7 +128,7 @@ def canvas_size(kind: str, width: int | None = None, height: int | None = None) 
     return default_w, default_h
 
 
-def layout_contract(kind: str, width: int, height: int, has_ref: bool, has_mask: bool = False) -> str:
+def layout_contract(kind: str, width: int, height: int, has_ref: bool, has_mask: bool = False, has_uv_map: bool = False) -> str:
     size = f"{width}×{height}"
     lines = [
         f"硬性规则：输出必须是一张 {size} 的游戏 UV 贴图，铺满画布，不要黑边、白边、字母水印。",
@@ -137,6 +137,9 @@ def layout_contract(kind: str, width: int, height: int, has_ref: bool, has_mask:
     ]
     if kind == "hair":
         lines.append("头巾必须是 512×256 横图：左头发/布料，右饰品展开。")
+    if has_uv_map:
+        lines.append("必须按附图里当前种类的默认 UV 轮廓地图来画：亮线圈出的岛才是可贴图范围，图案、花色、阴影和高光都只能落在岛内，岛外保持空白或纯底色。")
+        lines.append("不要移动、旋转、缩放、合并或重排这些岛，也不要把地图上的描边颜色画进成品。")
     if has_mask:
         lines.append("这是局部重绘：只改蒙版标明的区域。未圈选的 UV 岛必须与参考图像素一致，不要重排岛，不要重画袖口、裙褶或接缝。")
     elif has_ref:
@@ -339,6 +342,15 @@ def reference_jpeg(raw: bytes, max_edge: int = 1024) -> bytes:
     buf = io.BytesIO()
     image.save(buf, format="JPEG", quality=88)
     return buf.getvalue()
+
+
+def _chat_image(raw: bytes) -> dict:
+    return {
+        "type": "image_url",
+        "image_url": {
+            "url": "data:image/jpeg;base64," + base64.b64encode(reference_jpeg(raw)).decode("ascii"),
+        },
+    }
 
 
 def _private_host(host: str) -> bool:
@@ -620,6 +632,8 @@ def generate_image(
     height: int | None = None,
     reference_png: str | None = None,
     mask_png: str | None = None,
+    uv_map_png: str | None = None,
+    use_uv_map: bool | None = None,
     base_url: str | None = None,
 ) -> str:
     key = str(api_key or "").strip()
@@ -634,12 +648,14 @@ def generate_image(
     w, h = canvas_size(kind, width, height)
     ref = decode_data_url(reference_png)
     mask_bytes = decode_data_url(mask_png)
+    uv_map = decode_data_url(uv_map_png)
     coverage = mask_coverage(mask_bytes, w, h) if mask_bytes else None
     has_mask = coverage is not None
     if has_mask and not ref:
         raise ClothAiError("局部改图需要当前画布作参考")
     has_ref = bool(ref)
-    full_prompt = layout_contract(kind, w, h, has_ref, has_mask) + "\n\n" + user_prompt
+    has_uv_map = bool(uv_map) or bool(use_uv_map)
+    full_prompt = layout_contract(kind, w, h, has_ref, has_mask, has_uv_map) + "\n\n" + user_prompt
     base = normalize_base_url(base_url)
     route = image_route(model_id, has_ref)
     errors: list[str] = []
@@ -649,31 +665,8 @@ def generate_image(
             raw_bytes = composite_locked(ref, raw_bytes, mask_bytes, w, h)
         return bytes_to_png_data_url(raw_bytes, w, h)
 
-    if route == "generations" and not has_mask:
-        for size_w, size_h in fallback_sizes(w, h):
-            size_val, aspect = images_api_size_fields(model_id, size_w, size_h)
-            body = {
-                "model": model_id,
-                "prompt": full_prompt,
-                "n": 1,
-                "size": size_val,
-                "response_format": "b64_json",
-            }
-            if aspect:
-                body["aspect_ratio"] = aspect
-            status, parsed, raw = _post_json(base, "/images/generations", key, body)
-            if status < 400 and parsed is not None:
-                try:
-                    return finish(_image_from_payload(parsed))
-                except ClothAiError as exc:
-                    errors.append(str(exc))
-                    continue
-            errors.append(_json_error(raw, f"images/generations HTTP {status}"))
-            if "size" not in errors[-1].lower() and "resolution" not in errors[-1].lower():
-                break
-
-    if route == "edits" and ref:
-        jpeg = reference_jpeg(ref)
+    def openai_edits(source: bytes) -> str | None:
+        jpeg = reference_jpeg(source)
         files = [("image", "uv.jpg", "image/jpeg", jpeg)]
         if has_mask and coverage is not None:
             files.append(("mask", "mask.png", "image/png", openai_inpaint_mask(coverage)))
@@ -711,22 +704,63 @@ def generate_image(
             errors.append(_json_error(raw, f"images/edits HTTP {status}"))
             if "size" not in errors[-1].lower():
                 break
+        return None
 
-    if route == "chat" or (not is_openai_images_model(model_id) and errors) or has_mask:
-        content: Any
+    if route == "generations" and not has_mask and not has_uv_map:
+        for size_w, size_h in fallback_sizes(w, h):
+            size_val, aspect = images_api_size_fields(model_id, size_w, size_h)
+            body = {
+                "model": model_id,
+                "prompt": full_prompt,
+                "n": 1,
+                "size": size_val,
+                "response_format": "b64_json",
+            }
+            if aspect:
+                body["aspect_ratio"] = aspect
+            status, parsed, raw = _post_json(base, "/images/generations", key, body)
+            if status < 400 and parsed is not None:
+                try:
+                    return finish(_image_from_payload(parsed))
+                except ClothAiError as exc:
+                    errors.append(str(exc))
+                    continue
+            errors.append(_json_error(raw, f"images/generations HTTP {status}"))
+            if "size" not in errors[-1].lower() and "resolution" not in errors[-1].lower():
+                break
+
+    if route == "edits" and ref:
+        done = openai_edits(ref)
+        if done:
+            return done
+    elif is_openai_images_model(model_id) and uv_map and not has_ref and not has_mask:
+        done = openai_edits(uv_map)
+        if done:
+            return done
+
+    if route == "chat" or (not is_openai_images_model(model_id) and errors) or has_mask or (has_uv_map and errors):
+        parts: list[Any] = [{"type": "text", "text": CHAT_IMAGE_INTENT}]
+        attached = False
+        if uv_map:
+            parts.append(_chat_image(uv_map))
+            parts.append({
+                "type": "text",
+                "text": "这张是当前种类的默认 UV 轮廓地图：亮线圈出的岛才是可贴图范围，图案必须严格画在岛内，不要把描边颜色画进成品。",
+            })
+            attached = True
         if has_ref and ref:
-            data_url = "data:image/jpeg;base64," + base64.b64encode(reference_jpeg(ref)).decode("ascii")
-            content = [
-                {"type": "text", "text": CHAT_IMAGE_INTENT},
-                {"type": "image_url", "image_url": {"url": data_url}},
-            ]
+            parts.append(_chat_image(ref))
+            parts.append({
+                "type": "text",
+                "text": "这张是当前画布参考图。" if has_mask else "这张是参考图，请沿用它的岛位与接缝。",
+            })
+            attached = True
             if has_mask and coverage is not None:
                 mask_url = "data:image/jpeg;base64," + base64.b64encode(mask_preview_jpeg(coverage)).decode("ascii")
-                content.append({"type": "image_url", "image_url": {"url": mask_url}})
-                content.append({"type": "text", "text": "第二张图是蒙版：白=只改这里，黑=必须保持参考图像素。"})
-            content.append({"type": "text", "text": full_prompt})
-        else:
-            content = f"{CHAT_IMAGE_INTENT}\n{full_prompt}"
+                parts.append({"type": "image_url", "image_url": {"url": mask_url}})
+                parts.append({"type": "text", "text": "这张是蒙版：白=只改这里，黑=必须保持参考图像素。"})
+        parts.append({"type": "text", "text": full_prompt})
+        content: Any = parts if attached else f"{CHAT_IMAGE_INTENT}\n{full_prompt}"
         body = {"model": model_id, "messages": [{"role": "user", "content": content}], "stream": False}
         status, parsed, raw = _post_json(base, "/chat/completions", key, body)
         if status < 400 and parsed is not None:

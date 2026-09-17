@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=12" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=39" />
+  <link rel="stylesheet" href="/web/cloth.css?v=40" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -62,7 +62,9 @@
           <div class="rail-head">种类</div>
           <div class="kind-grid" id="kindGrid" role="tablist" aria-label="衣服种类"></div>
           <p class="kind-meta" id="kindMeta">256×256</p>
-          <div class="rail-head">底板 <span class="project-count" id="templateCount">0</span></div>
+          <div class="rail-head cloth-board-head">底板 <span class="project-count" id="templateCount">0</span>
+            <button type="button" class="btn btn-compact cloth-board-edit" id="btnBoardEdit" aria-pressed="false" title="进入编辑后才显示删除">编辑</button>
+          </div>
           <div class="template-grid" id="templateGrid"></div>
           <button type="button" class="btn btn-compact btn-block" id="btnSaveBoard">存为底板</button>
         </div>
@@ -88,12 +90,11 @@
           </div>
 
           <div class="canvas-hud">
-            <button type="button" class="canvas-hud-btn" id="btnUvGuide" aria-pressed="false" title="在当前作品上显示默认 UV 轮廓，导出时一并带上">底图</button>
-          <aside class="beauty-dock sel-dock" id="clothSelDock">
+            <aside class="beauty-dock sel-dock is-collapsed" id="clothSelDock">
             <div class="sel-dock-body" id="clothSelDockBody">
               <div class="beauty-dock-head">
                 <div class="beauty-families" data-beauty-families></div>
-                <button type="button" class="beauty-dock-fold" data-sel-dock-toggle aria-expanded="true" aria-controls="clothSelDockBody" title="收起修图">×</button>
+                <button type="button" class="beauty-dock-fold" data-sel-dock-toggle aria-expanded="false" aria-controls="clothSelDockBody" title="收起修图">×</button>
               </div>
               <p class="beauty-hint" data-beauty-hint>点一项开始，在画布上改，不必反复出图。</p>
               <div class="beauty-sliders" data-beauty-panel="face" hidden>
@@ -114,8 +115,11 @@
                 <button type="button" class="btn btn-compact btn-block" data-cutout="auto">一键去底</button>
               </div>
             </div>
-            <button type="button" class="sel-dock-open" data-sel-dock-toggle aria-expanded="false" aria-controls="clothSelDockBody" title="展开修图">修图</button>
-          </aside>
+            </aside>
+            <div class="canvas-hud-actions">
+              <button type="button" class="canvas-hud-btn" id="btnUvGuide" aria-pressed="false" title="在当前作品上显示默认 UV 轮廓，导出时一并带上">底图</button>
+              <button type="button" class="canvas-hud-btn" id="btnBeautyDock" data-sel-dock-toggle aria-pressed="false" aria-expanded="false" aria-controls="clothSelDockBody" title="展开修图">修图</button>
+            </div>
           </div>
         </div>
         <p class="paint-hint" id="paintHint">一指绘制，双指拖动缩放。修图含面部重塑、瘦脸瘦身、身材塑形、消除笔和抠图。</p>
@@ -273,7 +277,11 @@
               <span>提示词</span>
               <textarea class="input cloth-ai-prompt" id="clothAiPrompt" rows="14" maxlength="4000"></textarea>
             </label>
-            <p class="cloth-ai-note">选模板只会填进编辑框。局部改请先用「圈选」涂要改的地方。</p>
+            <p class="cloth-ai-note">选模板只会填进编辑框。勾选底图会附上当前种类的默认 UV 轮廓地图和范围提示词。</p>
+            <label class="cloth-ai-patch">
+              <input type="checkbox" id="clothAiUv" checked />
+              <span>底图（按当前种类 UV 范围生成）</span>
+            </label>
             <label class="cloth-ai-patch">
               <input type="checkbox" id="clothAiPatch" />
               <span>只改圈选区域（圈外锁住）</span>
@@ -305,7 +313,7 @@
             </label>
             <details class="cloth-ai-rules">
               <summary>生成时自动附上的画布规则</summary>
-              <p id="clothAiContract">输出必须是游戏 UV 贴图，按当前种类尺寸铺满，不要人物试穿。</p>
+              <p id="clothAiContract">输出必须是游戏 UV 贴图，按当前种类尺寸铺满，并落在该种类默认 UV 轮廓地图的岛内，不要人物试穿。</p>
             </details>
             <p class="kind-meta" data-ai-status></p>
           </aside>
@@ -356,6 +364,6 @@
   <script src="/web/desk-account.js?v=7"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/cloth-preview.js?v=13"></script>
-  <script src="/web/cloth.js?v=41"></script>
+  <script src="/web/cloth.js?v=43"></script>
 </body>
 </html>

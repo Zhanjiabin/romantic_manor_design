@@ -67,6 +67,15 @@ def test_layout_contract_mentions_native_size():
     assert "参考" in text
 
 
+def test_layout_contract_uv_map_keeps_islands():
+    text = cloth_ai.layout_contract("female-short", 256, 256, False, False, True)
+    assert "轮廓地图" in text
+    assert "岛" in text
+    hair = cloth_ai.layout_contract("hair", 512, 256, False, False, True)
+    assert "512×256" in hair
+    assert "轮廓地图" in hair
+
+
 def test_generate_uses_images_generations(monkeypatch):
     png = _png_bytes()
     calls = []
@@ -189,3 +198,59 @@ def test_generate_with_mask_sends_mask_and_locks_outside(monkeypatch):
     assert corner[0] > 160 and corner[2] < 80
     assert center[2] > 140 and center[0] < 90
     assert "局部重绘" in cloth_ai.layout_contract("female-short", 256, 256, True, True)
+
+
+def test_generate_uv_map_only_uses_edits_for_gpt_image(monkeypatch):
+    png = _png_bytes((256, 256))
+    uv_map = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    calls = []
+
+    def fake_http(method, url, *, headers=None, data=None, timeout=60):
+        calls.append((url, data or b""))
+        payload = {"data": [{"b64_json": base64.b64encode(png).decode("ascii")}]}
+        return 200, json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(cloth_ai, "http_request", fake_http)
+    result = cloth_ai.generate_image(
+        api_key="sk-test-key",
+        model="gpt-image-2",
+        prompt="按地图画碎花",
+        kind="female-short",
+        uv_map_png=uv_map,
+        use_uv_map=True,
+    )
+    assert result.startswith("data:image/png;base64,")
+    assert any(url.endswith("/images/edits") for url, _ in calls)
+    assert all("/images/generations" not in url for url, _ in calls)
+    prompt_blob = b"".join(data for _, data in calls)
+    assert "轮廓地图" in prompt_blob.decode("utf-8", errors="replace")
+
+
+def test_generate_sends_uv_map_on_chat(monkeypatch):
+    png = _png_bytes((256, 256))
+    uv_map = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    calls = []
+
+    def fake_http(method, url, *, headers=None, data=None, timeout=60):
+        calls.append((url, data or b""))
+        payload = {"data": [{"b64_json": base64.b64encode(png).decode("ascii")}]}
+        return 200, json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(cloth_ai, "http_request", fake_http)
+    result = cloth_ai.generate_image(
+        api_key="sk-test-key",
+        model="gemini-2.5-flash-image",
+        prompt="短款碎花",
+        kind="female-short",
+        uv_map_png=uv_map,
+        use_uv_map=True,
+    )
+    assert result.startswith("data:image/png;base64,")
+    assert any("/chat/completions" in url for url, _ in calls)
+    dumped = json.loads(calls[0][1].decode("utf-8"))
+    content = dumped["messages"][0]["content"]
+    blob = json.dumps(content, ensure_ascii=False)
+    assert any(part.get("type") == "image_url" for part in content)
+    assert "轮廓地图" in blob
+    assert "岛" in blob
+    assert "短款碎花" in blob

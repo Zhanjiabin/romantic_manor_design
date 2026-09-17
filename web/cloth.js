@@ -111,6 +111,7 @@
     uvGuideOn = false;
   }
   const uvGuideCache = new Map();
+  let boardEditOn = false;
   const beauty = {
     family: "",
     snap: null,
@@ -549,10 +550,11 @@
     return [medianChannel(rs), medianChannel(gs), medianChannel(bs)];
   }
 
-  function extractUvOutline(imageData) {
+  function extractUvOutline(imageData, options = {}) {
     const width = imageData.width;
     const height = imageData.height;
     const src = imageData.data;
+    const fillIslands = Boolean(options.fillIslands);
     const [br, bg, bb] = sampleCornerBg(src, width, height);
     const content = new Uint8Array(width * height);
     let filled = 0;
@@ -585,41 +587,52 @@
     content.set(cleaned);
     const out = new ImageData(width, height);
     const dst = out.data;
-    const ink = [32, 28, 26];
+    const MAGENTA = [255, 20, 168];
+    const CYAN = [0, 245, 214];
+    const WHITE = [255, 255, 255];
     const lumaAt = (i) => src[i] * 0.299 + src[i + 1] * 0.587 + src[i + 2] * 0.114;
-    const stamp = (p, alpha) => {
+    const stamp = (p, rgb, alpha) => {
       const i = p * 4;
-      if (dst[i + 3] >= alpha) return;
-      dst[i] = ink[0];
-      dst[i + 1] = ink[1];
-      dst[i + 2] = ink[2];
+      if (alpha <= dst[i + 3]) return;
+      dst[i] = rgb[0];
+      dst[i + 1] = rgb[1];
+      dst[i + 2] = rgb[2];
       dst[i + 3] = alpha;
     };
-    const useIslands = filled > width * height * 0.04 && filled < width * height * 0.92;
+    const dilate = (minAlpha, rgb, alpha) => {
+      const copy = new Uint8ClampedArray(dst);
+      for (let y = 1; y < height - 1; y += 1) {
+        for (let x = 1; x < width - 1; x += 1) {
+          const p = y * width + x;
+          if (copy[p * 4 + 3] >= minAlpha) continue;
+          let near = 0;
+          [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([dx, dy]) => {
+            const n = copy[((y + dy) * width + (x + dx)) * 4 + 3];
+            if (n > near) near = n;
+          });
+          if (near >= minAlpha) stamp(p, rgb, alpha);
+        }
+      }
+    };
+    const useIslands = filled > width * height * 0.02 && filled < width * height * 0.985;
     if (useIslands) {
+      if (fillIslands) {
+        for (let p = 0; p < content.length; p += 1) {
+          if (content[p]) stamp(p, MAGENTA, 78);
+        }
+      }
       for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
           const p = y * width + x;
           if (!content[p]) continue;
           const edge = x === 0 || y === 0 || x === width - 1 || y === height - 1
             || !content[p - 1] || !content[p + 1] || !content[p - width] || !content[p + width];
-          if (edge) stamp(p, 230);
+          if (edge) stamp(p, MAGENTA, 255);
         }
       }
-      const copy = new Uint8ClampedArray(dst);
-      for (let y = 1; y < height - 1; y += 1) {
-        for (let x = 1; x < width - 1; x += 1) {
-          const p = y * width + x;
-          const i = p * 4;
-          if (copy[i + 3] > 40) continue;
-          let alpha = 0;
-          [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([dx, dy]) => {
-            const j = ((y + dy) * width + (x + dx)) * 4;
-            if (copy[j + 3] > alpha) alpha = copy[j + 3];
-          });
-          if (alpha > 80) stamp(p, Math.min(180, Math.round(alpha * 0.72)));
-        }
-      }
+      dilate(200, WHITE, 220);
+      dilate(180, CYAN, 235);
+      dilate(200, MAGENTA, 255);
     } else {
       for (let y = 1; y < height - 1; y += 1) {
         for (let x = 1; x < width - 1; x += 1) {
@@ -629,9 +642,11 @@
             - lumaAt(i - 4 + width * 4) + lumaAt(i + 4 + width * 4);
           const gy = -lumaAt(i - 4 - width * 4) - 2 * lumaAt(i - width * 4) - lumaAt(i + 4 - width * 4)
             + lumaAt(i - 4 + width * 4) + 2 * lumaAt(i + width * 4) + lumaAt(i + 4 + width * 4);
-          if (Math.hypot(gx, gy) >= 96) stamp(y * width + x, 200);
+          if (Math.hypot(gx, gy) >= 96) stamp(y * width + x, MAGENTA, 255);
         }
       }
+      dilate(200, WHITE, 220);
+      dilate(180, CYAN, 235);
     }
     return out;
   }
@@ -643,23 +658,39 @@
     btn.setAttribute("aria-pressed", String(uvGuideOn));
   }
 
-  async function uvOutlineForKind(kindId) {
+  async function uvOutlineForKind(kindId, options = {}) {
     const kind = kindById(kindId);
     const stock = kind?.templates?.[0];
     const url = stock?.url;
     if (!url) return null;
-    const key = `${kind.id}:${url}:${canvas.width}x${canvas.height}`;
+    const fillIslands = Boolean(options.fillIslands);
+    const width = Number(kind.width) || canvas.width;
+    const height = Number(kind.height) || canvas.height;
+    const key = `${kind.id}:${url}:${width}x${height}:${fillIslands ? "fill" : "line"}`;
     if (uvGuideCache.has(key)) return uvGuideCache.get(key);
     const image = await loadImage(url);
     const off = document.createElement("canvas");
-    off.width = canvas.width;
-    off.height = canvas.height;
+    off.width = width;
+    off.height = height;
     const octx = off.getContext("2d", { willReadFrequently: true });
     octx.imageSmoothingEnabled = false;
     octx.drawImage(image, 0, 0, off.width, off.height);
-    octx.putImageData(extractUvOutline(octx.getImageData(0, 0, off.width, off.height)), 0, 0);
+    octx.putImageData(extractUvOutline(octx.getImageData(0, 0, off.width, off.height), { fillIslands }), 0, 0);
     uvGuideCache.set(key, off);
     return off;
+  }
+
+  async function uvMapPngForKind(kindId) {
+    const outline = await uvOutlineForKind(kindId, { fillIslands: true });
+    if (!outline) return null;
+    const off = document.createElement("canvas");
+    off.width = outline.width;
+    off.height = outline.height;
+    const octx = off.getContext("2d");
+    octx.fillStyle = PAPER;
+    octx.fillRect(0, 0, off.width, off.height);
+    octx.drawImage(outline, 0, 0);
+    return off.toDataURL("image/png");
   }
 
   async function refreshUvGuide() {
@@ -760,9 +791,27 @@
     const dock = document.getElementById("clothSelDock");
     if (!dock) return;
     dock.classList.toggle("is-collapsed", selDockCollapsed);
-    dock.querySelectorAll("[data-sel-dock-toggle]").forEach((button) => {
+    document.querySelectorAll("[data-sel-dock-toggle]").forEach((button) => {
       button.setAttribute("aria-expanded", String(!selDockCollapsed));
     });
+    const open = document.getElementById("btnBeautyDock");
+    if (open) {
+      open.classList.toggle("on", !selDockCollapsed);
+      open.setAttribute("aria-pressed", String(!selDockCollapsed));
+      open.title = selDockCollapsed ? "展开修图" : "收起修图";
+    }
+  }
+
+  function setBoardEditOn(on) {
+    boardEditOn = Boolean(on);
+    const btn = document.getElementById("btnBoardEdit");
+    if (btn) {
+      btn.classList.toggle("on", boardEditOn);
+      btn.setAttribute("aria-pressed", String(boardEditOn));
+      btn.textContent = boardEditOn ? "完成" : "编辑";
+      btn.title = boardEditOn ? "退出编辑，隐藏删除" : "进入编辑后才显示删除";
+    }
+    renderTemplates();
   }
 
   function syncMaskChrome() {
@@ -1498,7 +1547,7 @@
       label.className = "template-card-name";
       label.textContent = template.name;
       cap.append(label);
-      if (template.custom) {
+      if (template.custom && boardEditOn) {
         const del = document.createElement("button");
         del.type = "button";
         del.className = "template-del";
@@ -2080,6 +2129,10 @@
     });
   }
 
+  function aiUvMapOn() {
+    return document.getElementById("clothAiUv")?.checked !== false;
+  }
+
   function aiContractText() {
     const { width, height } = canvasSize();
     const kind = currentKind();
@@ -2088,6 +2141,9 @@
       "这是换装网格贴图，不要画完整人物试穿。",
     ];
     if (kind?.id === "hair") parts.push("头巾必须是 512×256 横图：左头发或布料，右饰品展开。");
+    if (aiUvMapOn()) {
+      parts.push("必须按当前种类默认 UV 轮廓地图的岛范围画，岛外不要画图案，不要重排岛，也不要把描边颜色画进成品。");
+    }
     if (document.getElementById("clothAiPatch")?.checked) {
       parts.push("局部重绘时只改圈选，圈外像素由本桌锁在当前画布上。");
     } else {
@@ -2421,6 +2477,19 @@
       setAiStatus("先用笔触里的「圈选」涂要改的地方，再勾「只改圈选区域」。");
       return;
     }
+    const useUvMap = aiUvMapOn();
+    let uvMapPng = null;
+    if (useUvMap) {
+      try {
+        uvMapPng = await uvMapPngForKind(state.kindId);
+      } catch (error) {
+        console.warn(error);
+      }
+      if (!uvMapPng) {
+        setAiStatus("当前种类没有默认 UV，没法带上底图轮廓。");
+        return;
+      }
+    }
     if (state.dirty && !maskPng) {
       const ok = typeof appConfirm === "function"
         ? await appConfirm("生成结果会画到当前画布上。未保存的笔触会被盖住。", { title: "生成到画布", okLabel: "生成" })
@@ -2449,6 +2518,8 @@
           height,
           referencePng,
           maskPng,
+          useUvMap,
+          uvMapPng,
           baseUrl: "https://ai.qiaojiangapp.cn/v1",
         }),
       });
@@ -2911,6 +2982,7 @@
       });
     });
     document.getElementById("btnSaveBoard")?.addEventListener("click", () => saveBoard());
+    document.getElementById("btnBoardEdit")?.addEventListener("click", () => setBoardEditOn(!boardEditOn));
     document.getElementById("btnClothAi")?.addEventListener("click", () => openAiDialog());
     document.getElementById("btnClothAiHud")?.addEventListener("click", () => openAiDialog());
     document.getElementById("btnClothAiRail")?.addEventListener("click", () => openAiDialog());
@@ -2951,6 +3023,10 @@
       const contract = document.getElementById("clothAiContract");
       if (contract) contract.textContent = aiContractText();
       syncMaskChrome();
+    });
+    document.getElementById("clothAiUv")?.addEventListener("change", () => {
+      const contract = document.getElementById("clothAiContract");
+      if (contract) contract.textContent = aiContractText();
     });
     document.getElementById("clothAiPromptPick")?.addEventListener("change", (event) => {
       const id = event.target.value;

@@ -41,8 +41,8 @@
         {
           "id": "female-short:短款白-1",
           "name": "默认 UV",
-          "file": "短款白-1.jpg",
-          "url": "/data/cloth/templates/female-short/短款白-1.jpg?v=2",
+          "file": "uv.jpg",
+          "url": "/data/cloth/templates/female-short/uv.jpg?v=3",
           "width": 256,
           "height": 256,
           "index": 0
@@ -64,8 +64,8 @@
         {
           "id": "female-long:女长白-1",
           "name": "默认 UV",
-          "file": "女长白-1.jpg",
-          "url": "/data/cloth/templates/female-long/女长白-1.jpg?v=2",
+          "file": "uv.jpg",
+          "url": "/data/cloth/templates/female-long/uv.jpg?v=3",
           "width": 256,
           "height": 256,
           "index": 0
@@ -87,8 +87,8 @@
         {
           "id": "female-skirt:长裙白-1",
           "name": "默认 UV",
-          "file": "长裙白-1.jpg",
-          "url": "/data/cloth/templates/female-skirt/长裙白-1.jpg?v=2",
+          "file": "uv.jpg",
+          "url": "/data/cloth/templates/female-skirt/uv.jpg?v=3",
           "width": 256,
           "height": 256,
           "index": 0
@@ -110,8 +110,8 @@
         {
           "id": "male-short:男短白-1",
           "name": "默认 UV",
-          "file": "男短白-1.jpg",
-          "url": "/data/cloth/templates/male-short/男短白-1.jpg?v=2",
+          "file": "uv.jpg",
+          "url": "/data/cloth/templates/male-short/uv.jpg?v=3",
           "width": 256,
           "height": 256,
           "index": 0
@@ -133,8 +133,8 @@
         {
           "id": "male-long:男长白-1",
           "name": "默认 UV",
-          "file": "男长白-1.jpg",
-          "url": "/data/cloth/templates/male-long/男长白-1.jpg?v=2",
+          "file": "uv.jpg",
+          "url": "/data/cloth/templates/male-long/uv.jpg?v=3",
           "width": 256,
           "height": 256,
           "index": 0
@@ -169,8 +169,8 @@
         {
           "id": "expression:脸形-1",
           "name": "默认 UV",
-          "file": "脸形-1.jpg",
-          "url": "/data/cloth/templates/expression/脸形-1.jpg?v=2",
+          "file": "uv.jpg",
+          "url": "/data/cloth/templates/expression/uv.jpg?v=3",
           "width": 256,
           "height": 256,
           "index": 0
@@ -192,8 +192,8 @@
         {
           "id": "face:面饰",
           "name": "默认 UV",
-          "file": "面饰.jpg",
-          "url": "/data/cloth/templates/face/面饰.jpg",
+          "file": "uv.jpg",
+          "url": "/data/cloth/templates/face/uv.jpg?v=3",
           "width": 256,
           "height": 256,
           "index": 0
@@ -215,8 +215,8 @@
         {
           "id": "hair:发型-1",
           "name": "默认 UV",
-          "file": "发型-1.jpg",
-          "url": "/data/cloth/templates/hair/发型-1.jpg",
+          "file": "uv.jpg",
+          "url": "/data/cloth/templates/hair/uv.jpg?v=3",
           "width": 497,
           "height": 258,
           "index": 0

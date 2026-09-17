@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=12" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=41" />
+  <link rel="stylesheet" href="/web/cloth.css?v=42" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -158,7 +158,9 @@
           </div>
           </div>
           <div class="cloth-works-block" id="clothDesignSection">
-          <div class="rail-head">作品 <span class="project-count" id="designCount">0</span></div>
+          <div class="rail-head cloth-board-head">作品 <span class="project-count" id="designCount">0</span>
+            <button type="button" class="btn btn-compact cloth-board-edit" id="btnDesignEdit" aria-pressed="false" title="进入编辑后可删除或重命名">编辑</button>
+          </div>
           <div class="design-filter design-toolbar" id="designFilterBar">
             <input class="input design-search" id="designSearch" type="search" placeholder="搜索作品" autocomplete="off" aria-label="搜索作品" />
             <div class="design-toolbar-row">
@@ -365,6 +367,6 @@
   <script src="/web/desk-account.js?v=7"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/cloth-preview.js?v=13"></script>
-  <script src="/web/cloth.js?v=44"></script>
+  <script src="/web/cloth.js?v=45"></script>
 </body>
 </html>

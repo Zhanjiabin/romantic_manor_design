@@ -36,6 +36,8 @@ test("clothes desk keeps native paint sizes and one stock board per kind", () =>
     assert.equal(kind.templateCount, 1, kind.id);
     assert.equal(kind.templates.length, 1, kind.id);
     assert.equal(kind.templates[0].name, "默认 UV");
+    assert.equal(kind.templates[0].file, "uv.jpg");
+    assert.match(kind.templates[0].url, /\/uv\.jpg\?v=3$/);
     assert.ok(fs.existsSync(path.join(root, "data/cloth/templates", kind.id, kind.templates[0].file)));
   }
   assert.equal(catalog.templateCount, catalog.kinds.length);
@@ -179,8 +181,8 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /id: "heal"/);
   assert.match(clothJs, /id: "cutout"/);
   assert.match(clothJs, /setTool\("sculpt"\)/);
-  assert.match(clothHtml, /cloth\.js\?v=44/);
-  assert.match(clothHtml, /cloth\.css\?v=41/);
+  assert.match(clothHtml, /cloth\.js\?v=45/);
+  assert.match(clothHtml, /cloth\.css\?v=42/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {
@@ -214,6 +216,16 @@ test("clothes desk work list can filter, search, and sort", () => {
   assert.match(clothCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.cloth-stage \{[\s\S]*?grid-template-rows:\s*minmax\(0,\s*1fr\)/);
   assert.match(clothHtml, /data-sheet-mode="draw"/);
   assert.match(clothHtml, /cloth-works-block/);
+  assert.match(clothHtml, /id="btnDesignEdit"/);
+  assert.match(clothJs, /function setDesignEditOn/);
+  assert.match(clothJs, /function deleteDesign/);
+  assert.match(clothJs, /function renameDesign/);
+  assert.match(clothJs, /saveDesignBusy/);
+  assert.match(clothJs, /removeIds: \[item\.id\]/);
+  assert.match(clothJs, /designs: \{ v: 1, savedAt: now, items: \[item\] \}/);
+  assert.doesNotMatch(clothJs, /await fetchClothSaves\(\);\s*const merged = mergeDesigns/);
+  assert.match(clothCss, /\.design-card-rename/);
+  assert.match(clothCss, /\.design-card-del/);
 });
 
 test("clothes desk commits one history step per stroke and exposes redo on the phone dock", () => {

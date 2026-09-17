@@ -274,6 +274,12 @@ def keep_one_template(kind: dict, templates: list[dict]) -> list[dict]:
         kept = template_entry(kind, keep, keep, 0)
     kept["index"] = 0
     kept["name"] = "默认 UV"
+    dest_uv = dest_dir / "uv.jpg"
+    if keep.is_file() and keep.resolve() != dest_uv.resolve():
+        copy_file(keep, dest_uv)
+        keep.unlink()
+    kept["file"] = "uv.jpg"
+    kept["url"] = f"/data/cloth/templates/{kind['id']}/uv.jpg?v=3"
     return [kept]
 
 

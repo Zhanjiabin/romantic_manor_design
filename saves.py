@@ -892,15 +892,26 @@ def _cloth_item_id(row) -> str:
     return str(row.get("id") or "").strip()
 
 
+def _cloth_remove_ids(incoming: dict) -> set[str]:
+    raw = incoming.get("removeIds") if isinstance(incoming, dict) else None
+    if not isinstance(raw, list):
+        return set()
+    return {str(item).strip() for item in raw if str(item).strip()}
+
+
 def _merge_cloth_items(existing_items, incoming_items) -> list:
     by_id: dict[str, dict] = {}
     for row in list(existing_items or []) + list(incoming_items or []):
         ident = _cloth_item_id(row)
-        if not ident:
+        if not ident or not isinstance(row, dict):
             continue
         prev = by_id.get(ident)
-        if not prev or int(row.get("savedAt") or 0) >= int(prev.get("savedAt") or 0):
-            by_id[ident] = row
+        if prev and int(row.get("savedAt") or 0) < int(prev.get("savedAt") or 0):
+            continue
+        merged = dict(row)
+        if not merged.get("png") and prev and prev.get("png"):
+            merged["png"] = prev["png"]
+        by_id[ident] = merged
     items = list(by_id.values())
     items.sort(key=lambda row: int(row.get("savedAt") or 0), reverse=True)
     return items[:CLOTH_ITEM_CAP]
@@ -908,6 +919,7 @@ def _merge_cloth_items(existing_items, incoming_items) -> list:
 
 def _write_cloth_items(path: Path, incoming: dict) -> None:
     incoming_items = incoming.get("items") if isinstance(incoming.get("items"), list) else []
+    remove_ids = _cloth_remove_ids(incoming)
     existing = _read_json(path)
     existing_items = []
     if isinstance(existing, dict) and isinstance(existing.get("items"), list):
@@ -916,10 +928,13 @@ def _write_cloth_items(path: Path, incoming: dict) -> None:
         existing_items = existing
     incoming_at = int(incoming.get("savedAt") or 0)
     existing_at = int(existing.get("savedAt") or 0) if isinstance(existing, dict) else 0
-    if not incoming_items and existing_items:
+    if not incoming_items and not remove_ids and existing_items:
         return
     merged_items = _merge_cloth_items(existing_items, incoming_items)
+    if remove_ids:
+        merged_items = [row for row in merged_items if _cloth_item_id(row) not in remove_ids]
     payload = dict(incoming)
+    payload.pop("removeIds", None)
     payload["items"] = merged_items
     payload["savedAt"] = max(incoming_at, existing_at)
     if path.name in {"cloth-designs.json", "cloth-boards.json"} and path.is_file():

@@ -78,6 +78,8 @@ def working_tree_runtime_files():
                 seen.add(rel)
                 files.append(rel)
             continue
+        if not local.is_file():
+            continue
         seen.add(path)
         files.append(path)
     return files

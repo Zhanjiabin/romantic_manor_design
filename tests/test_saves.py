@@ -140,6 +140,18 @@ def test_cloth_designs_refuse_empty_overwrite():
         still_after_null = load_cloth_bundle()
         assert still_after_null["designs"]["items"][0]["name"] == "裙"
         assert still_after_null["boards"]["items"][0]["name"] == "领结"
+        save_cloth_bundle({"designs": {"savedAt": 350, "items": [{"id": "c2", "name": "新", "png": "data:x", "savedAt": 350}]}})
+        save_cloth_bundle({"designs": {"savedAt": 400, "items": [{"id": "c2", "name": "改名", "savedAt": 400}]}})
+        renamed = load_cloth_bundle()["designs"]
+        row = next(item for item in renamed["items"] if item["id"] == "c2")
+        assert row["name"] == "改名"
+        assert row.get("png") == "data:x"
+        save_cloth_bundle({"designs": {"savedAt": 500, "items": [], "removeIds": ["c1"]}})
+        after_del = load_cloth_bundle()["designs"]
+        assert {item["id"] for item in after_del["items"]} == {"c2"}
+        save_cloth_bundle({"boards": {"savedAt": 300, "items": [], "removeIds": ["b1"]}})
+        after_board_del = load_cloth_bundle()["boards"]
+        assert {item["id"] for item in after_board_del["items"]} == {"b2"}
     finally:
         if prev is None:
             os.environ.pop("MANOR_SAVES", None)

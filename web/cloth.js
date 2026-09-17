@@ -112,6 +112,9 @@
   }
   const uvGuideCache = new Map();
   let boardEditOn = false;
+  let designEditOn = false;
+  let saveDesignBusy = false;
+  let saveBoardBusy = false;
   const beauty = {
     family: "",
     snap: null,
@@ -819,6 +822,18 @@
       btn.title = boardEditOn ? "退出编辑，隐藏删除" : "进入编辑后才显示删除";
     }
     renderTemplates();
+  }
+
+  function setDesignEditOn(on) {
+    designEditOn = Boolean(on);
+    const btn = document.getElementById("btnDesignEdit");
+    if (btn) {
+      btn.classList.toggle("on", designEditOn);
+      btn.setAttribute("aria-pressed", String(designEditOn));
+      btn.textContent = designEditOn ? "完成" : "编辑";
+      btn.title = designEditOn ? "退出编辑，隐藏删除和重命名" : "进入编辑后可删除或重命名";
+    }
+    renderDesigns();
   }
 
   function syncMaskChrome() {
@@ -1720,12 +1735,13 @@
         return;
       }
       items.forEach((item) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "design-card" + (item.id && item.id === state.designId ? " on" : "");
-        button.title = item.name || "";
+        const card = document.createElement("div");
+        card.className = "design-card" + (item.id && item.id === state.designId ? " on" : "");
+        card.setAttribute("role", "button");
+        card.tabIndex = 0;
+        card.title = item.name || "";
         const img = document.createElement("img");
-        img.alt = item.name;
+        img.alt = item.name || "";
         img.src = item.png;
         const meta = document.createElement("span");
         meta.className = "design-card-meta";
@@ -1736,9 +1752,41 @@
         kind.className = "design-card-kind";
         kind.textContent = designKindLabel(item);
         meta.append(label, kind);
-        button.append(img, meta);
-        button.addEventListener("click", () => openDesign(item));
-        list.append(button);
+        card.append(img, meta);
+        if (designEditOn) {
+          const rename = document.createElement("button");
+          rename.type = "button";
+          rename.className = "design-card-rename";
+          rename.setAttribute("aria-label", "重命名 " + (item.name || "作品"));
+          rename.textContent = "改";
+          rename.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            renameDesign(item);
+          });
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "design-card-del";
+          del.setAttribute("aria-label", "删除 " + (item.name || "作品"));
+          del.textContent = "×";
+          del.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            deleteDesign(item);
+          });
+          card.append(rename, del);
+        }
+        card.addEventListener("click", () => {
+          if (!designEditOn) openDesign(item);
+        });
+        card.addEventListener("keydown", (event) => {
+          if (designEditOn) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openDesign(item);
+          }
+        });
+        list.append(card);
       });
     });
   }
@@ -2621,80 +2669,84 @@
   }
 
   async function saveDesign() {
+    if (saveDesignBusy) return;
+    const okBtn = document.getElementById("btnClothSaveOk");
     const name = String(document.getElementById("clothSaveName")?.value || "").trim() || currentKind()?.label || "未命名衣服";
+    saveDesignBusy = true;
+    if (okBtn) okBtn.disabled = true;
+    setModalVisible("dlgClothSave", false);
+    setSaveStatus("保存中…");
     state.designName = name;
+    const now = Date.now();
     const item = {
-      id: `c${Date.now().toString(36)}`,
+      id: `c${now.toString(36)}`,
       name,
       kind: state.kindId,
       gender: state.gender,
       templateId: state.templateId,
       png: snapshotPng(),
-      savedAt: Date.now(),
+      savedAt: now,
     };
-    state.designs = [...state.designs, item].slice(-80);
-    try {
-      const remote = await fetchClothSaves();
-      const merged = mergeDesigns({ items: state.designs }, remote?.designs);
-      if ((merged.items || []).length) state.designs = merged.items.slice(-80);
-    } catch (error) {
-      console.warn(error);
-    }
+    state.designs = [item, ...state.designs.filter((row) => row.id !== item.id)].slice(0, 80);
     state.designId = item.id;
-    const bundle = designsBundle();
-    persistDesignsLocal(bundle);
+    persistDesignsLocal(designsBundle());
     renderDesigns();
-    setModalVisible("dlgClothSave", false);
     try {
-      await putClothSaves({ session: sessionSnapshot(), designs: bundle });
+      await putClothSaves({
+        session: sessionSnapshot(),
+        designs: { v: 1, savedAt: now, items: [item] },
+      });
       state.dirty = false;
       setSaveStatus("已保存 " + name);
     } catch (error) {
       console.warn(error);
       setSaveStatus("本机已保存");
+    } finally {
+      saveDesignBusy = false;
+      if (okBtn) okBtn.disabled = false;
     }
   }
 
   async function saveBoard() {
-    const fallback = currentKind()?.label || "底板";
-    const name = typeof appPrompt === "function"
-      ? await appPrompt("这块底板会出现在当前种类的列表里，以后可以点它接着画。", {
-        title: "存为底板",
-        fieldLabel: "底板名称",
-        value: state.designName || fallback,
-        placeholder: fallback,
-        okLabel: "保存",
-      })
-      : window.prompt("底板名称", state.designName || fallback);
-    if (name == null) return;
-    const item = {
-      id: `b${Date.now().toString(36)}`,
-      name: String(name).trim() || fallback,
-      kind: state.kindId,
-      gender: state.gender,
-      png: snapshotPng(),
-      savedAt: Date.now(),
-    };
-    state.boards = [...state.boards, item].slice(-80);
+    if (saveBoardBusy) return;
+    saveBoardBusy = true;
     try {
-      const remote = await fetchClothSaves();
-      const merged = mergeBoards({ items: state.boards }, remote?.boards);
-      if ((merged.items || []).length) state.boards = merged.items.slice(-80);
-    } catch (error) {
-      console.warn(error);
-    }
-    templateCtx.clearRect(0, 0, canvas.width, canvas.height);
-    templateCtx.drawImage(canvas, 0, 0);
-    state.templateId = item.id;
-    const bundle = boardsBundle();
-    persistBoardsLocal(bundle);
-    renderTemplates();
-    try {
-      await putClothSaves({ session: sessionSnapshot(), boards: bundle });
+      const fallback = currentKind()?.label || "底板";
+      const name = typeof appPrompt === "function"
+        ? await appPrompt("这块底板会出现在当前种类的列表里，以后可以点它接着画。", {
+          title: "存为底板",
+          fieldLabel: "底板名称",
+          value: state.designName || fallback,
+          placeholder: fallback,
+          okLabel: "保存",
+        })
+        : window.prompt("底板名称", state.designName || fallback);
+      if (name == null) return;
+      const now = Date.now();
+      const item = {
+        id: `b${now.toString(36)}`,
+        name: String(name).trim() || fallback,
+        kind: state.kindId,
+        gender: state.gender,
+        png: snapshotPng(),
+        savedAt: now,
+      };
+      state.boards = [item, ...state.boards.filter((row) => row.id !== item.id)].slice(0, 80);
+      templateCtx.clearRect(0, 0, canvas.width, canvas.height);
+      templateCtx.drawImage(canvas, 0, 0);
+      state.templateId = item.id;
+      persistBoardsLocal(boardsBundle());
+      renderTemplates();
+      await putClothSaves({
+        session: sessionSnapshot(),
+        boards: { v: 1, savedAt: now, items: [item] },
+      });
       setSaveStatus("已存底板 " + item.name);
     } catch (error) {
       console.warn(error);
       setSaveStatus("本机已存底板");
+    } finally {
+      saveBoardBusy = false;
     }
   }
 
@@ -2706,10 +2758,69 @@
     if (!ok) return;
     state.boards = state.boards.filter((row) => row.id !== template.id);
     if (state.templateId === template.id) state.templateId = BLANK_ID;
-    const bundle = boardsBundle();
-    persistBoardsLocal(bundle);
+    persistBoardsLocal(boardsBundle());
     renderTemplates();
-    putClothSaves({ boards: bundle }).catch((error) => console.warn(error));
+    putClothSaves({
+      boards: { v: 1, savedAt: Date.now(), items: [], removeIds: [template.id] },
+    }).catch((error) => console.warn(error));
+  }
+
+  async function deleteDesign(item) {
+    if (!item?.id) return;
+    const ok = typeof appConfirm === "function"
+      ? await appConfirm(`删除作品「${item.name || "未命名"}」？`, { title: "删除作品", okLabel: "删除", danger: true })
+      : window.confirm("删除这件作品？");
+    if (!ok) return;
+    state.designs = state.designs.filter((row) => row.id !== item.id);
+    if (state.designId === item.id) {
+      state.designId = "";
+      state.designName = "";
+    }
+    persistDesignsLocal(designsBundle());
+    renderDesigns();
+    putClothSaves({
+      designs: { v: 1, savedAt: Date.now(), items: [], removeIds: [item.id] },
+    }).catch((error) => console.warn(error));
+  }
+
+  async function renameDesign(item) {
+    if (!item?.id) return;
+    const fallback = item.name || currentKind()?.label || "未命名衣服";
+    const name = typeof appPrompt === "function"
+      ? await appPrompt("只改作品名称，画布内容不变。", {
+        title: "重命名作品",
+        fieldLabel: "作品名称",
+        value: fallback,
+        placeholder: fallback,
+        okLabel: "保存",
+      })
+      : window.prompt("作品名称", fallback);
+    if (name == null) return;
+    const next = String(name).trim() || fallback;
+    const now = Date.now();
+    item.name = next;
+    item.savedAt = now;
+    if (state.designId === item.id) {
+      state.designName = next;
+      const input = document.getElementById("clothSaveName");
+      if (input) input.value = next;
+    }
+    persistDesignsLocal(designsBundle());
+    renderDesigns();
+    putClothSaves({
+      designs: {
+        v: 1,
+        savedAt: now,
+        items: [{
+          id: item.id,
+          name: next,
+          kind: item.kind,
+          gender: item.gender,
+          templateId: item.templateId,
+          savedAt: now,
+        }],
+      },
+    }).catch((error) => console.warn(error));
   }
 
   async function openDesign(item) {
@@ -3027,6 +3138,7 @@
     });
     document.getElementById("btnSaveBoard")?.addEventListener("click", () => saveBoard());
     document.getElementById("btnBoardEdit")?.addEventListener("click", () => setBoardEditOn(!boardEditOn));
+    document.getElementById("btnDesignEdit")?.addEventListener("click", () => setDesignEditOn(!designEditOn));
     document.getElementById("btnClothAi")?.addEventListener("click", () => openAiDialog());
     document.getElementById("btnClothAiHud")?.addEventListener("click", () => openAiDialog());
     document.getElementById("btnClothAiRail")?.addEventListener("click", () => openAiDialog());

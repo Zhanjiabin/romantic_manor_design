@@ -38,12 +38,15 @@ from export_xlsx import build_materials_xlsx
 from cloth_ai import generate_image, list_image_models, public_error
 from saves import (
     clear_building_papers,
+    create_full_backup,
     delete_building_paper,
     delete_terrain_version,
+    list_full_backups,
     load_building_bundle,
     load_building_paper,
     load_building_papers,
     load_cloth_bundle,
+    load_full_backup,
     load_paper_thumb,
     load_terrain_asset,
     load_terrain_index,
@@ -701,6 +704,24 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/saves/cloth":
             body = json.dumps(load_cloth_bundle(), ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
+        if path == "/api/saves/backup":
+            body = json.dumps(list_full_backups(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
+        backup_prefix = "/api/saves/backup/"
+        if path.startswith(backup_prefix):
+            ident = path[len(backup_prefix) :]
+            if "/" in ident or "\\" in ident:
+                return self._send(404, b"missing", "text/plain")
+            packed = load_full_backup(ident)
+            if not packed:
+                return self._send(404, b"missing", "text/plain")
+            data, name = packed
+            return self._send(
+                200,
+                data,
+                "application/zip",
+                headers=[("Content-Disposition", f'attachment; filename="{name}"')],
+            )
         paper_prefix = "/api/saves/building/papers/"
         if path.startswith(paper_prefix):
             rest = path[len(paper_prefix) :]
@@ -746,6 +767,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._handle_login(raw)
         if path == "/api/logout":
             return self._send_logout()
+        if path == "/api/saves/backup":
+            body = json.dumps(create_full_backup(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
         try:
             if path == "/api/from-gbk":
                 text = None

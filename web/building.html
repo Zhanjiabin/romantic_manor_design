@@ -13,7 +13,7 @@
   <link rel="icon" href="/favicon.ico" sizes="32x32" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/web/app.css?v=84" />
-  <link rel="stylesheet" href="/web/desk-chrome.css?v=11" />
+  <link rel="stylesheet" href="/web/desk-chrome.css?v=12" />
   <link rel="stylesheet" href="/web/paper-library.css?v=15" />
   <link rel="stylesheet" href="/web/building.css?v=201" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
@@ -71,6 +71,7 @@
           </div>
           <span class="resource-status" id="resourceStatus" hidden></span>
           <button type="button" class="top-command-btn" id="btnCommandPalette" title="命令面板 Ctrl+K">命令</button>
+          <button type="button" class="top-command-btn top-backup-btn" data-desk-backup hidden title="全量备份当前账号数据并下载，不会改原文件">备份</button>
           <button type="button" class="top-command-btn top-account-btn" id="btnSwitchAccount" data-account-switch hidden title="切换账号">
             <span class="top-account-kicker">账号</span>
             <span class="desk-account-name">切换账号</span>
@@ -503,6 +504,7 @@
 
         </div>
         <div class="rail-panel building-project-pane" id="buildingProjectPane" hidden>
+          <button type="button" class="btn btn-wide phone-backup-btn" data-desk-backup hidden title="全量备份当前账号数据并下载，不会改原文件">全量备份</button>
           <button type="button" class="btn btn-wide phone-account-btn" data-account-switch hidden title="切换账号">
             <span class="top-account-kicker">账号</span>
             <span class="desk-account-name">切换账号</span>
@@ -824,7 +826,7 @@
   <script src="/web/codec.js?v=43"></script>
   <script src="/web/paper-library-core.js?v=22"></script>
   <script src="/web/app-dialog.js?v=2"></script>
-  <script src="/web/desk-account.js?v=6"></script>
+  <script src="/web/desk-account.js?v=7"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/building-interactions.js?v=22"></script>
   <script src="/web/building-preview.js?v=10"></script>

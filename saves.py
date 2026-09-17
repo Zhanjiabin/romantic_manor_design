@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import threading
 import time
+import zipfile
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -882,6 +883,29 @@ def load_cloth_bundle() -> dict:
     }
 
 
+CLOTH_ITEM_CAP = 80
+
+
+def _cloth_item_id(row) -> str:
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("id") or "").strip()
+
+
+def _merge_cloth_items(existing_items, incoming_items) -> list:
+    by_id: dict[str, dict] = {}
+    for row in list(existing_items or []) + list(incoming_items or []):
+        ident = _cloth_item_id(row)
+        if not ident:
+            continue
+        prev = by_id.get(ident)
+        if not prev or int(row.get("savedAt") or 0) >= int(prev.get("savedAt") or 0):
+            by_id[ident] = row
+    items = list(by_id.values())
+    items.sort(key=lambda row: int(row.get("savedAt") or 0), reverse=True)
+    return items[:CLOTH_ITEM_CAP]
+
+
 def _write_cloth_items(path: Path, incoming: dict) -> None:
     incoming_items = incoming.get("items") if isinstance(incoming.get("items"), list) else []
     existing = _read_json(path)
@@ -892,9 +916,19 @@ def _write_cloth_items(path: Path, incoming: dict) -> None:
         existing_items = existing
     incoming_at = int(incoming.get("savedAt") or 0)
     existing_at = int(existing.get("savedAt") or 0) if isinstance(existing, dict) else 0
-    if not incoming_items and existing_items and (existing_at == 0 or incoming_at <= existing_at):
+    if not incoming_items and existing_items:
         return
-    _atomic_write(path, incoming)
+    merged_items = _merge_cloth_items(existing_items, incoming_items)
+    payload = dict(incoming)
+    payload["items"] = merged_items
+    payload["savedAt"] = max(incoming_at, existing_at)
+    if path.name in {"cloth-designs.json", "cloth-boards.json"} and path.is_file():
+        prev = path.with_name(path.name + ".prev")
+        try:
+            shutil.copy2(path, prev)
+        except OSError:
+            pass
+    _atomic_write(path, payload)
 
 
 def save_cloth_bundle(doc: dict) -> dict:
@@ -918,10 +952,7 @@ def save_cloth_bundle(doc: dict) -> dict:
             designs = doc.get("designs")
             path = root / "cloth-designs.json"
             if designs is None:
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
+                pass
             elif isinstance(designs, dict):
                 _write_cloth_items(path, designs)
             else:
@@ -930,10 +961,7 @@ def save_cloth_bundle(doc: dict) -> dict:
             boards = doc.get("boards")
             path = root / "cloth-boards.json"
             if boards is None:
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
+                pass
             elif isinstance(boards, dict):
                 _write_cloth_items(path, boards)
             else:
@@ -963,3 +991,148 @@ def save_cloth_bundle(doc: dict) -> dict:
             else:
                 raise ValueError("prompts must be an object")
     return load_cloth_bundle()
+
+
+BACKUP_CAP = 30
+_BACKUP_NAME_RE = re.compile(r"^manor-full-\d{8}-\d{6}(?:-[a-z0-9]{2,8})?\.zip$")
+
+
+def _live_saves_dir() -> Path:
+    """Current account's live save folder. Does not create directories."""
+    base = _base_saves_root()
+    user = current_save_user()
+    if not user:
+        return base
+    return base / "users" / _user_folder_name(user)
+
+
+def backups_root() -> Path:
+    """Zip backups live next to users/, never inside the live save folder."""
+    base = _base_saves_root()
+    user = current_save_user()
+    folder = _user_folder_name(user) if user else "_local"
+    root = base / "backups" / folder
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def safe_backup_name(value: str) -> str | None:
+    text = str(value or "").strip()
+    if not _BACKUP_NAME_RE.fullmatch(text):
+        return None
+    return text
+
+
+def _iter_backup_files(root: Path):
+    if not root.is_dir():
+        return
+    root = root.resolve()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [name for name in dirnames if name not in {".git", "__pycache__", "backups"}]
+        for name in filenames:
+            if name.startswith((".save-", ".backup-", ".asset-", ".thumb-")):
+                continue
+            path = Path(dirpath) / name
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+            except OSError:
+                continue
+            yield path
+
+
+def _prune_full_backups(dest_dir: Path) -> None:
+    zips = [
+        path
+        for path in dest_dir.glob("manor-full-*.zip")
+        if path.is_file() and safe_backup_name(path.name)
+    ]
+    zips.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    for extra in zips[BACKUP_CAP:]:
+        try:
+            extra.unlink()
+        except OSError:
+            pass
+
+
+def list_full_backups() -> dict:
+    items = []
+    root = backups_root()
+    for path in root.glob("manor-full-*.zip"):
+        if not path.is_file() or not safe_backup_name(path.name):
+            continue
+        st = path.stat()
+        items.append(
+            {
+                "id": path.name,
+                "name": path.name,
+                "bytes": st.st_size,
+                "createdAt": int(st.st_mtime * 1000),
+            }
+        )
+    items.sort(key=lambda row: int(row["createdAt"] or 0), reverse=True)
+    return {"backups": items}
+
+
+def create_full_backup() -> dict:
+    """Copy the current account's live saves into a new zip. Never writes live files."""
+    with _LOCK:
+        source = _live_saves_dir()
+        dest_dir = backups_root()
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        name = f"manor-full-{stamp}.zip"
+        dest = dest_dir / name
+        extra = 0
+        while dest.exists():
+            extra += 1
+            name = f"manor-full-{stamp}-{extra:02d}.zip"
+            dest = dest_dir / name
+            if extra > 20:
+                raise RuntimeError("backup name collision")
+        files = list(_iter_backup_files(source))
+        fd, tmp = tempfile.mkstemp(prefix=".backup-", suffix=".zip", dir=str(dest_dir))
+        os.close(fd)
+        tmp_path = Path(tmp)
+        try:
+            with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                manifest = {
+                    "v": 1,
+                    "kind": "manor-full-backup",
+                    "user": current_save_user(),
+                    "createdAt": int(time.time() * 1000),
+                    "fileCount": len(files),
+                }
+                zf.writestr("MANIFEST.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+                if source.is_dir():
+                    source_res = source.resolve()
+                    for path in files:
+                        rel = path.resolve().relative_to(source_res).as_posix()
+                        if rel == "MANIFEST.json":
+                            rel = "saves/MANIFEST.json"
+                        zf.write(path, arcname=rel)
+            os.replace(tmp_path, dest)
+        except Exception:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+            raise
+        _prune_full_backups(dest_dir)
+        st = dest.stat()
+        return {
+            "id": dest.name,
+            "name": dest.name,
+            "bytes": st.st_size,
+            "createdAt": int(st.st_mtime * 1000),
+            "fileCount": len(files),
+        }
+
+
+def load_full_backup(name: str):
+    ident = safe_backup_name(name)
+    if not ident:
+        return None
+    path = backups_root() / ident
+    if not path.is_file():
+        return None
+    return path.read_bytes(), ident

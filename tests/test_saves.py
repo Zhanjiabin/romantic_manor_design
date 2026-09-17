@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,12 +14,15 @@ sys.path.insert(0, str(ROOT))
 
 from saves import (
     clear_building_papers,
+    create_full_backup,
     delete_building_paper,
     delete_terrain_version,
+    list_full_backups,
     load_building_bundle,
     load_building_paper,
     load_building_papers,
     load_cloth_bundle,
+    load_full_backup,
     load_paper_thumb,
     load_terrain_bundle,
     load_terrain_index,
@@ -28,6 +34,7 @@ from saves import (
     save_paper_thumb,
     save_terrain_draft,
     save_terrain_version,
+    safe_backup_name,
     safe_save_id,
     set_save_user,
 )
@@ -103,16 +110,20 @@ def test_cloth_designs_refuse_empty_overwrite():
         assert still["items"][0]["name"] == "裙"
         save_cloth_bundle({"designs": {"savedAt": 100, "items": [{"id": "c1", "name": "裙"}]}})
         save_cloth_bundle({"designs": {"savedAt": 200, "items": []}})
-        cleared = load_cloth_bundle()["designs"]
-        assert cleared.get("items") == []
+        kept_newer = load_cloth_bundle()["designs"]
+        assert kept_newer["items"][0]["name"] == "裙"
+        save_cloth_bundle({"designs": {"savedAt": 300, "items": [{"id": "c2", "name": "新"}]}})
+        union = load_cloth_bundle()["designs"]
+        names = {row["name"] for row in union["items"]}
+        assert names == {"裙", "新"}
         save_cloth_bundle({"boards": {"items": [{"id": "b1", "name": "领结"}]}})
         save_cloth_bundle({"boards": {"items": []}})
         still_boards = load_cloth_bundle()["boards"]
         assert still_boards["items"][0]["name"] == "领结"
         save_cloth_bundle({"boards": {"savedAt": 100, "items": [{"id": "b1", "name": "领结"}]}})
-        save_cloth_bundle({"boards": {"savedAt": 200, "items": []}})
-        cleared_boards = load_cloth_bundle()["boards"]
-        assert cleared_boards.get("items") == []
+        save_cloth_bundle({"boards": {"savedAt": 200, "items": [{"id": "b2", "name": "袖"}]}})
+        board_names = {row["name"] for row in load_cloth_bundle()["boards"]["items"]}
+        assert board_names == {"领结", "袖"}
         save_cloth_bundle({"ai": {"apiKey": "sk-test", "model": "gpt-image-2", "savedAt": 1}})
         save_cloth_bundle({"prompts": {"items": [{"id": "p1", "kind": "hair", "name": "丝巾", "prompt": "横图"}]}})
         ai_bundle = load_cloth_bundle()
@@ -123,8 +134,12 @@ def test_cloth_designs_refuse_empty_overwrite():
         assert still_prompts["items"][0]["name"] == "丝巾"
         save_cloth_bundle({"prompts": {"savedAt": 100, "items": [{"id": "p1", "kind": "hair", "name": "丝巾", "prompt": "横图"}]}})
         save_cloth_bundle({"prompts": {"savedAt": 200, "items": []}})
-        cleared_prompts = load_cloth_bundle()["prompts"]
-        assert cleared_prompts.get("items") == []
+        kept_prompts = load_cloth_bundle()["prompts"]
+        assert kept_prompts["items"][0]["name"] == "丝巾"
+        save_cloth_bundle({"designs": None, "boards": None})
+        still_after_null = load_cloth_bundle()
+        assert still_after_null["designs"]["items"][0]["name"] == "裙"
+        assert still_after_null["boards"]["items"][0]["name"] == "领结"
     finally:
         if prev is None:
             os.environ.pop("MANOR_SAVES", None)
@@ -588,3 +603,67 @@ def test_saves_are_isolated_per_user_and_primary_inherits_legacy():
             os.environ.pop("MANOR_USER", None)
         else:
             os.environ["MANOR_USER"] = prev_user
+
+
+def _hash_live_files(root: Path) -> dict[str, str]:
+    items = {}
+    if not root.exists():
+        return items
+    for path in root.rglob("*"):
+        if not path.is_file() or "backups" in path.parts:
+            continue
+        items[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return items
+
+
+def test_safe_backup_name():
+    assert safe_backup_name("manor-full-20260917-130405.zip") == "manor-full-20260917-130405.zip"
+    assert safe_backup_name("manor-full-20260917-130405-02.zip") == "manor-full-20260917-130405-02.zip"
+    assert safe_backup_name("../etc/passwd") is None
+    assert safe_backup_name("manor-full-20260917-130405.zip.bak") is None
+
+
+def test_full_backup_copies_without_touching_live():
+    tmp = tempfile.mkdtemp(prefix="manor-full-backup-")
+    prev = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = tmp
+    try:
+        set_save_user("ada")
+        save_terrain_draft({"id": "t1", "name": "地形", "savedAt": 11, "stamps": [{"kind": "A"}]})
+        save_building_bundle({"session": {"v": 1, "name": "建筑"}})
+        save_building_papers([{"name": "图纸.txt", "data": "VjE7cGFwZXI="}])
+        save_cloth_bundle({"designs": {"items": [{"id": "c1", "name": "裙", "png": "x"}]}})
+        live = Path(tmp) / "users" / "ada"
+        before = _hash_live_files(live)
+        mtimes = {path: path.stat().st_mtime_ns for path in live.rglob("*") if path.is_file()}
+        info = create_full_backup()
+        assert info["fileCount"] >= 3
+        assert before == _hash_live_files(live)
+        for path, stamp in mtimes.items():
+            assert path.stat().st_mtime_ns == stamp
+        assert not (live / "backups").exists()
+        zip_path = Path(tmp) / "backups" / "ada" / info["id"]
+        assert zip_path.is_file()
+        with zipfile.ZipFile(zip_path) as zf:
+            names = set(zf.namelist())
+            assert "MANIFEST.json" in names
+            assert "terrain-draft.json" in names
+            assert "building-session.json" in names
+            assert "cloth-designs.json" in names
+            manifest = json.loads(zf.read("MANIFEST.json"))
+            assert manifest["kind"] == "manor-full-backup"
+            assert manifest["user"] == "ada"
+        listed = list_full_backups()["backups"]
+        assert listed[0]["id"] == info["id"]
+        packed = load_full_backup(info["id"])
+        assert packed and packed[0][:2] == b"PK"
+        assert load_full_backup("../secret.zip") is None
+        set_save_user("zed")
+        assert list_full_backups()["backups"] == []
+        assert load_full_backup(info["id"]) is None
+    finally:
+        set_save_user("")
+        if prev is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev

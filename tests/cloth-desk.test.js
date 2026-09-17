@@ -70,6 +70,8 @@ test("clothes desk is a mobile workspace with pointer painting and jpg export", 
   assert.match(clothHtml, /mobile-bottom-dock/);
   assert.match(clothHtml, /id="btnSwitchAccount"/);
   assert.match(clothHtml, /phone-account-btn/);
+  assert.match(clothHtml, /data-desk-backup/);
+  assert.match(clothHtml, /phone-backup-btn/);
   assert.match(clothHtml, /id="fileClothImage"/);
   assert.match(clothHtml, /accept="image\/png/);
   assert.match(clothHtml, /id="paintCanvas"/);
@@ -140,11 +142,18 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothHtml, /data-beauty-slider="waist"/);
   assert.match(clothCss, /\.beauty-families/);
   assert.match(clothCss, /\.beauty-family\.on/);
+  assert.match(clothHtml, /id="btnUvGuide"/);
+  assert.match(clothHtml, /id="paintGuide"/);
+  assert.match(clothHtml, />底图</);
+  assert.match(clothJs, /function extractUvOutline/);
+  assert.match(clothJs, /function setUvGuideOn/);
+  assert.match(clothJs, /function refreshUvGuide/);
+  assert.match(clothJs, /if \(uvGuideOn\) \{\s*const guide = guideCanvas\(\);/);
   assert.match(clothJs, /id: "heal"/);
   assert.match(clothJs, /id: "cutout"/);
   assert.match(clothJs, /setTool\("sculpt"\)/);
-  assert.match(clothHtml, /cloth\.js\?v=38/);
-  assert.match(clothHtml, /cloth\.css\?v=38/);
+  assert.match(clothHtml, /cloth\.js\?v=41/);
+  assert.match(clothHtml, /cloth\.css\?v=39/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {

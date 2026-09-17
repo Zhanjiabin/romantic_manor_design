@@ -629,3 +629,94 @@ def test_http_saves_are_isolated_per_account():
         else:
             os.environ["MANOR_SAVES"] = prev_saves
         _restore_env(saved)
+
+
+def test_http_full_backup_is_copy_only_and_isolated():
+    saved = _clear_auth_env()
+    tmp = Path(tempfile.mkdtemp(prefix="manor-backup-http-"))
+    prev_saves = os.environ.get("MANOR_SAVES")
+    os.environ["MANOR_SAVES"] = str(tmp)
+    os.environ["MANOR_USER"] = "ada"
+    os.environ["MANOR_PASSWORD"] = "secret"
+    os.environ["MANOR_USERS"] = "zed:extra"
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = httpd.server_address[:2]
+        ada = {**_login_headers(host, port, "ada", "secret"), "Content-Type": "application/json"}
+        zed = {**_login_headers(host, port, "zed", "extra"), "Content-Type": "application/json"}
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request(
+            "PUT",
+            "/api/saves/cloth",
+            body='{"designs":{"items":[{"id":"c-ada","name":"ada-skirt"}]}}',
+            headers=ada,
+        )
+        assert conn.getresponse().status == 200
+        conn.close()
+        live = tmp / "users" / "ada" / "cloth-designs.json"
+        before = live.read_bytes()
+        before_mtime = live.stat().st_mtime_ns
+
+        conn = HTTPConnection(host, port, timeout=10)
+        conn.request("POST", "/api/saves/backup", body="{}", headers=ada)
+        created = conn.getresponse()
+        info = json.loads(created.read())
+        conn.close()
+        assert created.status == 200
+        assert info["id"].startswith("manor-full-")
+        assert live.read_bytes() == before
+        assert live.stat().st_mtime_ns == before_mtime
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/backup", headers=ada)
+        listed = json.loads(conn.getresponse().read())
+        conn.close()
+        assert listed["backups"][0]["id"] == info["id"]
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/backup/" + info["id"], headers=ada)
+        packed = conn.getresponse()
+        blob = packed.read()
+        conn.close()
+        assert packed.status == 200
+        assert packed.getheader("Content-Type") == "application/zip"
+        assert blob[:2] == b"PK"
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/backup", headers=zed)
+        zed_list = json.loads(conn.getresponse().read())
+        conn.close()
+        assert zed_list["backups"] == []
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/backup/" + info["id"], headers=zed)
+        stolen = conn.getresponse()
+        stolen.read()
+        conn.close()
+        assert stolen.status == 404
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("GET", "/api/saves/backup/../secret.zip", headers=ada)
+        traversal = conn.getresponse()
+        traversal.read()
+        conn.close()
+        assert traversal.status == 404
+
+        conn = HTTPConnection(host, port, timeout=5)
+        conn.request("PUT", "/api/saves/backup", body="{}", headers=ada)
+        put = conn.getresponse()
+        put.read()
+        conn.close()
+        assert put.status == 404
+        assert live.read_bytes() == before
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        if prev_saves is None:
+            os.environ.pop("MANOR_SAVES", None)
+        else:
+            os.environ["MANOR_SAVES"] = prev_saves
+        _restore_env(saved)

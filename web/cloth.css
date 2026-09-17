@@ -240,6 +240,7 @@
 }
 
 #paintGhost,
+#paintGuide,
 #paintMask {
   position: absolute;
   left: 0;
@@ -259,12 +260,74 @@
   opacity: 0.12;
 }
 
-/* Beauty dock */
-.beauty-dock {
+.canvas-hud {
   position: absolute;
   left: 12px;
   right: 12px;
   bottom: 10px;
+  z-index: 6;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.canvas-hud > * {
+  pointer-events: auto;
+}
+
+.canvas-hud-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(14, 18, 24, 0.86);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  transition:
+    background var(--cloth-dur) var(--cloth-ease),
+    border-color var(--cloth-dur) var(--cloth-ease),
+    transform var(--cloth-dur) var(--cloth-ease);
+}
+
+.canvas-hud-btn:hover {
+  background: rgba(28, 36, 46, 0.92);
+}
+
+.canvas-hud-btn:active {
+  transform: scale(0.96);
+}
+
+.canvas-hud-btn.on {
+  border-color: rgba(159, 212, 176, 0.55);
+  background: rgba(42, 106, 76, 0.92);
+  color: #fff;
+}
+
+.canvas-hud:not(:has(.sel-dock.is-collapsed)) {
+  justify-content: flex-start;
+}
+
+.canvas-hud:not(:has(.sel-dock.is-collapsed)) .beauty-dock {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Beauty dock */
+.beauty-dock {
+  position: relative;
   z-index: 6;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -340,7 +403,7 @@
 
 .sel-dock.is-collapsed.beauty-dock {
   left: auto;
-  right: 12px;
+  right: auto;
   width: auto;
   animation: cloth-dock-in 220ms var(--cloth-ease);
 }
@@ -1534,6 +1597,18 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .stage-canvas-wrap {
   min-height: 0;
   height: 100%;
   padding: 8px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .canvas-hud {
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  gap: 6px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .canvas-hud-btn {
+  min-height: 36px;
+  font-size: 12px;
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .beauty-family {

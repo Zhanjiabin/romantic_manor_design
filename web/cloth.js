@@ -104,6 +104,13 @@
   } catch {
     selDockCollapsed = true;
   }
+  let uvGuideOn = false;
+  try {
+    uvGuideOn = sessionStorage.getItem("manor-cloth-uv-guide") === "1";
+  } catch {
+    uvGuideOn = false;
+  }
+  const uvGuideCache = new Map();
   const beauty = {
     family: "",
     snap: null,
@@ -208,6 +215,11 @@
       if (ghost.width !== width) ghost.width = width;
       if (ghost.height !== height) ghost.height = height;
     }
+    const guide = document.getElementById("paintGuide");
+    if (guide) {
+      if (guide.width !== width) guide.width = width;
+      if (guide.height !== height) guide.height = height;
+    }
     const mask = document.getElementById("paintMask");
     if (mask) {
       if (mask.width !== width) mask.width = width;
@@ -290,6 +302,7 @@
     if (options.fit !== false) fitCanvas();
     if (!options.keepMask) clearMask();
     renderTemplates();
+    refreshUvGuide();
   }
 
   function snapshotPng() {
@@ -502,6 +515,177 @@
     const ghost = ghostCanvas();
     const gtx = ghost?.getContext("2d");
     if (gtx) gtx.clearRect(0, 0, ghost.width, ghost.height);
+  }
+
+  function guideCanvas() {
+    return document.getElementById("paintGuide");
+  }
+
+  function colorDist(r1, g1, b1, r2, g2, b2) {
+    return Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2);
+  }
+
+  function medianChannel(values) {
+    const sorted = values.slice().sort((a, b) => a - b);
+    return sorted[sorted.length >> 1] || 0;
+  }
+
+  function sampleCornerBg(data, width, height) {
+    const rs = [];
+    const gs = [];
+    const bs = [];
+    const patch = 6;
+    const corners = [[0, 0], [width - patch, 0], [0, height - patch], [width - patch, height - patch]];
+    corners.forEach(([sx, sy]) => {
+      for (let y = Math.max(0, sy); y < Math.min(height, sy + patch); y += 1) {
+        for (let x = Math.max(0, sx); x < Math.min(width, sx + patch); x += 1) {
+          const i = (y * width + x) * 4;
+          rs.push(data[i]);
+          gs.push(data[i + 1]);
+          bs.push(data[i + 2]);
+        }
+      }
+    });
+    return [medianChannel(rs), medianChannel(gs), medianChannel(bs)];
+  }
+
+  function extractUvOutline(imageData) {
+    const width = imageData.width;
+    const height = imageData.height;
+    const src = imageData.data;
+    const [br, bg, bb] = sampleCornerBg(src, width, height);
+    const content = new Uint8Array(width * height);
+    let filled = 0;
+    for (let p = 0, i = 0; p < content.length; p += 1, i += 4) {
+      const r = src[i];
+      const g = src[i + 1];
+      const b = src[i + 2];
+      const dark = Math.max(r, g, b) < 28 && Math.max(r, g, b) - Math.min(r, g, b) < 12;
+      const on = !dark && src[i + 3] > 8 && colorDist(r, g, b, br, bg, bb) > 42;
+      content[p] = on ? 1 : 0;
+      if (on) filled += 1;
+    }
+    const cleaned = new Uint8Array(content);
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const p = y * width + x;
+        if (!content[p]) continue;
+        let neighbors = 0;
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx || dy) neighbors += content[p + dy * width + dx];
+          }
+        }
+        if (neighbors < 3) {
+          cleaned[p] = 0;
+          filled -= 1;
+        }
+      }
+    }
+    content.set(cleaned);
+    const out = new ImageData(width, height);
+    const dst = out.data;
+    const ink = [32, 28, 26];
+    const lumaAt = (i) => src[i] * 0.299 + src[i + 1] * 0.587 + src[i + 2] * 0.114;
+    const stamp = (p, alpha) => {
+      const i = p * 4;
+      if (dst[i + 3] >= alpha) return;
+      dst[i] = ink[0];
+      dst[i + 1] = ink[1];
+      dst[i + 2] = ink[2];
+      dst[i + 3] = alpha;
+    };
+    const useIslands = filled > width * height * 0.04 && filled < width * height * 0.92;
+    if (useIslands) {
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const p = y * width + x;
+          if (!content[p]) continue;
+          const edge = x === 0 || y === 0 || x === width - 1 || y === height - 1
+            || !content[p - 1] || !content[p + 1] || !content[p - width] || !content[p + width];
+          if (edge) stamp(p, 230);
+        }
+      }
+      const copy = new Uint8ClampedArray(dst);
+      for (let y = 1; y < height - 1; y += 1) {
+        for (let x = 1; x < width - 1; x += 1) {
+          const p = y * width + x;
+          const i = p * 4;
+          if (copy[i + 3] > 40) continue;
+          let alpha = 0;
+          [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([dx, dy]) => {
+            const j = ((y + dy) * width + (x + dx)) * 4;
+            if (copy[j + 3] > alpha) alpha = copy[j + 3];
+          });
+          if (alpha > 80) stamp(p, Math.min(180, Math.round(alpha * 0.72)));
+        }
+      }
+    } else {
+      for (let y = 1; y < height - 1; y += 1) {
+        for (let x = 1; x < width - 1; x += 1) {
+          const i = (y * width + x) * 4;
+          const gx = -lumaAt(i - 4 - width * 4) + lumaAt(i + 4 - width * 4)
+            - 2 * lumaAt(i - 4) + 2 * lumaAt(i + 4)
+            - lumaAt(i - 4 + width * 4) + lumaAt(i + 4 + width * 4);
+          const gy = -lumaAt(i - 4 - width * 4) - 2 * lumaAt(i - width * 4) - lumaAt(i + 4 - width * 4)
+            + lumaAt(i - 4 + width * 4) + 2 * lumaAt(i + width * 4) + lumaAt(i + 4 + width * 4);
+          if (Math.hypot(gx, gy) >= 96) stamp(y * width + x, 200);
+        }
+      }
+    }
+    return out;
+  }
+
+  function syncUvGuideButton() {
+    const btn = document.getElementById("btnUvGuide");
+    if (!btn) return;
+    btn.classList.toggle("on", uvGuideOn);
+    btn.setAttribute("aria-pressed", String(uvGuideOn));
+  }
+
+  async function uvOutlineForKind(kindId) {
+    const kind = kindById(kindId);
+    const stock = kind?.templates?.[0];
+    const url = stock?.url;
+    if (!url) return null;
+    const key = `${kind.id}:${url}:${canvas.width}x${canvas.height}`;
+    if (uvGuideCache.has(key)) return uvGuideCache.get(key);
+    const image = await loadImage(url);
+    const off = document.createElement("canvas");
+    off.width = canvas.width;
+    off.height = canvas.height;
+    const octx = off.getContext("2d", { willReadFrequently: true });
+    octx.imageSmoothingEnabled = false;
+    octx.drawImage(image, 0, 0, off.width, off.height);
+    octx.putImageData(extractUvOutline(octx.getImageData(0, 0, off.width, off.height)), 0, 0);
+    uvGuideCache.set(key, off);
+    return off;
+  }
+
+  async function refreshUvGuide() {
+    const node = guideCanvas();
+    const gtx = node?.getContext("2d");
+    if (!node || !gtx) return;
+    gtx.clearRect(0, 0, node.width, node.height);
+    syncUvGuideButton();
+    if (!uvGuideOn) return;
+    try {
+      const outline = await uvOutlineForKind(state.kindId);
+      if (!uvGuideOn || !outline) return;
+      gtx.drawImage(outline, 0, 0, node.width, node.height);
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+
+  function setUvGuideOn(on) {
+    uvGuideOn = !!on;
+    try {
+      sessionStorage.setItem("manor-cloth-uv-guide", uvGuideOn ? "1" : "0");
+    } catch {
+      /* ignore quota */
+    }
+    refreshUvGuide();
   }
 
   function maskNode() {
@@ -1664,6 +1848,7 @@
     } else {
       state.templateId = BLANK_ID;
       renderTemplates();
+      refreshUvGuide();
     }
   }
 
@@ -1733,6 +1918,10 @@
     sctx.fillStyle = PAPER;
     sctx.fillRect(0, 0, scratch.width, scratch.height);
     sctx.drawImage(canvas, 0, 0);
+    if (uvGuideOn) {
+      const guide = guideCanvas();
+      if (guide) sctx.drawImage(guide, 0, 0);
+    }
     scratch.toBlob((blob) => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
@@ -2328,7 +2517,14 @@
       png: snapshotPng(),
       savedAt: Date.now(),
     };
-    state.designs = [...state.designs, item].slice(-40);
+    state.designs = [...state.designs, item].slice(-80);
+    try {
+      const remote = await fetchClothSaves();
+      const merged = mergeDesigns({ items: state.designs }, remote?.designs);
+      if ((merged.items || []).length) state.designs = merged.items.slice(-80);
+    } catch (error) {
+      console.warn(error);
+    }
     state.designId = item.id;
     const bundle = designsBundle();
     persistDesignsLocal(bundle);
@@ -2364,7 +2560,14 @@
       png: snapshotPng(),
       savedAt: Date.now(),
     };
-    state.boards = [...state.boards, item].slice(-40);
+    state.boards = [...state.boards, item].slice(-80);
+    try {
+      const remote = await fetchClothSaves();
+      const merged = mergeBoards({ items: state.boards }, remote?.boards);
+      if ((merged.items || []).length) state.boards = merged.items.slice(-80);
+    } catch (error) {
+      console.warn(error);
+    }
     templateCtx.clearRect(0, 0, canvas.width, canvas.height);
     templateCtx.drawImage(canvas, 0, 0);
     state.templateId = item.id;
@@ -2719,6 +2922,7 @@
     document.getElementById("btnClothAiPromptReset")?.addEventListener("click", () => resetKindPrompts());
     document.getElementById("btnClothAiGenerate")?.addEventListener("click", () => generateAiDesign());
     document.getElementById("btnClearMask")?.addEventListener("click", () => clearMask());
+    document.getElementById("btnUvGuide")?.addEventListener("click", () => setUvGuideOn(!uvGuideOn));
     document.querySelectorAll("[data-sel-dock-toggle]").forEach((button) => {
       button.addEventListener("click", () => setSelDockCollapsed(!selDockCollapsed));
     });
@@ -2924,6 +3128,7 @@
       if (!workspaceMode().mobile) closeClothSheets();
     });
     syncSelDock();
+    syncUvGuideButton();
     syncBeautyChrome();
     syncHistoryButtons();
   }

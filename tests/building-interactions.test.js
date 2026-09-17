@@ -1847,6 +1847,8 @@ test("both desks expose the shared mobile-first workspace", () => {
     assert.match(html, /id="btnSwitchAccount"/);
     assert.match(html, /data-account-switch/);
     assert.match(html, /phone-account-btn/);
+    assert.match(html, /data-desk-backup/);
+    assert.match(html, /phone-backup-btn/);
     assert.match(html, /desk-account\.js/);
   }
   const deskAccount = fs.readFileSync(path.join(__dirname, "../web/desk-account.js"), "utf8");
@@ -1855,6 +1857,9 @@ test("both desks expose the shared mobile-first workspace", () => {
   assert.doesNotThrow(() => new Function(deskAccount));
   assert.match(deskAccount, /\/api\/whoami/);
   assert.match(deskAccount, /\/api\/logout/);
+  assert.match(deskAccount, /\/api\/saves\/backup/);
+  assert.match(deskAccount, /生成并下载/);
+  assert.doesNotMatch(deskAccount, /restore|一键还原/);
   assert.match(deskAccount, /deskStorageKey/);
   assert.match(deskAccount, /\/login\?next=/);
   assert.doesNotMatch(deskAccount, /WWW-Authenticate|Authorization: \"Basic/);

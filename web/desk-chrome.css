@@ -76,6 +76,13 @@
 .phone-account-btn[hidden] {
   display: none !important;
 }
+.top-backup-btn[hidden],
+.phone-backup-btn[hidden] {
+  display: none !important;
+}
+.phone-backup-btn {
+  display: none !important;
+}
 .top-account-kicker[hidden] {
   display: none !important;
 }
@@ -150,4 +157,78 @@
   background: linear-gradient(180deg, #b4554c 0%, #9a4038 100%);
   border-color: #6e2b26;
   color: #fff;
+}
+
+.desk-backup-card {
+  width: min(440px, 100%);
+}
+.desk-backup-body {
+  display: grid;
+  gap: 10px;
+}
+.desk-backup-note {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-soft, #5b6b62);
+}
+.desk-backup-status {
+  min-height: 1.2em;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-soft, #5b6b62);
+}
+.desk-backup-head {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink, #223028);
+}
+.desk-backup-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft, #5b6b62);
+}
+.desk-backup-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(40vh, 280px);
+  overflow: auto;
+}
+.desk-backup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.desk-backup-meta {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+.desk-backup-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.desk-backup-meta span {
+  font-size: 12px;
+  color: var(--ink-soft, #5b6b62);
+}
+#btnCreateDeskBackup,
+.desk-backup-row .btn {
+  min-height: 44px;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .top-backup-btn {
+  display: none !important;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) .phone-backup-btn:not([hidden]) {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 8px;
+  font-size: 15px;
 }

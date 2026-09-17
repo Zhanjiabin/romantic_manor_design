@@ -13,9 +13,9 @@
   <link rel="icon" href="/favicon.ico" sizes="32x32" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/web/app.css?v=107" />
-  <link rel="stylesheet" href="/web/desk-chrome.css?v=11" />
+  <link rel="stylesheet" href="/web/desk-chrome.css?v=12" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=38" />
+  <link rel="stylesheet" href="/web/cloth.css?v=39" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -42,6 +42,7 @@
         <button type="button" class="btn btn-compact" id="btnClothAi" title="用第三方图片模型按 UV 出图">AI 设计</button>
         <button type="button" class="btn btn-compact cloth-new-btn" id="btnNewDesign" title="清空为空白画布，另开一张">新建</button>
         <button type="button" class="btn btn-compact btn-primary" id="btnSaveDesign" title="保存到本桌作品">完成</button>
+        <button type="button" class="top-command-btn top-backup-btn" data-desk-backup hidden title="全量备份当前账号数据并下载，不会改原文件">备份</button>
         <button type="button" class="top-command-btn top-account-btn" id="btnSwitchAccount" data-account-switch hidden title="切换账号">
           <span class="top-account-kicker">账号</span>
           <span class="desk-account-name">切换账号</span>
@@ -81,10 +82,13 @@
             <div class="paint-view" id="paintView">
               <canvas id="paintCanvas" width="256" height="256" aria-label="衣服设计画布"></canvas>
               <canvas id="paintGhost" width="256" height="256" aria-hidden="true"></canvas>
+              <canvas id="paintGuide" width="256" height="256" aria-hidden="true"></canvas>
               <canvas id="paintMask" width="256" height="256" aria-hidden="true"></canvas>
             </div>
           </div>
 
+          <div class="canvas-hud">
+            <button type="button" class="canvas-hud-btn" id="btnUvGuide" aria-pressed="false" title="在当前作品上显示默认 UV 轮廓，导出时一并带上">底图</button>
           <aside class="beauty-dock sel-dock" id="clothSelDock">
             <div class="sel-dock-body" id="clothSelDockBody">
               <div class="beauty-dock-head">
@@ -112,6 +116,7 @@
             </div>
             <button type="button" class="sel-dock-open" data-sel-dock-toggle aria-expanded="false" aria-controls="clothSelDockBody" title="展开修图">修图</button>
           </aside>
+          </div>
         </div>
         <p class="paint-hint" id="paintHint">一指绘制，双指拖动缩放。修图含面部重塑、瘦脸瘦身、身材塑形、消除笔和抠图。</p>
       </main>
@@ -164,6 +169,7 @@
           </div>
           <div class="design-list" id="designList"></div>
           </div>
+          <button type="button" class="btn btn-wide phone-backup-btn" data-desk-backup hidden title="全量备份当前账号数据并下载，不会改原文件">全量备份</button>
           <button type="button" class="btn btn-wide phone-account-btn" data-account-switch hidden title="切换账号">
             <span class="desk-account-name">切换账号</span>
           </button>
@@ -347,9 +353,9 @@
 
   <input type="file" id="fileClothImage" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
   <script src="/web/app-dialog.js?v=2"></script>
-  <script src="/web/desk-account.js?v=6"></script>
+  <script src="/web/desk-account.js?v=7"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/cloth-preview.js?v=13"></script>
-  <script src="/web/cloth.js?v=38"></script>
+  <script src="/web/cloth.js?v=41"></script>
 </body>
 </html>

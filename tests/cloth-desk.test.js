@@ -44,7 +44,7 @@ test("clothes desk keeps native paint sizes and one stock board per kind", () =>
 test("clothes desk exposes a new-design entry on phone chrome", () => {
   assert.match(clothHtml, /id="btnNewDesign"/);
   assert.match(clothHtml, /id="btnClothMobileNew"/);
-  assert.match(clothHtml, /id="btnNewDesignRail"/);
+  assert.doesNotMatch(clothHtml, /id="btnNewDesignRail"/);
   assert.match(clothHtml, /data-cloth-io="new"/);
   assert.match(clothJs, /function startNewDesign/);
   assert.match(clothJs, /btnClothMobileNew/);
@@ -99,7 +99,8 @@ test("clothes desk is a mobile workspace with pointer painting and jpg export", 
   assert.match(clothCss, /scrollbar-gutter:\s*stable/);
   assert.match(clothCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.cloth-app \.brand/);
   assert.match(clothCss, /min-height:\s*44px/);
-  assert.match(clothCss, /outline-offset:\s*-2px/);
+  assert.match(clothCss, /@keyframes cloth-select-pulse/);
+  assert.match(clothCss, /template-card-name/);
 });
 
 test("clicking a clothes board keeps the template list scroll position", () => {
@@ -138,8 +139,8 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /id: "heal"/);
   assert.match(clothJs, /id: "cutout"/);
   assert.match(clothJs, /setTool\("sculpt"\)/);
-  assert.match(clothHtml, /cloth\.js\?v=27/);
-  assert.match(clothHtml, /cloth\.css\?v=25/);
+  assert.match(clothHtml, /cloth\.js\?v=32/);
+  assert.match(clothHtml, /cloth\.css\?v=30/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {
@@ -154,8 +155,11 @@ test("clothes desk work list can filter, search, and sort", () => {
   assert.match(clothJs, /function persistDesignFilter/);
   assert.match(clothJs, /localeCompare\(String\(b\.name \|\| ""\), "zh"\)/);
   assert.match(clothJs, /designFilter\.sortDir === "asc" \? "desc" : "asc"/);
+  assert.doesNotMatch(clothJs, /dirBtn\.textContent = desc \? "逆序"/);
+  assert.match(clothJs, /classList\.toggle\("is-asc"/);
   assert.match(clothCss, /\.design-filter/);
   assert.match(clothCss, /#designSortDir/);
+  assert.match(clothCss, /\.design-filter-top/);
   assert.match(clothCss, /\.design-card-kind/);
 });
 

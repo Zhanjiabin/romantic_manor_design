@@ -638,7 +638,7 @@ async function bootBuilding() {
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 450);
   warmOtherDesk("/", ["/api/kinds", "/web/app.js?v=293"]);
-  warmOtherDesk("/web/cloth.html", ["/web/cloth.js?v=27", "/data/cloth_catalog.json"]);
+  warmOtherDesk("/web/cloth.html", ["/web/cloth.js?v=32", "/data/cloth_catalog.json"]);
 }
 
 function sortThemes(packs) {

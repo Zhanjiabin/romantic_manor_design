@@ -1283,7 +1283,7 @@
       if (template.blank) {
         const blank = document.createElement("div");
         blank.className = "template-blank";
-        blank.textContent = "空画布";
+        blank.textContent = "空";
         button.append(blank);
       } else {
         const img = document.createElement("img");
@@ -1295,6 +1295,7 @@
       const cap = document.createElement("span");
       cap.className = "template-card-cap";
       const label = document.createElement("span");
+      label.className = "template-card-name";
       label.textContent = template.name;
       cap.append(label);
       if (template.custom) {
@@ -1395,9 +1396,10 @@
     const dirBtn = document.getElementById("designSortDir");
     if (dirBtn) {
       const desc = designFilter.sortDir !== "asc";
-      dirBtn.textContent = desc ? "逆序" : "正序";
+      dirBtn.classList.toggle("is-asc", !desc);
       dirBtn.setAttribute("aria-pressed", String(desc));
-      dirBtn.title = desc ? "当前逆序，点此改为正序" : "当前正序，点此改为逆序";
+      dirBtn.setAttribute("aria-label", desc ? "当前逆序，点此改为正序" : "当前正序，点此改为逆序");
+      dirBtn.title = desc ? "逆序" : "正序";
     }
   }
 
@@ -2583,7 +2585,6 @@
       trigger: "#btnClothMobileTemplates",
       backdrop: "#clothSheetBackdrop",
       inert: [".cloth-stage", ".cloth-app .topbar"],
-      initialFocus: "#btnClothTemplatesClose",
       mutex: "cloth-workspace",
     });
     window.MobileWorkspace?.registerSheet({
@@ -2592,7 +2593,6 @@
       trigger: "#btnClothMobileTools",
       backdrop: "#clothSheetBackdrop",
       inert: [".cloth-stage", ".cloth-app .topbar"],
-      initialFocus: "#btnClothToolsClose",
       mutex: "cloth-workspace",
     });
     document.getElementById("btnClothMobileTemplates")?.addEventListener("click", () => {
@@ -2602,10 +2602,11 @@
       window.MobileWorkspace?.toggleSheet("cloth-tools");
     });
     document.getElementById("btnClothMobileFiles")?.addEventListener("click", () => {
-      window.MobileWorkspace?.toggleSheet("cloth-tools");
+      window.MobileWorkspace?.openSheet("cloth-tools");
+      requestAnimationFrame(() => {
+        document.getElementById("clothDesignSection")?.scrollIntoView({ block: "start" });
+      });
     });
-    document.getElementById("btnClothTemplatesClose")?.addEventListener("click", () => window.MobileWorkspace?.closeSheet("cloth-templates"));
-    document.getElementById("btnClothToolsClose")?.addEventListener("click", () => window.MobileWorkspace?.closeSheet("cloth-tools"));
     document.getElementById("clothSheetBackdrop")?.addEventListener("click", () => closeClothSheets());
   }
 
@@ -2703,7 +2704,6 @@
     });
     document.getElementById("btnClothMobileNew")?.addEventListener("click", () => startNewDesign());
     document.getElementById("btnNewDesign")?.addEventListener("click", () => startNewDesign());
-    document.getElementById("btnNewDesignRail")?.addEventListener("click", () => startNewDesign());
     document.getElementById("designSearch")?.addEventListener("input", (event) => {
       designFilter.query = String(event.target.value || "");
       persistDesignFilter();

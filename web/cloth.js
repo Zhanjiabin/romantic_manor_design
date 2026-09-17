@@ -120,12 +120,19 @@
     values: { eyeGap: 0, eyeSize: 0, chin: 0, nose: 0, slimFace: 0, slimBody: 0, waist: 0, legs: 0 },
   };
   const DESIGN_FILTER_KEY = "manor-cloth-design-filter";
+  const BOARD_FILTER_KEY = "manor-cloth-board-filter";
   const designFilter = {
     kind: "all",
     query: "",
     sortBy: "savedAt",
     sortDir: "desc",
   };
+  let boardQuery = "";
+  try {
+    boardQuery = String(sessionStorage.getItem(BOARD_FILTER_KEY) || "");
+  } catch {
+    boardQuery = "";
+  }
   try {
     const saved = JSON.parse(sessionStorage.getItem(DESIGN_FILTER_KEY) || "null");
     if (saved && typeof saved === "object") {
@@ -1516,14 +1523,51 @@
     requestAnimationFrame(restore);
   }
 
+  function boardSearchBlob(template) {
+    return [
+      template?.name,
+      template?.blank ? "空白 空" : "",
+      template?.stock ? "默认 UV" : "",
+    ].filter(Boolean).join(" ").toLowerCase();
+  }
+
+  function visibleTemplates() {
+    const query = String(boardQuery || "").trim().toLowerCase();
+    const templates = currentTemplates();
+    if (!query) return templates;
+    return templates.filter((template) => boardSearchBlob(template).includes(query));
+  }
+
+  function persistBoardFilter() {
+    try {
+      sessionStorage.setItem(BOARD_FILTER_KEY, boardQuery);
+    } catch {
+      /* ignore quota */
+    }
+  }
+
+  function syncBoardSearchChrome() {
+    const search = document.getElementById("boardSearch");
+    if (search && search.value !== boardQuery) search.value = boardQuery;
+  }
+
   function renderTemplates() {
     const grid = document.getElementById("templateGrid");
     const count = document.getElementById("templateCount");
-    const templates = currentTemplates();
-    if (count) count.textContent = String(Math.max(0, templates.length - 1));
+    const query = String(boardQuery || "").trim();
+    const templates = visibleTemplates();
+    if (count) count.textContent = String(templates.filter((row) => !row.blank).length);
+    syncBoardSearchChrome();
     if (!grid) return;
     preserveListScroll(sheetListScroller(grid), () => {
       grid.replaceChildren();
+      if (!templates.length) {
+        const empty = document.createElement("p");
+        empty.className = "kind-meta";
+        empty.textContent = query ? "没有符合条件的底板。" : "还没有底板。";
+        grid.append(empty);
+        return;
+      }
       templates.forEach((template) => {
       const button = document.createElement("div");
       button.className = "template-card" + (template.id === (state.templateId || BLANK_ID) ? " on" : "");
@@ -3070,6 +3114,11 @@
     });
     document.getElementById("btnClothMobileNew")?.addEventListener("click", () => startNewDesign());
     document.getElementById("btnNewDesign")?.addEventListener("click", () => startNewDesign());
+    document.getElementById("boardSearch")?.addEventListener("input", (event) => {
+      boardQuery = String(event.target.value || "");
+      persistBoardFilter();
+      renderTemplates();
+    });
     document.getElementById("designSearch")?.addEventListener("input", (event) => {
       designFilter.query = String(event.target.value || "");
       persistDesignFilter();

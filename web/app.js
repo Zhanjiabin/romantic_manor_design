@@ -254,7 +254,7 @@ async function boot() {
   requestAnimationFrame(finishBoot);
   setTimeout(finishBoot, 500);
   warmOtherDesk("/web/building.html", ["/api/editor-catalog", "/web/building.js?v=280"]);
-  warmOtherDesk("/web/cloth.html", ["/web/cloth.js?v=43", "/data/cloth_catalog.json"]);
+  warmOtherDesk("/web/cloth.html", ["/web/cloth.js?v=44", "/data/cloth_catalog.json"]);
   setInterval(() => {
     if (!state.hasWaterTiles || document.hidden) return;
     if (terrainInteractionBusy()) return;

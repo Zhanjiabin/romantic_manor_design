@@ -901,6 +901,15 @@ html.is-tablet-workspace #btnClothAiHud {
   box-shadow: none;
 }
 
+.board-search {
+  margin: 0 0 6px;
+}
+
+.template-grid > .kind-meta {
+  grid-column: 1 / -1;
+  margin: 4px 2px;
+}
+
 .design-search:focus,
 .design-toolbar-row .input:focus {
   border-color: rgba(42, 106, 76, 0.55);
@@ -1799,8 +1808,9 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .template-del {
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .design-search,
-html.is-mobile-workspace:not(.is-tablet-workspace) .design-toolbar-row .input {
-  min-height: 36px;
+html.is-mobile-workspace:not(.is-tablet-workspace) .design-toolbar-row .input,
+html.is-mobile-workspace:not(.is-tablet-workspace) .board-search {
+  min-height: 44px;
   font-size: 16px;
 }
 

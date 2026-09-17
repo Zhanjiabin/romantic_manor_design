@@ -117,6 +117,15 @@ test("clicking a clothes board keeps the template list scroll position", () => {
   assert.match(render, /preserveListScroll\(sheetListScroller\(grid\)/);
   assert.doesNotMatch(render, /scrollIntoView/);
   assert.match(render, /template\.custom && boardEditOn/);
+  assert.match(render, /visibleTemplates\(\)/);
+});
+
+test("clothes boards can be filtered by name", () => {
+  assert.match(clothHtml, /id="boardSearch"/);
+  assert.match(clothJs, /function visibleTemplates/);
+  assert.match(clothJs, /function boardSearchBlob/);
+  assert.match(clothJs, /boardSearchBlob\(template\)/);
+  assert.match(clothCss, /\.board-search/);
 });
 
 test("clothes boards hide delete until edit mode, and AI can send the kind UV map", () => {
@@ -170,8 +179,8 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /id: "heal"/);
   assert.match(clothJs, /id: "cutout"/);
   assert.match(clothJs, /setTool\("sculpt"\)/);
-  assert.match(clothHtml, /cloth\.js\?v=43/);
-  assert.match(clothHtml, /cloth\.css\?v=40/);
+  assert.match(clothHtml, /cloth\.js\?v=44/);
+  assert.match(clothHtml, /cloth\.css\?v=41/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {

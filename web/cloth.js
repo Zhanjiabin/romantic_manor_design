@@ -541,48 +541,47 @@
     return sorted[sorted.length >> 1] || 0;
   }
 
-  function sampleCornerBg(data, width, height) {
+  function borderMedianBg(src, width, height) {
     const rs = [];
     const gs = [];
     const bs = [];
-    const patch = 6;
-    const corners = [[0, 0], [width - patch, 0], [0, height - patch], [width - patch, height - patch]];
-    corners.forEach(([sx, sy]) => {
-      for (let y = Math.max(0, sy); y < Math.min(height, sy + patch); y += 1) {
-        for (let x = Math.max(0, sx); x < Math.min(width, sx + patch); x += 1) {
-          const i = (y * width + x) * 4;
-          rs.push(data[i]);
-          gs.push(data[i + 1]);
-          bs.push(data[i + 2]);
-        }
-      }
-    });
+    const push = (x, y) => {
+      const i = (y * width + x) * 4;
+      rs.push(src[i]);
+      gs.push(src[i + 1]);
+      bs.push(src[i + 2]);
+    };
+    for (let x = 0; x < width; x += 1) {
+      push(x, 0);
+      push(x, height - 1);
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+      push(0, y);
+      push(width - 1, y);
+    }
     return [medianChannel(rs), medianChannel(gs), medianChannel(bs)];
   }
 
-  function floodBackgroundMask(src, width, height, br, bg, bb, tol) {
+  function floodPaperBackground(src, width, height, br, bg, bb, tol) {
     const bgMask = new Uint8Array(width * height);
     const stack = [];
-    const patch = 6;
     const distBg = (i) => colorDist(src[i], src[i + 1], src[i + 2], br, bg, bb);
-    const seedPatch = (x0, y0) => {
-      const x1 = Math.min(width, Math.max(0, x0) + patch);
-      const y1 = Math.min(height, Math.max(0, y0) + patch);
-      for (let y = Math.max(0, y0); y < y1; y += 1) {
-        for (let x = Math.max(0, x0); x < x1; x += 1) {
-          const p = y * width + x;
-          if (bgMask[p]) continue;
-          if (distBg(p * 4) <= tol) {
-            bgMask[p] = 1;
-            stack.push(p);
-          }
-        }
+    const seed = (x, y) => {
+      const p = y * width + x;
+      if (bgMask[p]) return;
+      if (distBg(p * 4) <= tol) {
+        bgMask[p] = 1;
+        stack.push(p);
       }
     };
-    seedPatch(0, 0);
-    seedPatch(width - patch, 0);
-    seedPatch(0, height - patch);
-    seedPatch(width - patch, height - patch);
+    for (let x = 0; x < width; x += 1) {
+      seed(x, 0);
+      seed(x, height - 1);
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+      seed(0, y);
+      seed(width - 1, y);
+    }
     while (stack.length) {
       const p = stack.pop();
       const y = (p / width) | 0;
@@ -607,24 +606,36 @@
     return bgMask;
   }
 
-  function closeIslandMask(mask, width, height) {
-    const dilated = new Uint8Array(mask);
-    for (let y = 1; y < height - 1; y += 1) {
-      for (let x = 1; x < width - 1; x += 1) {
-        const p = y * width + x;
-        if (mask[p]) continue;
-        if (mask[p - 1] || mask[p + 1] || mask[p - width] || mask[p + width]) dilated[p] = 1;
+  function fillSmallInteriorBg(bgMask, width, height, maxArea) {
+    const seen = new Uint8Array(width * height);
+    const stack = [];
+    for (let start = 0; start < bgMask.length; start += 1) {
+      if (!bgMask[start] || seen[start]) continue;
+      stack.length = 0;
+      stack.push(start);
+      seen[start] = 1;
+      const cells = [];
+      let touchesBorder = false;
+      while (stack.length) {
+        const p = stack.pop();
+        const y = (p / width) | 0;
+        const x = p - y * width;
+        if (x === 0 || y === 0 || x === width - 1 || y === height - 1) touchesBorder = true;
+        if (!touchesBorder) cells.push(p);
+        const tryPush = (n) => {
+          if (!bgMask[n] || seen[n]) return;
+          seen[n] = 1;
+          stack.push(n);
+        };
+        if (x > 0) tryPush(p - 1);
+        if (x < width - 1) tryPush(p + 1);
+        if (y > 0) tryPush(p - width);
+        if (y < height - 1) tryPush(p + width);
+      }
+      if (!touchesBorder && cells.length < maxArea) {
+        for (let i = 0; i < cells.length; i += 1) bgMask[cells[i]] = 0;
       }
     }
-    const closed = new Uint8Array(dilated);
-    for (let y = 1; y < height - 1; y += 1) {
-      for (let x = 1; x < width - 1; x += 1) {
-        const p = y * width + x;
-        if (!dilated[p]) continue;
-        if (!dilated[p - 1] || !dilated[p + 1] || !dilated[p - width] || !dilated[p + width]) closed[p] = 0;
-      }
-    }
-    return closed;
   }
 
   function extractUvOutline(imageData, options = {}) {
@@ -632,24 +643,30 @@
     const height = imageData.height;
     const src = imageData.data;
     const fillIslands = Boolean(options.fillIslands);
-    const [br, bg, bb] = sampleCornerBg(src, width, height);
-    const bgMask = floodBackgroundMask(src, width, height, br, bg, bb, 46);
-    const island = new Uint8Array(width * height);
+    const [br, bg, bb] = borderMedianBg(src, width, height);
+    const bgLuma = br * 0.299 + bg * 0.587 + bb * 0.114;
+    let bgMask;
+    if (bgLuma < 80) {
+      bgMask = new Uint8Array(width * height);
+      for (let p = 0; p < bgMask.length; p += 1) {
+        const i = p * 4;
+        if (src[i + 3] <= 8 || colorDist(src[i], src[i + 1], src[i + 2], br, bg, bb) <= 42) bgMask[p] = 1;
+      }
+    } else {
+      bgMask = floodPaperBackground(src, width, height, br, bg, bb, 46);
+    }
+    fillSmallInteriorBg(bgMask, width, height, 1200);
+    const content = new Uint8Array(width * height);
     let filled = 0;
-    for (let p = 0; p < island.length; p += 1) {
+    for (let p = 0; p < content.length; p += 1) {
       if (!bgMask[p] && src[p * 4 + 3] > 8) {
-        island[p] = 1;
+        content[p] = 1;
         filled += 1;
       }
     }
-    const content = closeIslandMask(island, width, height);
-    filled = 0;
-    for (let p = 0; p < content.length; p += 1) if (content[p]) filled += 1;
     const out = new ImageData(width, height);
     const dst = out.data;
     const MAGENTA = [255, 20, 168];
-    const CYAN = [0, 245, 214];
-    const WHITE = [255, 255, 255];
     const lumaAt = (i) => src[i] * 0.299 + src[i + 1] * 0.587 + src[i + 2] * 0.114;
     const stamp = (p, rgb, alpha) => {
       const i = p * 4;
@@ -659,18 +676,17 @@
       dst[i + 2] = rgb[2];
       dst[i + 3] = alpha;
     };
-    const dilate = (minAlpha, rgb, alpha) => {
+    const thicken = () => {
       const copy = new Uint8ClampedArray(dst);
-      for (let y = 1; y < height - 1; y += 1) {
-        for (let x = 1; x < width - 1; x += 1) {
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
           const p = y * width + x;
-          if (copy[p * 4 + 3] >= minAlpha) continue;
-          let near = 0;
-          [[-1, 0], [1, 0], [0, -1], [0, 1]].forEach(([dx, dy]) => {
-            const n = copy[((y + dy) * width + (x + dx)) * 4 + 3];
-            if (n > near) near = n;
-          });
-          if (near >= minAlpha) stamp(p, rgb, alpha);
+          if (copy[p * 4 + 3] >= 200) continue;
+          const near = (x > 0 && copy[(p - 1) * 4 + 3] >= 200)
+            || (x < width - 1 && copy[(p + 1) * 4 + 3] >= 200)
+            || (y > 0 && copy[(p - width) * 4 + 3] >= 200)
+            || (y < height - 1 && copy[(p + width) * 4 + 3] >= 200);
+          if (near) stamp(p, MAGENTA, 255);
         }
       }
     };
@@ -690,9 +706,7 @@
           if (edge) stamp(p, MAGENTA, 255);
         }
       }
-      dilate(200, WHITE, 220);
-      dilate(180, CYAN, 235);
-      dilate(200, MAGENTA, 255);
+      thicken();
     } else {
       for (let y = 1; y < height - 1; y += 1) {
         for (let x = 1; x < width - 1; x += 1) {
@@ -705,8 +719,7 @@
           if (Math.hypot(gx, gy) >= 96) stamp(y * width + x, MAGENTA, 255);
         }
       }
-      dilate(200, WHITE, 220);
-      dilate(180, CYAN, 235);
+      thicken();
     }
     return out;
   }
@@ -728,7 +741,7 @@
       if (uvRow) uvRow.hidden = true;
       return;
     }
-    btn.title = "在当前作品上显示默认 UV 岛的外轮廓，导出时一并带上";
+    btn.title = "在当前作品上显示每个 UV 岛一条轮廓，导出时一并带上";
     btn.classList.toggle("on", uvGuideOn);
     btn.setAttribute("aria-pressed", String(uvGuideOn));
     const uvRow = document.getElementById("clothAiUv")?.closest(".cloth-ai-patch");

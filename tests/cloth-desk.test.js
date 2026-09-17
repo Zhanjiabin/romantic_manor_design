@@ -175,9 +175,11 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothCss, /\.canvas-hud-actions/);
   assert.match(clothCss, /\.canvas-hud-btn \{[\s\S]*?height:\s*36px/);
   assert.match(clothJs, /function extractUvOutline/);
-  assert.match(clothJs, /function floodBackgroundMask/);
-  assert.match(clothJs, /function closeIslandMask/);
+  assert.match(clothJs, /function borderMedianBg/);
+  assert.match(clothJs, /function floodPaperBackground/);
+  assert.match(clothJs, /function fillSmallInteriorBg/);
   assert.match(clothJs, /255,\s*20,\s*168/);
+  assert.doesNotMatch(clothJs, /0,\s*245,\s*214/);
   assert.match(clothJs, /function setUvGuideOn/);
   assert.match(clothJs, /function refreshUvGuide/);
   assert.match(clothJs, /function uvMapPngForKind/);
@@ -187,7 +189,7 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /setTool\("sculpt"\)/);
   assert.match(clothJs, /function kindHasUvIslands/);
   assert.match(clothJs, /kindId !== "expression"/);
-  assert.match(clothHtml, /cloth\.js\?v=47/);
+  assert.match(clothHtml, /cloth\.js\?v=48/);
   assert.match(clothHtml, /cloth\.css\?v=42/);
 });
 

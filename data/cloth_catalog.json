@@ -216,9 +216,9 @@
           "id": "hair:发型-1",
           "name": "默认 UV",
           "file": "uv.jpg",
-          "url": "/data/cloth/templates/hair/uv.jpg?v=3",
-          "width": 497,
-          "height": 258,
+          "url": "/data/cloth/templates/hair/uv.jpg?v=4",
+          "width": 512,
+          "height": 256,
           "index": 0
         }
       ]

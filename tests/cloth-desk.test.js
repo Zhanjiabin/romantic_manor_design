@@ -30,6 +30,8 @@ test("clothes desk keeps native paint sizes and one stock board per kind", () =>
   assert.equal(byId["hair"].diyType, "fair");
   assert.equal(byId["hair"].width, 512);
   assert.equal(byId["hair"].height, 256);
+  assert.equal(byId["hair"].templates[0].width, 512);
+  assert.equal(byId["hair"].templates[0].height, 256);
   assert.equal(byId["expression"].diyType, "biaoqing");
   assert.equal(byId["face"].diyType, "face");
   for (const kind of catalog.kinds) {
@@ -37,7 +39,7 @@ test("clothes desk keeps native paint sizes and one stock board per kind", () =>
     assert.equal(kind.templates.length, 1, kind.id);
     assert.equal(kind.templates[0].name, "默认 UV");
     assert.equal(kind.templates[0].file, "uv.jpg");
-    assert.match(kind.templates[0].url, /\/uv\.jpg\?v=3$/);
+    assert.match(kind.templates[0].url, /\/uv\.jpg\?v=\d+$/);
     assert.ok(fs.existsSync(path.join(root, "data/cloth/templates", kind.id, kind.templates[0].file)));
   }
   assert.equal(catalog.templateCount, catalog.kinds.length);

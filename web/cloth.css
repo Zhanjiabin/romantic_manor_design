@@ -1487,6 +1487,10 @@ html.is-mobile-workspace .cloth-app .mobile-sheet.open {
   backdrop-filter: blur(18px) saturate(1.15);
 }
 
+html.mobile-portrait .cloth-app .mobile-sheet {
+  max-height: min(66dvh, calc(var(--visual-vh) - 44px - var(--mobile-dock-stack))) !important;
+}
+
 html.mobile-landscape .cloth-app .rail-right.mobile-sheet.open,
 html.is-tablet-workspace .cloth-app .rail-right.mobile-sheet.open {
   animation: cloth-sheet-in-side 280ms var(--cloth-ease);
@@ -1690,7 +1694,7 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .template-card {
 html.is-mobile-workspace:not(.is-tablet-workspace) .template-card img,
 html.is-mobile-workspace:not(.is-tablet-workspace) .template-blank {
   width: 100%;
-  height: 64px;
+  height: 96px;
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .template-del {

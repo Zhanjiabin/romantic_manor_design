@@ -144,7 +144,7 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /id: "cutout"/);
   assert.match(clothJs, /setTool\("sculpt"\)/);
   assert.match(clothHtml, /cloth\.js\?v=38/);
-  assert.match(clothHtml, /cloth\.css\?v=37/);
+  assert.match(clothHtml, /cloth\.css\?v=38/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {
@@ -167,6 +167,7 @@ test("clothes desk work list can filter, search, and sort", () => {
   assert.match(clothCss, /grid-template-columns:\s*repeat\(2/);
   assert.match(clothCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.design-list \{[\s\S]*?repeat\(3/);
   assert.match(clothCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.template-grid \{[\s\S]*?repeat\(3/);
+  assert.match(clothCss, /html\.mobile-portrait \.cloth-app \.mobile-sheet \{[\s\S]*?66dvh/);
   assert.match(clothCss, /data-sheet-mode="works"/);
   assert.match(clothCss, /\.design-card-kind/);
   assert.match(clothJs, /function setClothToolSheetMode/);

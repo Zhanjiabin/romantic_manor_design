@@ -56,6 +56,10 @@ test("clothes desk exposes a new-design entry on phone chrome", () => {
   assert.match(clothCss, /#btnNewDesign/);
   assert.match(clothCss, /:not\(#btnNewDesign\)/);
   assert.match(clothCss, /min-width:\s*44px/);
+  assert.match(clothHtml, /id="btnSaveDesign"[^>]*>完成</);
+  assert.doesNotMatch(clothHtml, /id="btnSaveDesign"[^>]*>完成设计</);
+  assert.match(clothCss, /\.cloth-app \.save-status \{[\s\S]*?display:\s*none/);
+  assert.match(clothCss, /#btnSaveDesign \{[\s\S]*?min-height:\s*32px/);
 });
 
 test("clothes desk is a mobile workspace with pointer painting and jpg export", () => {
@@ -139,8 +143,8 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /id: "heal"/);
   assert.match(clothJs, /id: "cutout"/);
   assert.match(clothJs, /setTool\("sculpt"\)/);
-  assert.match(clothHtml, /cloth\.js\?v=32/);
-  assert.match(clothHtml, /cloth\.css\?v=30/);
+  assert.match(clothHtml, /cloth\.js\?v=38/);
+  assert.match(clothHtml, /cloth\.css\?v=37/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {
@@ -159,8 +163,20 @@ test("clothes desk work list can filter, search, and sort", () => {
   assert.match(clothJs, /classList\.toggle\("is-asc"/);
   assert.match(clothCss, /\.design-filter/);
   assert.match(clothCss, /#designSortDir/);
-  assert.match(clothCss, /\.design-filter-top/);
+  assert.match(clothCss, /\.design-toolbar/);
+  assert.match(clothCss, /grid-template-columns:\s*repeat\(2/);
+  assert.match(clothCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.design-list \{[\s\S]*?repeat\(3/);
+  assert.match(clothCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.template-grid \{[\s\S]*?repeat\(3/);
+  assert.match(clothCss, /data-sheet-mode="works"/);
   assert.match(clothCss, /\.design-card-kind/);
+  assert.match(clothJs, /function setClothToolSheetMode/);
+  assert.match(clothJs, /function revealClothCanvas/);
+  assert.match(clothJs, /await applyTemplate\(template\);/);
+  assert.match(clothJs, /revealClothCanvas\(\);/);
+  assert.match(clothJs, /renderDesigns\(\);\s*revealClothCanvas\(\);/);
+  assert.match(clothCss, /html\.is-mobile-workspace:not\(\.is-tablet-workspace\) \.cloth-stage \{[\s\S]*?grid-template-rows:\s*minmax\(0,\s*1fr\)/);
+  assert.match(clothHtml, /data-sheet-mode="draw"/);
+  assert.match(clothHtml, /cloth-works-block/);
 });
 
 test("clothes desk commits one history step per stroke and exposes redo on the phone dock", () => {
@@ -203,6 +219,12 @@ test("clothes desk AI design fills prompt templates without sending them", () =>
     assert.match(clothHtml, /id="btnClearMask"/);
     assert.match(clothCss, /\.cloth-ai-patch/);
   assert.match(clothJs, /function openAiDialog/);
+  assert.match(clothJs, /function setAiTab/);
+  assert.match(clothHtml, /data-ai-tab="prompt"/);
+  assert.match(clothHtml, /data-ai-tab="settings"/);
+  assert.match(clothHtml, /data-ai-pane="settings"/);
+  assert.match(clothCss, /\.cloth-ai-tabs/);
+  assert.match(clothCss, /\.cloth-ai-tab\.on/);
   assert.match(clothJs, /clothAiPromptPick/);
   assert.doesNotMatch(clothJs, /clothAiPromptPick[\s\S]{0,400}generateAiDesign/);
   assert.match(clothJs, /textarea\.value = row\.prompt/);

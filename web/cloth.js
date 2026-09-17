@@ -57,6 +57,7 @@
     history: [],
     redo: [],
     designs: [],
+    designId: "",
     boards: [],
     savedAt: 0,
     designName: "",
@@ -89,6 +90,8 @@
   let toolBeforePan = "";
   let sessionTimer = 0;
   let fitTimer = 0;
+  let fitRetry = 0;
+  let fitAttempts = 0;
   let historyBusy = false;
   let strokeDirty = false;
   let previewBodyKind = "";
@@ -376,11 +379,24 @@
     if (!board) return;
     const width = canvas.width || 256;
     const height = canvas.height || 256;
+    const boardW = board.clientWidth;
+    const boardH = board.clientHeight;
+    if (boardW < 40 || boardH < 40) {
+      if (fitAttempts < 24 && !fitRetry) {
+        fitAttempts += 1;
+        fitRetry = requestAnimationFrame(() => {
+          fitRetry = 0;
+          fitCanvas();
+        });
+      }
+      return;
+    }
+    fitAttempts = 0;
     const pad = 24;
-    const zoom = Math.max(0.25, Math.min((board.clientWidth - pad) / width, (board.clientHeight - pad) / height));
+    const zoom = Math.max(0.25, Math.min((boardW - pad) / width, (boardH - pad) / height));
     state.zoom = zoom;
-    state.panX = (board.clientWidth - width * zoom) / 2;
-    state.panY = (board.clientHeight - height * zoom) / 2;
+    state.panX = (boardW - width * zoom) / 2;
+    state.panY = (boardH - height * zoom) / 2;
     applyCamera();
   }
 
@@ -1429,7 +1445,8 @@
       items.forEach((item) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "design-card";
+        button.className = "design-card" + (item.id && item.id === state.designId ? " on" : "");
+        button.title = item.name || "";
         const img = document.createElement("img");
         img.alt = item.name;
         img.src = item.png;
@@ -1652,14 +1669,17 @@
 
   async function selectTemplate(template) {
     if (!template) return;
-    if (template.id === (state.templateId || BLANK_ID) && !state.dirty) return;
-    if (state.dirty) {
-      const ok = typeof appConfirm === "function"
-        ? await appConfirm("画布上已经动过笔。换成这块底板会盖掉正在画的内容。", { title: "更换底板", okLabel: "更换" })
-        : window.confirm("更换底板？未保存的绘制会丢掉。");
-      if (!ok) return;
+    const same = template.id === (state.templateId || BLANK_ID) && !state.dirty;
+    if (!same) {
+      if (state.dirty) {
+        const ok = typeof appConfirm === "function"
+          ? await appConfirm("画布上已经动过笔。换成这块底板会盖掉正在画的内容。", { title: "更换底板", okLabel: "更换" })
+          : window.confirm("更换底板？未保存的绘制会丢掉。");
+        if (!ok) return;
+      }
+      await applyTemplate(template);
     }
-    await applyTemplate(template);
+    revealClothCanvas();
   }
 
   async function restoreDefault() {
@@ -1680,10 +1700,12 @@
       if (!ok) return;
     }
     state.designName = "";
+    state.designId = "";
     const nameInput = document.getElementById("clothSaveName");
     if (nameInput) nameInput.value = "";
     await applyTemplate({ id: BLANK_ID, blank: true });
     setSaveStatus("未保存");
+    renderDesigns();
     closeClothSheets();
   }
 
@@ -1864,8 +1886,9 @@
   }
 
   function setAiStatus(text) {
-    const node = document.getElementById("clothAiStatus");
-    if (node) node.textContent = text || "";
+    document.querySelectorAll("[data-ai-status]").forEach((node) => {
+      node.textContent = text || "";
+    });
   }
 
   function aiContractText() {
@@ -1987,8 +2010,21 @@
     }
   }
 
+  function setAiTab(id) {
+    const tab = id === "settings" ? "settings" : "prompt";
+    document.querySelectorAll("[data-ai-tab]").forEach((button) => {
+      const on = button.dataset.aiTab === tab;
+      button.classList.toggle("on", on);
+      button.setAttribute("aria-selected", String(on));
+    });
+    document.querySelectorAll("[data-ai-pane]").forEach((pane) => {
+      pane.hidden = pane.dataset.aiPane !== tab;
+    });
+  }
+
   function openAiDialog() {
     closeClothSheets();
+    setAiTab("prompt");
     syncAiDialog();
     setAiStatus("");
     setModalVisible("dlgClothAi", true);
@@ -2001,6 +2037,7 @@
   async function refreshAiModels() {
     const key = String(document.getElementById("clothAiKey")?.value || "").trim();
     if (!key) {
+      setAiTab("settings");
       setAiStatus("先填 API Key，再刷新模型。");
       return;
     }
@@ -2176,10 +2213,12 @@
     const model = custom || String(document.getElementById("clothAiModel")?.value || "").trim();
     const prompt = String(document.getElementById("clothAiPrompt")?.value || "").trim();
     if (!key) {
+      setAiTab("settings");
       setAiStatus("先填 API Key。");
       return;
     }
     if (!model) {
+      setAiTab("settings");
       setAiStatus("先选或手填一个图片模型。");
       return;
     }
@@ -2290,6 +2329,7 @@
       savedAt: Date.now(),
     };
     state.designs = [...state.designs, item].slice(-40);
+    state.designId = item.id;
     const bundle = designsBundle();
     persistDesignsLocal(bundle);
     renderDesigns();
@@ -2355,12 +2395,15 @@
   }
 
   async function openDesign(item) {
+    state.designId = item.id || "";
     state.designName = item.name || "";
     state.gender = item.gender === "male" ? "male" : "female";
     await selectKind(item.kind, { templateId: item.templateId, png: item.png, silent: true, keepHistory: false });
     document.getElementById("clothSaveName").value = item.name || "";
     renderKinds();
     renderTemplates();
+    renderDesigns();
+    revealClothCanvas();
   }
 
   function mergeDesigns(local, remote) {
@@ -2578,6 +2621,24 @@
     window.MobileWorkspace?.closeSheet("cloth-tools");
   }
 
+  function revealClothCanvas() {
+    closeClothSheets();
+    requestAnimationFrame(() => fitCanvas());
+  }
+
+  function setClothToolSheetMode(mode) {
+    const sheet = document.getElementById("clothToolSheet");
+    const works = mode === "works";
+    sheet?.setAttribute("data-sheet-mode", works ? "works" : "draw");
+    const toolsBtn = document.getElementById("btnClothMobileTools");
+    const filesBtn = document.getElementById("btnClothMobileFiles");
+    const open = sheet?.classList.contains("open");
+    toolsBtn?.classList.toggle("on", Boolean(open && !works));
+    filesBtn?.classList.toggle("on", Boolean(open && works));
+    toolsBtn?.setAttribute("aria-expanded", String(Boolean(open && !works)));
+    filesBtn?.setAttribute("aria-expanded", String(Boolean(open && works)));
+  }
+
   function bindSheets() {
     window.MobileWorkspace?.registerSheet({
       id: "cloth-templates",
@@ -2590,22 +2651,44 @@
     window.MobileWorkspace?.registerSheet({
       id: "cloth-tools",
       root: "#clothToolSheet",
-      trigger: "#btnClothMobileTools",
       backdrop: "#clothSheetBackdrop",
       inert: [".cloth-stage", ".cloth-app .topbar"],
       mutex: "cloth-workspace",
+      onOpen() {
+        setClothToolSheetMode(document.getElementById("clothToolSheet")?.getAttribute("data-sheet-mode") || "draw");
+      },
+      onClose() {
+        ["btnClothMobileTools", "btnClothMobileFiles"].forEach((id) => {
+          const button = document.getElementById(id);
+          button?.classList.remove("on");
+          button?.setAttribute("aria-expanded", "false");
+        });
+      },
     });
     document.getElementById("btnClothMobileTemplates")?.addEventListener("click", () => {
       window.MobileWorkspace?.toggleSheet("cloth-templates");
     });
     document.getElementById("btnClothMobileTools")?.addEventListener("click", () => {
-      window.MobileWorkspace?.toggleSheet("cloth-tools");
+      const sheet = document.getElementById("clothToolSheet");
+      const open = sheet?.classList.contains("open");
+      const works = sheet?.getAttribute("data-sheet-mode") === "works";
+      if (open && !works) {
+        window.MobileWorkspace?.closeSheet("cloth-tools");
+        return;
+      }
+      setClothToolSheetMode("draw");
+      if (!open) window.MobileWorkspace?.openSheet("cloth-tools");
     });
     document.getElementById("btnClothMobileFiles")?.addEventListener("click", () => {
-      window.MobileWorkspace?.openSheet("cloth-tools");
-      requestAnimationFrame(() => {
-        document.getElementById("clothDesignSection")?.scrollIntoView({ block: "start" });
-      });
+      const sheet = document.getElementById("clothToolSheet");
+      const open = sheet?.classList.contains("open");
+      const works = sheet?.getAttribute("data-sheet-mode") === "works";
+      if (open && works) {
+        window.MobileWorkspace?.closeSheet("cloth-tools");
+        return;
+      }
+      setClothToolSheetMode("works");
+      if (!open) window.MobileWorkspace?.openSheet("cloth-tools");
     });
     document.getElementById("clothSheetBackdrop")?.addEventListener("click", () => closeClothSheets());
   }
@@ -2651,6 +2734,9 @@
       button.addEventListener("click", () => {
         if (button.dataset.cutout === "auto") cutoutAuto();
       });
+    });
+    document.querySelectorAll("[data-ai-tab]").forEach((button) => {
+      button.addEventListener("click", () => setAiTab(button.dataset.aiTab));
     });
     document.getElementById("clothAiPatch")?.addEventListener("change", () => {
       const on = Boolean(document.getElementById("clothAiPatch")?.checked);
@@ -2826,6 +2912,10 @@
       }
     });
     window.addEventListener("resize", () => {
+      clearTimeout(fitTimer);
+      fitTimer = setTimeout(() => fitCanvas(), 80);
+    });
+    window.visualViewport?.addEventListener("resize", () => {
       clearTimeout(fitTimer);
       fitTimer = setTimeout(() => fitCanvas(), 80);
     });

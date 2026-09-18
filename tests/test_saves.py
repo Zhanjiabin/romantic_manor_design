@@ -152,18 +152,9 @@ def test_cloth_designs_refuse_empty_overwrite():
         save_cloth_bundle({"boards": {"savedAt": 300, "items": [], "removeIds": ["b1"]}})
         after_board_del = load_cloth_bundle()["boards"]
         assert {item["id"] for item in after_board_del["items"]} == {"b2"}
-        small_path = Path(tmp) / "cloth-designs.json"
         save_cloth_bundle({"designs": {"savedAt": 600, "items": [{"id": "c3", "name": "小", "png": "y", "savedAt": 600}]}})
-        assert small_path.with_name("cloth-designs.json.prev").is_file()
-        blob = "data:image/jpeg;base64," + ("A" * 1_200_000)
-        save_cloth_bundle({"designs": {"savedAt": 700, "items": [{"id": "c4", "name": "大图", "png": blob, "savedAt": 700}]}})
-        large_path = Path(tmp) / "cloth-designs.json"
-        assert large_path.stat().st_size > 1_000_000
-        before_prev = large_path.with_name("cloth-designs.json.prev").read_bytes()
-        save_cloth_bundle({"designs": {"savedAt": 800, "items": [{"id": "c5", "name": "后写", "png": "z", "savedAt": 800}]}})
-        assert large_path.with_name("cloth-designs.json.prev").read_bytes() == before_prev
-        names = {item["name"] for item in load_cloth_bundle()["designs"]["items"]}
-        assert "后写" in names and "大图" in names
+        assert not (Path(tmp) / "cloth-designs.json.prev").is_file()
+        assert not (Path(tmp) / "cloth-boards.json.prev").is_file()
     finally:
         if prev is None:
             os.environ.pop("MANOR_SAVES", None)

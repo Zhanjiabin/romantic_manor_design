@@ -937,12 +937,6 @@ def _write_cloth_items(path: Path, incoming: dict) -> None:
     payload.pop("removeIds", None)
     payload["items"] = merged_items
     payload["savedAt"] = max(incoming_at, existing_at)
-    if path.name in {"cloth-designs.json", "cloth-boards.json"} and path.is_file():
-        try:
-            if path.stat().st_size <= 1_000_000:
-                shutil.copy2(path, path.with_name(path.name + ".prev"))
-        except OSError:
-            pass
     _atomic_write(path, payload)
 
 

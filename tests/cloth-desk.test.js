@@ -189,7 +189,16 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /setTool\("sculpt"\)/);
   assert.match(clothJs, /function kindHasUvIslands/);
   assert.match(clothJs, /kindId !== "expression"/);
-  assert.match(clothHtml, /cloth\.js\?v=48/);
+  assert.match(clothHtml, /cloth\.js\?v=49/);
+  assert.match(clothJs, /function snapshotSaveImage/);
+  assert.match(clothJs, /image\/jpeg", 0\.86/);
+  assert.match(clothJs, /await nextPaint\(\);/);
+  const saveDesign = clothJs.slice(clothJs.indexOf("async function saveDesign"), clothJs.indexOf("async function saveBoard"));
+  assert.match(saveDesign, /png: snapshotSaveImage\(\)/);
+  assert.doesNotMatch(saveDesign, /sessionSnapshot\(\)/);
+  assert.match(saveDesign, /okBtn\.textContent = "保存中"/);
+  assert.match(clothJs, /index < 8 && row\.png/);
+  assert.match(clothJs, /if \(!newer\.png && older\.png\) newer\.png = older\.png/);
   assert.match(clothHtml, /cloth\.css\?v=42/);
 });
 
@@ -285,7 +294,11 @@ test("clothes desk AI design fills prompt templates without sending them", () =>
   assert.match(clothCss, /\.cloth-ai-tab\.on/);
   assert.match(clothJs, /clothAiPromptPick/);
   assert.doesNotMatch(clothJs, /clothAiPromptPick[\s\S]{0,400}generateAiDesign/);
-  assert.match(clothJs, /textarea\.value = row\.prompt/);
+  assert.match(clothJs, /function sanitizeAiPrompt/);
+  assert.match(clothJs, /function setGenerateBusy/);
+  assert.match(clothJs, /button\.textContent = "生成中"/);
+  assert.match(clothJs, /if \(generateBusy\) return;/);
+  assert.match(clothJs, /setAiPrompt\(row\.prompt\)/);
   assert.doesNotMatch(clothJs, /console\.log\([^)]*apiKey/);
   assert.match(clothCss, /min-height:\s*44px/);
   assert.match(clothCss, /\.cloth-ai-prompt/);

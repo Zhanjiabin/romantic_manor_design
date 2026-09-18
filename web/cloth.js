@@ -115,6 +115,7 @@
   let designEditOn = false;
   let saveDesignBusy = false;
   let saveBoardBusy = false;
+  let generateBusy = false;
   const beauty = {
     family: "",
     snap: null,
@@ -318,6 +319,23 @@
 
   function snapshotPng() {
     return canvas.toDataURL("image/png");
+  }
+
+  function snapshotSaveImage() {
+    const scratch = document.createElement("canvas");
+    scratch.width = canvas.width;
+    scratch.height = canvas.height;
+    const sctx = scratch.getContext("2d", { alpha: false });
+    sctx.fillStyle = PAPER;
+    sctx.fillRect(0, 0, scratch.width, scratch.height);
+    sctx.drawImage(canvas, 0, 0);
+    return scratch.toDataURL("image/jpeg", 0.86);
+  }
+
+  function nextPaint() {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
   }
 
   function commitHistory() {
@@ -934,7 +952,7 @@
       else label.textContent = "图案设计";
     }
     const generate = document.getElementById("btnClothAiGenerate");
-    if (generate) generate.textContent = patch?.checked && ink ? "只改圈选" : "生成到画布";
+    if (generate && !generateBusy) generate.textContent = patch?.checked && ink ? "只改圈选" : "生成到画布";
     document.querySelectorAll("[data-selection-bar]").forEach((bar) => {
       bar.hidden = !ink;
     });
@@ -2212,10 +2230,39 @@
   }
 
   function persistDesignsLocal(bundle) {
+    const items = Array.isArray(bundle?.items) ? bundle.items : [];
+    const compact = {
+      v: bundle?.v || 1,
+      savedAt: bundle?.savedAt || Date.now(),
+      items: items.map((row, index) => {
+        const next = {
+          id: row.id,
+          name: row.name,
+          kind: row.kind,
+          gender: row.gender,
+          templateId: row.templateId,
+          savedAt: row.savedAt,
+        };
+        if (index < 8 && row.png) next.png = row.png;
+        return next;
+      }),
+    };
     try {
-      deskSet(DESIGNS_KEY, JSON.stringify(bundle));
+      deskSet(DESIGNS_KEY, JSON.stringify(compact));
     } catch (error) {
-      console.warn(error);
+      try {
+        compact.items = compact.items.map((row) => ({
+          id: row.id,
+          name: row.name,
+          kind: row.kind,
+          gender: row.gender,
+          templateId: row.templateId,
+          savedAt: row.savedAt,
+        }));
+        deskSet(DESIGNS_KEY, JSON.stringify(compact));
+      } catch (inner) {
+        console.warn(inner || error);
+      }
     }
   }
 
@@ -2294,6 +2341,37 @@
 
   function selectedPrompt() {
     return kindPrompts().find((row) => row.id === state.aiPromptId) || null;
+  }
+
+  function sanitizeAiPrompt(text) {
+    return String(text || "")
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/\[[^\]]*\]\([^)]+\.(?:jpe?g|png|webp|gif)[^)]*\)/gi, "")
+      .replace(/(?:https?:\/\/\S+\.(?:jpe?g|png|webp|gif)|\b[A-Za-z0-9_-]{12,}\.(?:jpe?g|png|webp|gif))\)?/gi, "")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function readAiPrompt() {
+    const textarea = document.getElementById("clothAiPrompt");
+    const cleaned = sanitizeAiPrompt(textarea?.value || "");
+    if (textarea && textarea.value !== cleaned) textarea.value = cleaned;
+    return cleaned;
+  }
+
+  function setAiPrompt(text) {
+    const textarea = document.getElementById("clothAiPrompt");
+    if (textarea) textarea.value = sanitizeAiPrompt(text);
+  }
+
+  function setGenerateBusy(busy) {
+    generateBusy = Boolean(busy);
+    const button = document.getElementById("btnClothAiGenerate");
+    if (!button) return;
+    button.disabled = generateBusy;
+    if (generateBusy) button.textContent = "生成中";
+    else syncMaskChrome();
   }
 
   function setAiStatus(text) {
@@ -2407,6 +2485,7 @@
     fillAiModels();
     fillAiPromptPick();
     fillAiRefs();
+    readAiPrompt();
     const contract = document.getElementById("clothAiContract");
     if (contract) contract.textContent = aiContractText();
     const patch = document.getElementById("clothAiPatch");
@@ -2418,7 +2497,7 @@
         const first = kindPrompts()[0];
         if (first) {
           state.aiPromptId = first.id;
-          textarea.value = first.prompt;
+          setAiPrompt(first.prompt);
           const pick = document.getElementById("clothAiPromptPick");
           if (pick) pick.value = first.id;
         }
@@ -2490,7 +2569,8 @@
 
   async function saveCurrentPrompt() {
     const textarea = document.getElementById("clothAiPrompt");
-    const text = String(textarea?.value || "").trim();
+    const text = sanitizeAiPrompt(textarea?.value || "");
+    if (textarea && textarea.value !== text) textarea.value = text;
     if (!text) {
       setAiStatus("编辑框是空的，没法保存。");
       return;
@@ -2539,7 +2619,7 @@
       id: `p${Date.now().toString(36)}`,
       kind: state.kindId,
       name: String(typed).trim() || fallback,
-      prompt: String(textarea?.value || "").trim() || (kindPrompts()[0]?.prompt || ""),
+      prompt: sanitizeAiPrompt(textarea?.value || "") || (kindPrompts()[0]?.prompt || ""),
       savedAt: Date.now(),
     };
     state.prompts = [...(state.prompts || []), item];
@@ -2587,11 +2667,10 @@
     state.promptDeletedIds = (state.promptDeletedIds || []).filter((id) => !builtinIds.has(id));
     state.aiPromptId = "";
     savePrompts();
-    const textarea = document.getElementById("clothAiPrompt");
     const first = kindPrompts()[0];
-    if (first && textarea) {
+    if (first) {
       state.aiPromptId = first.id;
-      textarea.value = first.prompt;
+      setAiPrompt(first.prompt);
     }
     fillAiPromptPick();
     setAiStatus("已恢复本类内置模板。");
@@ -2627,56 +2706,61 @@
   }
 
   async function generateAiDesign() {
-    const key = String(document.getElementById("clothAiKey")?.value || "").trim();
-    const custom = String(document.getElementById("clothAiModelCustom")?.value || "").trim();
-    const model = custom || String(document.getElementById("clothAiModel")?.value || "").trim();
-    const prompt = String(document.getElementById("clothAiPrompt")?.value || "").trim();
-    if (!key) {
-      setAiTab("settings");
-      setAiStatus("先填 API Key。");
-      return;
-    }
-    if (!model) {
-      setAiTab("settings");
-      setAiStatus("先选或手填一个图片模型。");
-      return;
-    }
-    if (!prompt) {
-      setAiStatus("提示词是空的。可以先选一份模板再改。");
-      return;
-    }
-    const patchOn = Boolean(document.getElementById("clothAiPatch")?.checked);
-    const maskPng = patchOn ? exportMaskPng() : null;
-    if (patchOn && !maskPng) {
-      setAiStatus("先用笔触里的「圈选」涂要改的地方，再勾「只改圈选区域」。");
-      return;
-    }
-    const useUvMap = aiUvMapOn();
-    let uvMapPng = null;
-    if (useUvMap) {
-      try {
-        uvMapPng = await uvMapPngForKind(state.kindId);
-      } catch (error) {
-        console.warn(error);
-      }
-      if (!uvMapPng) {
-        setAiStatus("当前种类没有默认 UV，没法带上底图轮廓。");
+    if (generateBusy) return;
+    setGenerateBusy(true);
+    setAiStatus("生成中…");
+    readAiPrompt();
+    try {
+      const key = String(document.getElementById("clothAiKey")?.value || "").trim();
+      const custom = String(document.getElementById("clothAiModelCustom")?.value || "").trim();
+      const model = custom || String(document.getElementById("clothAiModel")?.value || "").trim();
+      const prompt = readAiPrompt();
+      if (!key) {
+        setAiTab("settings");
+        setAiStatus("先填 API Key。");
         return;
       }
-    }
-    if (state.dirty && !maskPng) {
-      const ok = typeof appConfirm === "function"
-        ? await appConfirm("生成结果会画到当前画布上。未保存的笔触会被盖住。", { title: "生成到画布", okLabel: "生成" })
-        : window.confirm("生成会盖住当前画布，继续？");
-      if (!ok) return;
-    }
-    state.aiKey = key;
-    state.aiModel = model;
-    saveAiSettings();
-    const button = document.getElementById("btnClothAiGenerate");
-    if (button) button.disabled = true;
-    setAiStatus("正在生成，可能要等一会儿…");
-    try {
+      if (!model) {
+        setAiTab("settings");
+        setAiStatus("先选或手填一个图片模型。");
+        return;
+      }
+      if (!prompt) {
+        setAiStatus("提示词是空的。可以先选一份模板再改。");
+        return;
+      }
+      const patchOn = Boolean(document.getElementById("clothAiPatch")?.checked);
+      const maskPng = patchOn ? exportMaskPng() : null;
+      if (patchOn && !maskPng) {
+        setAiStatus("先用笔触里的「圈选」涂要改的地方，再勾「只改圈选区域」。");
+        return;
+      }
+      const useUvMap = aiUvMapOn();
+      let uvMapPng = null;
+      if (useUvMap) {
+        try {
+          uvMapPng = await uvMapPngForKind(state.kindId);
+        } catch (error) {
+          console.warn(error);
+        }
+        if (!uvMapPng) {
+          setAiStatus("当前种类没有默认 UV，没法带上底图轮廓。");
+          return;
+        }
+      }
+      if (state.dirty && !maskPng) {
+        const ok = typeof appConfirm === "function"
+          ? await appConfirm("生成结果会画到当前画布上。未保存的笔触会被盖住。", { title: "生成到画布", okLabel: "生成" })
+          : window.confirm("生成会盖住当前画布，继续？");
+        if (!ok) {
+          setAiStatus("");
+          return;
+        }
+      }
+      state.aiKey = key;
+      state.aiModel = model;
+      saveAiSettings();
+      setAiStatus("正在生成，可能要等一会儿…");
       const { width, height } = canvasSize();
       const referencePng = maskPng ? snapshotPng() : await aiReferencePng();
       const res = await fetch("/api/cloth-ai/generate", {
@@ -2703,11 +2787,13 @@
       await restorePng(payload.png);
       commitHistory();
       markDirty();
+      readAiPrompt();
       setAiStatus(maskPng ? "圈选已改，圈外像素锁在原画上。不满意可再圈、再生成。" : "已画到画布，可继续改提示词再生成。");
     } catch (error) {
-      setAiStatus(String(error.message || error));
+      const message = sanitizeAiPrompt(String(error.message || error)) || "生图失败";
+      setAiStatus(message);
     } finally {
-      if (button) button.disabled = false;
+      setGenerateBusy(false);
     }
   }
 
@@ -2755,9 +2841,13 @@
     const okBtn = document.getElementById("btnClothSaveOk");
     const name = String(document.getElementById("clothSaveName")?.value || "").trim() || currentKind()?.label || "未命名衣服";
     saveDesignBusy = true;
-    if (okBtn) okBtn.disabled = true;
+    if (okBtn) {
+      okBtn.disabled = true;
+      okBtn.textContent = "保存中";
+    }
     setModalVisible("dlgClothSave", false);
     setSaveStatus("保存中…");
+    await nextPaint();
     state.designName = name;
     const now = Date.now();
     const item = {
@@ -2766,7 +2856,7 @@
       kind: state.kindId,
       gender: state.gender,
       templateId: state.templateId,
-      png: snapshotPng(),
+      png: snapshotSaveImage(),
       savedAt: now,
     };
     state.designs = [item, ...state.designs.filter((row) => row.id !== item.id)].slice(0, 80);
@@ -2775,7 +2865,6 @@
     renderDesigns();
     try {
       await putClothSaves({
-        session: sessionSnapshot(),
         designs: { v: 1, savedAt: now, items: [item] },
       });
       state.dirty = false;
@@ -2785,7 +2874,10 @@
       setSaveStatus("本机已保存");
     } finally {
       saveDesignBusy = false;
-      if (okBtn) okBtn.disabled = false;
+      if (okBtn) {
+        okBtn.disabled = false;
+        okBtn.textContent = "保存";
+      }
     }
   }
 
@@ -2926,7 +3018,15 @@
     [...remoteItems, ...localItems].forEach((item) => {
       if (!item?.id) return;
       const prev = byId.get(item.id);
-      if (!prev || Number(item.savedAt) >= Number(prev.savedAt)) byId.set(item.id, item);
+      if (!prev) {
+        byId.set(item.id, item);
+        return;
+      }
+      const itemNewer = Number(item.savedAt) >= Number(prev.savedAt);
+      const newer = { ...(itemNewer ? item : prev) };
+      const older = itemNewer ? prev : item;
+      if (!newer.png && older.png) newer.png = older.png;
+      byId.set(item.id, newer);
     });
     return { items: [...byId.values()], savedAt: Math.max(Number(local?.savedAt) || 0, Number(remote?.savedAt) || 0) };
   }
@@ -3270,8 +3370,7 @@
       const id = event.target.value;
       state.aiPromptId = id;
       const row = kindPrompts().find((item) => item.id === id);
-      const textarea = document.getElementById("clothAiPrompt");
-      if (row && textarea) textarea.value = row.prompt;
+      if (row) setAiPrompt(row.prompt);
       setAiStatus(row ? "已填入「" + row.name + "」，可以改完再生成。" : "");
     });
     document.getElementById("clothAiKey")?.addEventListener("change", () => {
@@ -3579,8 +3678,10 @@
     state.prompts = Array.isArray(promptState.items) ? promptState.items : [];
     state.promptDeletedIds = Array.isArray(promptState.deletedIds) ? promptState.deletedIds : [];
     const push = {};
-    if ((merged.items || []).length && (!remote?.designs?.items || !remote.designs.items.length)) {
-      push.designs = designsBundle();
+    const remoteDesignIds = new Set((remote?.designs?.items || []).map((row) => row?.id).filter(Boolean));
+    const extraDesigns = (merged.items || []).filter((row) => row?.id && row.png && !remoteDesignIds.has(row.id));
+    if (extraDesigns.length) {
+      push.designs = { v: 1, savedAt: merged.savedAt || Date.now(), items: extraDesigns };
     }
     if ((mergedBoards.items || []).length && (!remote?.boards?.items || !remote.boards.items.length)) {
       push.boards = boardsBundle();

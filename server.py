@@ -31,10 +31,12 @@ from codec.building import dumps_gbk as dumps_building
 from codec.building import loads_gbk as loads_building
 from codec.building import public_document as public_building_document
 from codec.ale import AleError, dumps_png
+from codec.board_ani import decode_board_ani, encode_board_ani, safe_ani_filename
 from codec.terrain import dumps_document as dumps_terrain_document
 from codec.terrain import dumps_gbk as dumps_terrain
 from codec.terrain import loads_gbk as loads_terrain
 from export_xlsx import build_materials_xlsx
+from board_ai import generate_board_image
 from cloth_ai import generate_image, list_image_models, public_error
 from saves import (
     clear_building_papers,
@@ -42,21 +44,26 @@ from saves import (
     delete_building_paper,
     delete_terrain_version,
     list_full_backups,
+    load_board_bundle,
     load_building_bundle,
     load_building_paper,
     load_building_papers,
     load_cloth_bundle,
     load_full_backup,
     load_paper_thumb,
+    load_remodel_bundle,
     load_terrain_asset,
     load_terrain_index,
     load_terrain_version,
     paper_exists,
+    papers_folder,
+    save_board_bundle,
     save_building_bundle,
     save_building_papers,
     save_cloth_bundle,
     save_paper_library_meta,
     save_paper_thumb,
+    save_remodel_bundle,
     save_terrain_asset,
     save_terrain_draft,
     save_terrain_version,
@@ -704,6 +711,16 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/saves/cloth":
             body = json.dumps(load_cloth_bundle(), ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
+        if path == "/api/saves/board":
+            body = json.dumps(load_board_bundle(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
+        if path == "/api/saves/remodel":
+            body = json.dumps(load_remodel_bundle(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
+        if path == "/api/saves/remodel/papers":
+            with papers_folder("remodel-papers"):
+                body = json.dumps(load_building_papers(), ensure_ascii=False).encode("utf-8")
+            return self._send(200, body, "application/json; charset=utf-8")
         if path == "/api/saves/backup":
             body = json.dumps(list_full_backups(), ensure_ascii=False).encode("utf-8")
             return self._send(200, body, "application/json; charset=utf-8")
@@ -741,6 +758,27 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._send(404, b"missing", "text/plain")
                 payload, content_type = thumb
                 return self._send(200, payload, content_type, cache="public, max-age=86400")
+            return self._send(404, b"not found", "text/plain")
+        remodel_paper_prefix = "/api/saves/remodel/papers/"
+        if path.startswith(remodel_paper_prefix):
+            with papers_folder("remodel-papers"):
+                rest = path[len(remodel_paper_prefix) :]
+                parts = [part for part in rest.split("/") if part]
+                if not parts:
+                    return self._send(404, b"missing", "text/plain")
+                ident = parts[0]
+                if len(parts) == 1:
+                    paper = load_building_paper(ident)
+                    if not paper:
+                        return self._send(404, b"missing", "text/plain")
+                    body = json.dumps(paper, ensure_ascii=False).encode("utf-8")
+                    return self._send(200, body, "application/json; charset=utf-8")
+                if len(parts) == 2 and parts[1] == "thumb":
+                    thumb = load_paper_thumb(ident)
+                    if not thumb:
+                        return self._send(404, b"missing", "text/plain")
+                    payload, content_type = thumb
+                    return self._send(200, payload, content_type, cache="public, max-age=86400")
             return self._send(404, b"not found", "text/plain")
         return self._send(404, b"not found", "text/plain")
 
@@ -873,6 +911,75 @@ class Handler(SimpleHTTPRequestHandler):
                 code, payload = public_error(exc)
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 return self._send(code, body, "application/json; charset=utf-8")
+        if path == "/api/board/export-ani":
+            try:
+                obj = json.loads(raw.decode("utf-8") or "null")
+            except json.JSONDecodeError:
+                return self._send(400, b'{"error":"bad json"}', "application/json; charset=utf-8")
+            if not isinstance(obj, dict):
+                return self._send(400, b'{"error":"bad json"}', "application/json; charset=utf-8")
+            try:
+                pages = obj.get("pages")
+                if not isinstance(pages, list) or not pages:
+                    return self._send(400, b'{"error":"missing pages"}', "application/json; charset=utf-8")
+                ale = encode_board_ani(pages, interval_ms=int(obj.get("interval") or 1000))
+                filename = safe_ani_filename(str(obj.get("name") or ""))
+                body = json.dumps(
+                    {
+                        "filename": filename,
+                        "ale": base64.b64encode(ale).decode("ascii"),
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                payload = {"error": str(exc) or "export failed"}
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                return self._send(400, body, "application/json; charset=utf-8")
+        if path == "/api/board/import-ani":
+            try:
+                obj = json.loads(raw.decode("utf-8") or "null")
+            except json.JSONDecodeError:
+                return self._send(400, b'{"error":"bad json"}', "application/json; charset=utf-8")
+            if not isinstance(obj, dict):
+                return self._send(400, b'{"error":"bad json"}', "application/json; charset=utf-8")
+            try:
+                blob = base64.b64decode(str(obj.get("data") or ""), validate=False)
+                if not blob:
+                    return self._send(400, b'{"error":"missing data"}', "application/json; charset=utf-8")
+                doc = decode_board_ani(blob)
+                body = json.dumps(doc, ensure_ascii=False).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                payload = {"error": str(exc) or "import failed"}
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                return self._send(400, body, "application/json; charset=utf-8")
+        if path in ("/api/board-ai/models", "/api/board-ai/generate"):
+            try:
+                obj = json.loads(raw.decode("utf-8") or "null")
+            except json.JSONDecodeError:
+                return self._send(400, b'{"error":"bad json"}', "application/json; charset=utf-8")
+            if not isinstance(obj, dict):
+                return self._send(400, b'{"error":"bad json"}', "application/json; charset=utf-8")
+            try:
+                if path == "/api/board-ai/models":
+                    models = list_image_models(str(obj.get("apiKey") or ""), obj.get("baseUrl"))
+                    body = json.dumps({"models": models}, ensure_ascii=False).encode("utf-8")
+                    return self._send(200, body, "application/json; charset=utf-8")
+                png = generate_board_image(
+                    api_key=str(obj.get("apiKey") or ""),
+                    model=str(obj.get("model") or ""),
+                    prompt=str(obj.get("prompt") or ""),
+                    reference_png=obj.get("referencePng"),
+                    mask_png=obj.get("maskPng"),
+                    base_url=obj.get("baseUrl"),
+                )
+                body = json.dumps({"png": png}, ensure_ascii=False).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                code, payload = public_error(exc)
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                return self._send(code, body, "application/json; charset=utf-8")
         return self._send(404, b"not found", "text/plain")
 
     def do_PUT(self):
@@ -906,6 +1013,21 @@ class Handler(SimpleHTTPRequestHandler):
                     self.headers.get("X-Paper-Revision") or "",
                 )
                 return self._send(200, b'{"ok":true}', "application/json")
+            remodel_paper_prefix = "/api/saves/remodel/papers/"
+            if path.startswith(remodel_paper_prefix) and path.endswith("/thumb"):
+                ident = path[len(remodel_paper_prefix) : -len("/thumb")].strip("/")
+                if "/" in ident or not ident:
+                    return self._send(404, b"missing", "text/plain")
+                with papers_folder("remodel-papers"):
+                    if not paper_exists(ident):
+                        return self._send(404, b"missing", "text/plain")
+                    save_paper_thumb(
+                        ident,
+                        raw,
+                        self.headers.get("Content-Type") or "",
+                        self.headers.get("X-Paper-Revision") or "",
+                    )
+                return self._send(200, b'{"ok":true}', "application/json")
             obj = json.loads(raw.decode("utf-8") or "null")
             if path == "/api/saves/terrain/draft":
                 save_terrain_draft(obj)
@@ -920,12 +1042,27 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/saves/cloth":
                 body = json.dumps(save_cloth_bundle(obj), ensure_ascii=False).encode("utf-8")
                 return self._send(200, body, "application/json; charset=utf-8")
+            if path == "/api/saves/board":
+                body = json.dumps(save_board_bundle(obj), ensure_ascii=False).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
+            if path == "/api/saves/remodel":
+                body = json.dumps(save_remodel_bundle(obj), ensure_ascii=False).encode("utf-8")
+                return self._send(200, body, "application/json; charset=utf-8")
             if path == "/api/saves/building/papers":
                 if obj.get("replace"):
                     clear_building_papers()
                 if "groups" in obj:
                     save_paper_library_meta(obj.get("groups"))
                 saved = save_building_papers(obj.get("papers") or [])
+                payload = json.dumps({"ok": True, "saved": saved}).encode("utf-8")
+                return self._send(200, payload, "application/json")
+            if path == "/api/saves/remodel/papers":
+                with papers_folder("remodel-papers"):
+                    if obj.get("replace"):
+                        clear_building_papers()
+                    if "groups" in obj:
+                        save_paper_library_meta(obj.get("groups"))
+                    saved = save_building_papers(obj.get("papers") or [])
                 payload = json.dumps({"ok": True, "saved": saved}).encode("utf-8")
                 return self._send(200, payload, "application/json")
         except Exception as e:
@@ -946,9 +1083,21 @@ class Handler(SimpleHTTPRequestHandler):
             removed = clear_building_papers()
             payload = json.dumps({"ok": True, "removed": removed}).encode("utf-8")
             return self._send(200, payload, "application/json")
+        if path == "/api/saves/remodel/papers":
+            with papers_folder("remodel-papers"):
+                removed = clear_building_papers()
+            payload = json.dumps({"ok": True, "removed": removed}).encode("utf-8")
+            return self._send(200, payload, "application/json")
         paper_prefix = "/api/saves/building/papers/"
         if path.startswith(paper_prefix):
             if delete_building_paper(path[len(paper_prefix) :]):
+                return self._send(200, b'{"ok":true}', "application/json")
+            return self._send(404, b"missing", "text/plain")
+        remodel_paper_prefix = "/api/saves/remodel/papers/"
+        if path.startswith(remodel_paper_prefix):
+            with papers_folder("remodel-papers"):
+                ok = delete_building_paper(path[len(remodel_paper_prefix) :])
+            if ok:
                 return self._send(200, b'{"ok":true}', "application/json")
             return self._send(404, b"missing", "text/plain")
         return self._send(404, b"not found", "text/plain")

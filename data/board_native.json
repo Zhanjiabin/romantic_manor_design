@@ -1,0 +1,33 @@
+{
+  "v": 1,
+  "source": "sourceCode/leo/rcsys/basesvr/light/light.cfg [高清电子广告牌设计]",
+  "kind": "billboard-hd",
+  "label": "高清电子广告牌",
+  "cols": 36,
+  "rows": 24,
+  "maxPages": 10,
+  "cellPx": 18,
+  "designSize": [646, 432],
+  "composeSize": [648, 432],
+  "toolCols": 5,
+  "toolRows": 10,
+  "darkFrame": 50,
+  "defaultIntervalMs": 1000,
+  "aiSize": [720, 480],
+  "lightSrc": "svr/light/img/highlight.png#5,11",
+  "toolSrc": "svr/light/img/smalllight.png",
+  "darkColor": "#757575",
+  "highlight": "data/board_highlight.png",
+  "palette": [
+    "#bb9393", "#d57676", "#ff9797", "#ffcbcb", "#ffe4e4",
+    "#c0ab9e", "#d6a685", "#ffcaa6", "#ffe5d2", "#fff1e8",
+    "#b7b787", "#d3d365", "#ffff86", "#ffffc3", "#ffffe0",
+    "#abbb92", "#afd574", "#d5ff95", "#eaffcb", "#f4ffe4",
+    "#9bbfaa", "#83d6a5", "#a3ffc9", "#d2ffe4", "#e7fff2",
+    "#a7b8c4", "#91bcd8", "#b2e0ff", "#daefff", "#ebf7ff",
+    "#a190ba", "#9a71d5", "#be91ff", "#dfc9ff", "#efe3ff",
+    "#b79abf", "#c280d7", "#e9a1ff", "#f5d1ff", "#f9e7ff",
+    "#b583a4", "#d259ad", "#ff7dd6", "#ffbeea", "#ffddf4",
+    "#8e8e8e", "#acacac", "#dbdbdb", "#f9f9f9", "#ffffff"
+  ]
+}

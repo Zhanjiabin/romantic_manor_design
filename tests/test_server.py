@@ -148,6 +148,7 @@ def test_should_open_browser_skips_remote():
 def test_safe_next_path():
     assert safe_next_path("/web/building.html") == "/web/building.html"
     assert safe_next_path("/web/cloth.html") == "/web/cloth.html"
+    assert safe_next_path("/web/board.html") == "/web/board.html"
     assert safe_next_path("//evil") == "/"
     assert safe_next_path("https://evil.example/") == "/"
     assert safe_next_path("/login") == "/"
@@ -719,4 +720,53 @@ def test_http_full_backup_is_copy_only_and_isolated():
             os.environ.pop("MANOR_SAVES", None)
         else:
             os.environ["MANOR_SAVES"] = prev_saves
+        _restore_env(saved)
+
+
+def test_http_board_ani_roundtrip():
+    saved = _clear_auth_env()
+    os.environ["MANOR_USER"] = "ada"
+    os.environ["MANOR_PASSWORD"] = "secret"
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = httpd.server_address[:2]
+        headers = {**_login_headers(host, port, "ada", "secret"), "Content-Type": "application/json"}
+        page = [12] * (36 * 24)
+        page[0] = 50
+        conn = HTTPConnection(host, port, timeout=20)
+        conn.request(
+            "POST",
+            "/api/board/export-ani",
+            body=json.dumps({"name": "夜市/灯牌", "pages": [page]}, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+        )
+        exported = conn.getresponse()
+        payload = json.loads(exported.read())
+        conn.close()
+        assert exported.status == 200, payload
+        assert payload["filename"] == "夜市灯牌.ale"
+        blob = base64.b64decode(payload["ale"])
+        assert blob.startswith(b"AEX\x00")
+
+        conn = HTTPConnection(host, port, timeout=20)
+        conn.request(
+            "POST",
+            "/api/board/import-ani",
+            body=json.dumps({"data": payload["ale"]}),
+            headers=headers,
+        )
+        imported = conn.getresponse()
+        doc = json.loads(imported.read())
+        conn.close()
+        assert imported.status == 200, doc
+        assert doc["cols"] == 36
+        assert doc["rows"] == 24
+        assert len(doc["pages"]) == 1
+        assert doc["pages"][0][0] == 50
+        assert sum(1 for value in doc["pages"][0][1:] if value == 12) > (36 * 24) * 0.8
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
         _restore_env(saved)

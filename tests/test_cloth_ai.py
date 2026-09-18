@@ -19,7 +19,7 @@ def _png_bytes(size=(32, 32), color=(180, 70, 90, 255)) -> bytes:
 
 def test_builtin_prompts_cover_every_cloth_kind():
     rows = cloth_ai.load_builtin_prompts()
-    kinds = set(cloth_ai.KIND_SIZES)
+    kinds = set(cloth_ai.CLOTH_KIND_SIZES)
     got = {row["kind"] for row in rows}
     assert kinds <= got
     assert all(row["prompt"] for row in rows)
@@ -81,6 +81,20 @@ def test_layout_contract_uv_map_keeps_islands():
     hair = cloth_ai.layout_contract("hair", 512, 256, False, False, True)
     assert "512×256" in hair
     assert "轮廓地图" in hair
+
+
+def test_billboard_layout_is_led_not_uv():
+    text = cloth_ai.layout_contract("billboard-hd", 720, 480, False)
+    assert "720×480" in text
+    assert "36×24" in text
+    assert "UV" not in text
+    assert cloth_ai.canvas_size("billboard-hd") == (720, 480)
+    assert cloth_ai.KIND_SIZES["female-short"] == (256, 256)
+    ref = cloth_ai.layout_contract("billboard-hd", 720, 480, True)
+    assert "构图参考" in ref
+    assert "UV" not in ref
+    assert "电子广告牌" in cloth_ai.BILLBOARD_CHAT_IMAGE_INTENT
+    assert "UV" in cloth_ai.CHAT_IMAGE_INTENT
 
 
 def test_generate_uses_images_generations(monkeypatch):

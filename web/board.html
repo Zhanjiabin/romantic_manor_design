@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="boot-pending">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="广告牌设计桌" />
+  <meta name="theme-color" content="#1a2430" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>广告牌设计桌</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/favicon.ico" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/web/app.css?v=107" />
+  <link rel="stylesheet" href="/web/desk-chrome.css?v=13" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
+  <link rel="stylesheet" href="/web/board.css?v=10" />
+</head>
+<body>
+  <div class="app board-app" id="boardApp">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-title">设计桌</span>
+        </div>
+        <nav class="desk-switch-inline" aria-label="设计桌切换">
+          <a href="/">地形<span class="desk-switch-rest">设计桌</span></a>
+          <a href="/web/building.html">建筑<span class="desk-switch-rest">设计桌</span></a>
+          <a href="/web/cloth.html">衣服<span class="desk-switch-rest">设计桌</span></a>
+          <a href="/web/remodel.html">改造<span class="desk-switch-rest">设计桌</span></a>
+          <a class="on" href="/web/board.html" aria-current="page">广告牌<span class="desk-switch-rest">设计桌</span></a>
+        </nav>
+        <div class="save-status" id="saveStatus">未保存</div>
+      </div>
+      <div class="top-actions">
+        <button type="button" class="btn btn-compact" id="btnUndo" title="撤销 Ctrl+Z">撤销</button>
+        <button type="button" class="btn btn-compact" id="btnRedo" title="重做 Ctrl+Y">重做</button>
+        <button type="button" class="btn btn-compact" id="btnImportPng" title="导入到本桌：ALE / GIF / 图片。游戏设计窗没有文件导入，要用复制粘贴">导入</button>
+        <button type="button" class="btn btn-compact" id="btnExportPng" title="导出当前页 JPG">导出图片</button>
+        <button type="button" class="btn btn-compact" id="btnPreview" title="预览翻页、播放和间隔">预览</button>
+        <button type="button" class="btn btn-compact btn-primary" id="btnBoardCopy" title="复制当前页到剪贴板，再到游戏高清电子广告牌设计里粘贴">复制到游戏</button>
+        <button type="button" class="btn btn-compact" id="btnFinalize" title="下载 .ale 备用。进游戏请先复制粘贴，再在游戏里最终定稿">定稿</button>
+        <button type="button" class="btn btn-compact" id="btnBoardAi" title="用第三方图片模型出图再压成灯珠">AI 设计</button>
+        <button type="button" class="btn btn-compact" id="btnBoardSmart" title="上传图片，本地分析色号网格或色系，压成 36×24 灯珠">智能生成</button>
+        <button type="button" class="btn btn-compact board-new-btn" id="btnNewDesign" title="新建空白广告牌">新建</button>
+        <button type="button" class="btn btn-compact btn-primary" id="btnSaveDesign" title="保存到本桌作品">完成</button>
+        <button type="button" class="top-command-btn top-backup-btn" data-desk-backup hidden title="全量备份当前账号数据并下载，不会改原文件">备份</button>
+        <button type="button" class="top-command-btn top-account-btn" id="btnSwitchAccount" data-account-switch hidden title="切换账号">
+          <span class="top-account-kicker">账号</span>
+          <span class="desk-account-name">切换账号</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="workspace board-workspace">
+      <aside class="rail rail-left board-rail board-rail-pages mobile-sheet" id="boardPageSheet">
+        <div class="mobile-sheet-handle" aria-hidden="true"></div>
+        <div class="rail-block board-rail-scroll" data-mobile-sheet-scroll>
+          <div class="rail-head">规格</div>
+          <p class="kind-meta" id="kindMeta">36×24 · 最多 10 页</p>
+          <div class="rail-head board-board-head">页 <span class="project-count" id="pageCount">1</span></div>
+          <div class="page-strip" id="pageStrip" role="listbox" aria-label="广告牌页"></div>
+          <div class="io-row page-io board-copy-io">
+            <button type="button" class="btn btn-primary" id="btnBoardCopyRail" title="复制当前页到剪贴板，游戏里粘贴">复制到游戏</button>
+            <button type="button" class="btn btn-compact" data-board-page="copy-all" title="复制全部页，游戏里用全部粘贴">复制全部页</button>
+          </div>
+          <div class="io-row page-io">
+            <button type="button" class="btn btn-compact" data-board-page="add">新建页</button>
+            <button type="button" class="btn btn-compact" data-board-page="paste" title="从剪贴板贴回本桌当前页">粘贴页</button>
+            <button type="button" class="btn btn-compact" data-board-page="paste-all" title="从剪贴板贴回本桌全部页">全部粘贴</button>
+            <button type="button" class="btn btn-compact" data-board-page="del">删除页</button>
+            <button type="button" class="btn btn-compact" data-board-page="fill">全部填充</button>
+            <button type="button" class="btn btn-compact" data-board-page="clear">清空页</button>
+          </div>
+          <div class="io-row page-io">
+            <button type="button" class="btn btn-compact" id="btnPlayPages" aria-pressed="false">播放</button>
+            <button type="button" class="btn btn-compact" id="btnPrevPage">上一页</button>
+            <button type="button" class="btn btn-compact" id="btnNextPage">下一页</button>
+          </div>
+          <label class="field board-interval-field">
+            <span>播放间隔（毫秒）</span>
+            <input class="input" id="pageInterval" type="number" min="50" max="99999" step="50" value="1000" inputmode="numeric" aria-label="每页播放时间毫秒" />
+          </label>
+        </div>
+      </aside>
+
+      <main class="board-stage" id="boardStage">
+        <div class="stage-bar">
+          <span class="stage-meta"><strong id="canvasSizeLabel">36×24</strong> · <span id="designerLabel">灯珠设计</span></span>
+          <div class="stage-actions">
+            <button type="button" class="btn btn-compact" id="btnClearMask" hidden title="去掉圈选">清空圈选</button>
+            <button type="button" class="btn btn-compact" id="btnBoardCopyHud" title="复制当前页到剪贴板，再到游戏里粘贴">复制到游戏</button>
+            <button type="button" class="btn btn-compact" id="btnBoardSmartHud" title="上传图片，本地分析色系后压成灯珠">智能生成</button>
+            <button type="button" class="btn btn-compact btn-primary" id="btnBoardAiHud" title="用第三方图片模型出图再压成灯珠">AI 设计</button>
+          </div>
+        </div>
+
+        <div class="stage-canvas-wrap">
+          <div class="paint-board" id="paintBoard" tabindex="0" aria-label="高清电子广告牌画布">
+            <div class="paint-view" id="paintView">
+              <canvas id="paintCanvas" width="648" height="432" aria-label="高清电子广告牌 36×24 灯珠"></canvas>
+            </div>
+          </div>
+        </div>
+        <p class="paint-hint" id="paintHint">进游戏请点「复制到游戏」，再打开游戏高清电子广告牌设计，Ctrl+V 或点粘贴；多页用「复制全部页」再在游戏里全部粘贴。一指点灯，双指拖动缩放。</p>
+      </main>
+
+      <aside class="rail rail-right board-rail mobile-sheet" id="boardToolSheet" data-sheet-mode="draw">
+        <div class="mobile-sheet-handle" aria-hidden="true"></div>
+        <div class="rail-block board-rail-scroll" data-mobile-sheet-scroll>
+          <div class="board-draw-block">
+          <div class="rail-head">笔触</div>
+          <div class="brush-grid" id="toolGrid"></div>
+          <div class="board-tool-strip">
+            <div class="size-presets" id="sizePresets">
+              <button type="button" data-size="1">1</button>
+              <button type="button" data-size="2">2</button>
+              <button type="button" data-size="3">3</button>
+            </div>
+            <label class="brush-size-mini">
+              <input id="brushSize" type="range" min="1" max="6" value="1" aria-label="笔触大小" />
+              <b id="brushSizeLabel">1</b>
+            </label>
+          </div>
+          <div class="rail-head">灯色 · 5×10</div>
+          <div class="palette-grid" id="paletteGrid" role="listbox" aria-label="灯珠调色板"></div>
+          <div class="io-row">
+            <button type="button" class="btn btn-compact" data-board-io="copy">复制到游戏</button>
+            <button type="button" class="btn btn-compact" data-board-io="new">新建</button>
+            <button type="button" class="btn btn-compact" data-board-io="import">导入</button>
+            <button type="button" class="btn btn-compact" id="btnBoardSmartRail">智能生成</button>
+            <button type="button" class="btn btn-compact" data-board-io="export">导出</button>
+            <button type="button" class="btn btn-compact" data-board-io="preview">预览</button>
+            <button type="button" class="btn btn-compact" id="btnBoardAiRail">AI</button>
+            <button type="button" class="btn btn-compact" data-board-io="finalize">定稿</button>
+          </div>
+          </div>
+          <div class="board-works-block" id="boardDesignSection">
+          <div class="rail-head board-board-head">作品 <span class="project-count" id="designCount">0</span>
+            <button type="button" class="btn btn-compact board-board-edit" id="btnDesignEdit" aria-pressed="false" title="进入编辑后可删除或重命名">编辑</button>
+          </div>
+          <div class="design-filter design-toolbar" id="designFilterBar">
+            <input class="input design-search" id="designSearch" type="search" placeholder="搜索作品" autocomplete="off" aria-label="搜索作品" />
+          </div>
+          <div class="design-list" id="designList"></div>
+          <button type="button" class="btn btn-wide phone-backup-btn" data-desk-backup hidden title="全量备份当前账号数据并下载，不会改原文件">备份账号</button>
+          <button type="button" class="btn btn-wide phone-account-btn" data-account-switch hidden title="切换账号">
+            <span class="desk-account-name">切换账号</span>
+          </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <nav class="mobile-bottom-dock board-mobile-dock" id="boardMobileDock" aria-label="移动端广告牌工具">
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileNew" title="新建空白广告牌">
+        <span class="mobile-dock-glyph">＋</span><span>新建</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobilePages" aria-expanded="false">
+        <span class="mobile-dock-glyph">▦</span><span>页</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileTools" aria-expanded="false">
+        <span class="mobile-dock-glyph">✎</span><span>工具</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobilePan" aria-pressed="false">
+        <span class="mobile-dock-glyph">✥</span><span>移动</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileUndo" title="撤销一步">
+        <span class="mobile-dock-glyph">↶</span><span>撤销</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileRedo" title="重做一步">
+        <span class="mobile-dock-glyph">↷</span><span>重做</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileCopy" title="复制当前页到游戏">
+        <span class="mobile-dock-glyph">⎘</span><span>复制</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileSmart">
+        <span class="mobile-dock-glyph">▣</span><span>识别</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileAi">
+        <span class="mobile-dock-glyph">✦</span><span>AI</span>
+      </button>
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileFiles" aria-expanded="false">
+        <span class="mobile-dock-glyph">☰</span><span>作品</span>
+      </button>
+    </nav>
+    <button type="button" class="mobile-sheet-backdrop" id="boardSheetBackdrop" aria-label="关闭面板" hidden></button>
+  </div>
+
+  <div class="modal" id="dlgBoardPreview" hidden>
+    <div class="modal-card board-preview-card" role="dialog" aria-modal="true" aria-labelledby="boardPreviewTitle">
+      <div class="modal-cap">
+        <span id="boardPreviewTitle">电子广告牌预览</span>
+        <button type="button" class="icon-x" data-close-modal="dlgBoardPreview" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body board-preview-body" data-mobile-sheet-scroll>
+        <p class="dlg-desc" id="previewHint">和游戏预览一样：先看当前页，再播放或翻页。间隔只影响预览，进游戏后仍用「设置时间」。</p>
+        <canvas id="previewCanvas" width="648" height="432" aria-label="广告牌预览"></canvas>
+        <label class="field board-preview-interval">
+          <span>播放时间间隔</span>
+          <span class="board-preview-interval-row">
+            <input class="input" id="previewInterval" type="number" min="50" max="99999" step="50" value="1000" inputmode="numeric" aria-label="预览每页播放时间毫秒" />
+            <b>毫秒</b>
+          </span>
+        </label>
+        <div class="board-preview-ops">
+          <button type="button" class="btn btn-compact" id="btnPreviewPrev">上一页</button>
+          <button type="button" class="btn btn-compact" id="btnPreviewPlay" aria-pressed="false">播放</button>
+          <button type="button" class="btn btn-compact" id="btnPreviewNext">下一页</button>
+        </div>
+        <p class="board-preview-page"><span id="previewCur">1</span> / <span id="previewMax">1</span></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgBoardSmart" hidden>
+    <div class="modal-card board-smart-card" role="dialog" aria-modal="true" aria-labelledby="boardSmartTitle">
+      <div class="modal-cap">
+        <span id="boardSmartTitle">智能生成</span>
+        <button type="button" class="icon-x" data-close-modal="dlgBoardSmart" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body board-smart-body" data-mobile-sheet-scroll>
+        <p class="dlg-desc">不用 API。上传像素稿、色号表或普通 PNG/JPG，本地点格子、收色系，再压成游戏 36×24 灯珠。白底空格会关灯。</p>
+        <div class="board-smart-actions">
+          <button type="button" class="btn btn-compact" id="btnBoardSmartPick">选择 PNG 或 JPG</button>
+        </div>
+        <p class="board-smart-status" id="boardSmartStatus" role="status">还没选图</p>
+        <canvas id="smartPreview" width="648" height="432" hidden aria-label="智能生成预览"></canvas>
+        <button type="button" class="btn btn-primary btn-block" id="btnBoardSmartApply" disabled>生成到灯牌</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgBoardAi" hidden>
+    <div class="modal-card board-ai-card" role="dialog" aria-modal="true" aria-labelledby="boardAiTitle">
+      <div class="modal-cap">
+        <span id="boardAiTitle">AI 设计</span>
+        <button type="button" class="icon-x" data-close-modal="dlgBoardAi" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body board-ai-body" data-mobile-sheet-scroll>
+        <div class="board-ai-tabs" role="tablist" aria-label="AI 设计">
+          <button type="button" class="board-ai-tab on" role="tab" data-ai-tab="prompt" aria-selected="true" aria-controls="boardAiPanePrompt">生成</button>
+          <button type="button" class="board-ai-tab" role="tab" data-ai-tab="settings" aria-selected="false" aria-controls="boardAiPaneSettings">设置</button>
+        </div>
+        <div class="board-ai-layout" id="boardAiPanePrompt" data-ai-pane="prompt" role="tabpanel">
+          <section class="board-ai-main">
+            <label class="field">
+              <span>提示词模板 · <b id="boardAiKindLabel">高清电子广告牌</b></span>
+              <select class="input" id="boardAiPromptPick" aria-label="提示词模板"></select>
+            </label>
+            <div class="board-ai-prompt-actions">
+              <button type="button" class="btn btn-compact" id="btnBoardAiPromptNew">新建</button>
+              <button type="button" class="btn btn-compact" id="btnBoardAiPromptSave">保存</button>
+              <button type="button" class="btn btn-compact" id="btnBoardAiPromptDel">删除</button>
+              <button type="button" class="btn btn-compact" id="btnBoardAiPromptReset" title="恢复本类默认">默认</button>
+            </div>
+            <label class="field board-ai-prompt-field">
+              <span>提示词</span>
+              <textarea class="input board-ai-prompt" id="boardAiPrompt" rows="8" maxlength="4000"></textarea>
+            </label>
+            <div class="board-ai-ref">
+              <span>参考图</span>
+              <div class="board-ai-ref-modes" role="radiogroup" aria-label="参考图来源">
+                <button type="button" class="board-ai-ref-mode on" data-ai-ref="none" aria-pressed="true">不参考</button>
+                <button type="button" class="board-ai-ref-mode" data-ai-ref="template" aria-pressed="false">参考模板</button>
+                <button type="button" class="board-ai-ref-mode" data-ai-ref="upload" aria-pressed="false">上传图片</button>
+              </div>
+              <div class="board-ai-ref-grid" id="boardAiRefGrid" hidden role="listbox" aria-label="内置参考模板"></div>
+              <div class="board-ai-ref-upload" id="boardAiRefUpload" hidden>
+                <button type="button" class="btn btn-compact" id="btnBoardAiRefPick">选择 PNG 或 JPG</button>
+                <button type="button" class="btn btn-compact" id="btnBoardAiRefClear" hidden>清除</button>
+                <p class="board-ai-ref-name" id="boardAiRefUploadName">还没选图</p>
+                <img class="board-ai-ref-preview" id="boardAiRefPreview" alt="上传的参考图" hidden />
+              </div>
+            </div>
+            <div class="board-ai-options">
+              <label class="board-ai-patch">
+                <input type="checkbox" id="boardAiPatch" />
+                <span>只改圈选灯珠（圈外锁住）</span>
+              </label>
+            </div>
+            <div class="board-ai-foot">
+              <p class="board-ai-status" id="boardAiStatus" data-ai-status role="status"></p>
+              <button type="button" class="btn btn-primary btn-block" id="btnBoardAiGenerate">生成到灯牌</button>
+            </div>
+          </section>
+        </div>
+        <div class="board-ai-layout" id="boardAiPaneSettings" data-ai-pane="settings" role="tabpanel" hidden>
+          <aside class="board-ai-side">
+            <label class="field">
+              <span>API Key · OpenRouterX</span>
+              <input class="input" id="boardAiKey" type="password" autocomplete="off" spellcheck="false" placeholder="在 api.openroutex.top 控制台复制 Key" />
+            </label>
+            <p class="board-ai-provider-note">图片接口：https://api.openroutex.top/v1（只接入生图，不走文本）</p>
+            <div class="board-ai-model-row">
+              <label class="field">
+                <span>图片模型</span>
+                <select class="input" id="boardAiModel" aria-label="图片模型"></select>
+              </label>
+              <button type="button" class="btn btn-compact" id="btnBoardAiModels">刷新列表</button>
+            </div>
+            <label class="field">
+              <span>其他模型</span>
+              <input class="input" id="boardAiModelCustom" maxlength="80" placeholder="列表里没有时手填" autocomplete="off" />
+            </label>
+            <details class="board-ai-rules">
+              <summary>生成时自动附上的画布规则</summary>
+              <p id="boardAiContract">输出必须是 720×480 横版广告牌大色块，随后压成游戏 36×24 灯珠，不要人物写真或小字。</p>
+            </details>
+            <p class="kind-meta" data-ai-status></p>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgBoardClip" hidden>
+    <div class="modal-card board-smart-card" role="dialog" aria-modal="true" aria-labelledby="boardClipTitle">
+      <div class="modal-cap">
+        <span id="boardClipTitle">复制到游戏</span>
+        <button type="button" class="icon-x" data-close-modal="dlgBoardClip" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body board-smart-body" data-mobile-sheet-scroll>
+        <p class="dlg-desc" id="boardClipHint">浏览器没把内容写进系统剪贴板。点下面的框，按 Ctrl+C（手机长按复制），再到游戏里粘贴。</p>
+        <textarea class="input board-clip-text" id="boardClipText" readonly rows="6" aria-label="灯珠复制文本"></textarea>
+        <button type="button" class="btn btn-primary btn-block" id="btnBoardClipSelect">全选并复制</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgBoardSave" hidden>
+    <div class="modal-card modal-narrow" role="dialog" aria-modal="true" aria-labelledby="boardSaveTitle">
+      <div class="modal-cap">
+        <span id="boardSaveTitle">完成设计</span>
+        <button type="button" class="icon-x" data-close-modal="dlgBoardSave" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <p class="dlg-desc" id="boardSaveHint">保存到本桌。进游戏请点「复制到游戏」，打开游戏高清电子广告牌设计后粘贴；游戏里再点最终定稿才会变成可摆放的灯牌。</p>
+        <label class="field">
+          <span>作品名称</span>
+          <input class="input" id="boardSaveName" maxlength="48" placeholder="例如 夜市灯牌" autocomplete="off" />
+        </label>
+        <button type="button" class="btn btn-primary btn-block" id="btnBoardSaveOk">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="dlgApp" hidden>
+    <div class="modal-card modal-narrow app-dialog" role="dialog" aria-modal="true" aria-labelledby="dlgAppTitle" aria-describedby="dlgAppMessage">
+      <div class="modal-cap">
+        <span id="dlgAppTitle">提示</span>
+        <button type="button" class="icon-x" id="dlgAppClose" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <p class="app-dialog-msg" id="dlgAppMessage"></p>
+        <label class="field" id="dlgAppField" hidden>
+          <span id="dlgAppFieldLabel">名称</span>
+          <input class="input" id="dlgAppInput" maxlength="48" autocomplete="off" />
+        </label>
+        <div class="app-dialog-actions">
+          <button type="button" class="btn" id="dlgAppCancel">取消</button>
+          <button type="button" class="btn btn-primary" id="dlgAppOk">确定</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="fileBoardImage" accept=".ale,.json,image/png,image/jpeg,image/webp,image/gif" hidden />
+  <input type="file" id="fileBoardAiRef" accept="image/png,image/jpeg,.png,.jpg,.jpeg" hidden />
+  <input type="file" id="fileBoardSmart" accept="image/png,image/jpeg,.png,.jpg,.jpeg" hidden />
+  <script src="/web/app-dialog.js?v=2"></script>
+  <script src="/web/desk-account.js?v=7"></script>
+  <script src="/web/mobile-workspace.js?v=14"></script>
+  <script src="/web/board-image.js?v=2"></script>
+  <script src="/web/board.js?v=9"></script>
+</body>
+</html>

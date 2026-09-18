@@ -1,4 +1,4 @@
-/* Shared desk switcher + chrome polish — terrain, building, and cloth. */
+/* Shared desk switcher + chrome polish — terrain, building, cloth, and billboard. */
 
 .app .desk-switch-inline {
   display: inline-flex;
@@ -16,7 +16,7 @@
   display: inline-flex;
   align-items: center;
   height: 28px;
-  padding: 0 14px;
+  padding: 0 10px;
   border: 0;
   border-radius: 999px;
   color: var(--ink-soft);
@@ -102,7 +102,7 @@
 
 @media (max-width: 720px) {
   .app .desk-switch-inline a {
-    padding: 0 10px;
+    padding: 0 8px;
     font-size: 11px;
   }
 }

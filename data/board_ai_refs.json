@@ -1,0 +1,46 @@
+{
+  "v": 1,
+  "kind": "billboard-hd",
+  "templates": [
+    {
+      "id": "sun-hills",
+      "name": "太阳小山",
+      "file": "sun-hills.png",
+      "url": "/data/board/refs/sun-hills.png",
+      "promptId": "builtin:billboard-hd:default",
+      "kind": "billboard-hd"
+    },
+    {
+      "id": "shop-sign",
+      "name": "店铺招牌",
+      "file": "shop-sign.png",
+      "url": "/data/board/refs/shop-sign.png",
+      "promptId": "builtin:billboard-hd:shop",
+      "kind": "billboard-hd"
+    },
+    {
+      "id": "festival-lantern",
+      "name": "节日灯笼",
+      "file": "festival-lantern.png",
+      "url": "/data/board/refs/festival-lantern.png",
+      "promptId": "builtin:billboard-hd:festival",
+      "kind": "billboard-hd"
+    },
+    {
+      "id": "pixel-bird",
+      "name": "像素小鸟",
+      "file": "pixel-bird.png",
+      "url": "/data/board/refs/pixel-bird.png",
+      "promptId": "builtin:billboard-hd:pixel",
+      "kind": "billboard-hd"
+    },
+    {
+      "id": "neon-night",
+      "name": "夜市霓虹",
+      "file": "neon-night.png",
+      "url": "/data/board/refs/neon-night.png",
+      "promptId": "builtin:billboard-hd:neon",
+      "kind": "billboard-hd"
+    }
+  ]
+}

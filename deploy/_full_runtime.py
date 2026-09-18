@@ -26,7 +26,7 @@ REMOTE = "/opt/manor-desk"
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {"saves", "ale_png_cache", "__pycache__", ".git", ".pytest_cache"}
 SKIP_SUFFIX = {".pyc", ".pyo"}
-ROOT_FILES = ("server.py", "saves.py", "export_xlsx.py", "game_paths.py", "cloth_ai.py")
+ROOT_FILES = ("server.py", "saves.py", "export_xlsx.py", "game_paths.py", "cloth_ai.py", "board_ai.py")
 FOLDERS = ("web", "codec")
 DATA_SUFFIX = {".json", ".jpg", ".jpeg", ".png", ".gif", ".webp"}
 

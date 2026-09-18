@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "locked": false,
+  "desk": "item-remodel",
+  "method": "合成时间 * 1000 + mat.cfg local id, same encoder as building papers",
+  "native": {
+    "packet": "svr_designguide.txt Item_物件设计向导 GetMatInfoOk uid=GetDirectIntVal(合成时间) folder=配方成品 under sys/rcex/svr/bdesign/item/",
+    "encode": "rc3.exe 0x658d1b uid*1000 + local",
+    "decode": "rc3.exe 0x656bd0 div 1000",
+    "note": "图鉴 合成时间 is not in formula.tab. Unproven UIDs stay off the mapping so mixed papers keep local IDs plus deskDocument.packKey."
+  },
+  "packs": [
+    {"key": "o_china03", "name": "中国风装饰03", "kind": "item"},
+    {"key": "o_military03", "name": "军事装饰03", "kind": "item"},
+    {"key": "o_military02", "name": "军事装饰02", "kind": "item"},
+    {"key": "o_q02", "name": "Q版主题装饰02", "kind": "item"},
+    {"key": "i_xmas03", "name": "圣诞风格家具03", "kind": "item"},
+    {"key": "i_xmas02", "name": "圣诞风格家具02", "kind": "item"},
+    {"key": "i_tool02", "name": "模具风格家具02", "kind": "item"}
+  ],
+  "mapping": {},
+  "aliases": {}
+}

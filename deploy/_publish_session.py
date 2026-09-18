@@ -23,8 +23,8 @@ PASSWORD = (
 REMOTE = "/opt/manor-desk"
 ROOT = Path(__file__).resolve().parents[1]
 
-RUNTIME_PREFIXES = ("web/", "data/")
-RUNTIME_FILES = {"server.py", "saves.py", "export_xlsx.py", "cloth_ai.py"}
+RUNTIME_PREFIXES = ("web/", "data/", "codec/")
+RUNTIME_FILES = {"server.py", "saves.py", "export_xlsx.py", "cloth_ai.py", "board_ai.py"}
 SKIP_PREFIXES = ("data/saves/", "data/image_to_building/")
 SKIP_PARTS = ("__pycache__/", ".pytest_cache/")
 
@@ -41,10 +41,12 @@ def working_tree_runtime_files():
             "--",
             "web",
             "data",
+            "codec",
             "server.py",
             "saves.py",
             "export_xlsx.py",
             "cloth_ai.py",
+            "board_ai.py",
         ],
         encoding="utf-8",
         cwd=ROOT,
@@ -138,6 +140,15 @@ def main():
         "grep -o 'building.js?v=[0-9]*' /opt/manor-desk/web/building.html | tail -n 1",
         "grep -o 'app.js?v=[0-9]*' /opt/manor-desk/web/index.html | tail -n 1",
         "grep -o 'cloth.js?v=[0-9]*' /opt/manor-desk/web/cloth.html | tail -n 1",
+        "grep -o 'board.js?v=[0-9]*' /opt/manor-desk/web/board.html | tail -n 1",
+        "grep -o 'board.css?v=[0-9]*' /opt/manor-desk/web/board.html | tail -n 1",
+        "curl -s -o /dev/null -w board:%{http_code} http://127.0.0.1:8095/web/board.html",
+        "grep -c 'href=\"/web/board.html\"' /opt/manor-desk/web/cloth.html /opt/manor-desk/web/building.html /opt/manor-desk/web/index.html",
+        "grep -o 'remodel.js?v=[0-9]*' /opt/manor-desk/web/remodel.html | tail -n 1",
+        "curl -s -o /dev/null -w remodel:%{http_code} http://127.0.0.1:8095/web/remodel.html",
+        "grep -c 'btnCopyToGame' /opt/manor-desk/web/remodel.html",
+        "grep -c 'href=\"/web/remodel.html\"' /opt/manor-desk/web/cloth.html /opt/manor-desk/web/building.html /opt/manor-desk/web/index.html",
+        "test -f /opt/manor-desk/board_ai.py && python3 -c \"import sys; sys.path.insert(0,'/opt/manor-desk'); import board_ai; print('board-ai-prompts', len(board_ai.load_builtin_prompts()), board_ai.KIND)\"",
         "grep -o 'cloth.css?v=[0-9]*' /opt/manor-desk/web/cloth.html | tail -n 1",
         "grep -c 'dlgClothAi' /opt/manor-desk/web/cloth.html",
         "grep -c 'cloth-ai/generate' /opt/manor-desk/web/cloth.js",

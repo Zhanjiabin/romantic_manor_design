@@ -418,6 +418,50 @@ def _rgb565(value: int) -> tuple[int, int, int]:
     )
 
 
+def write_aex(frames, *, key: bytes = PLAIN_KEY, kind: int = 3) -> bytes:
+    """Pack equal-size RGBA frames into an AEX sprite sheet (JPEG + GIF mask)."""
+    from PIL import Image
+
+    images = []
+    for frame in frames or []:
+        if frame is None:
+            continue
+        images.append(frame.convert("RGBA") if hasattr(frame, "convert") else frame)
+    if not images:
+        raise AleError("no frames")
+    width, height = images[0].size
+    if width <= 0 or height <= 0:
+        raise AleError("invalid AEX frame size")
+    for image in images:
+        if image.size != (width, height):
+            raise AleError("AEX frames must share one size")
+    key_bytes = (key or PLAIN_KEY)[:8].ljust(8, b"0")
+    sheet = Image.new("RGB", (width * len(images), height), (0, 0, 0))
+    mask = Image.new("L", sheet.size, 0)
+    table = []
+    for index, image in enumerate(images):
+        left = index * width
+        rgb = Image.new("RGB", (width, height), (0, 0, 0))
+        rgb.paste(image.convert("RGB"), mask=image.split()[-1])
+        sheet.paste(rgb, (left, 0))
+        mask.paste(image.split()[-1], (left, 0))
+        table.append((width, height, left, 0, 0, 0))
+    jpeg_buf = io.BytesIO()
+    sheet.save(jpeg_buf, format="JPEG", quality=90, subsampling=0)
+    gif_buf = io.BytesIO()
+    mask.save(gif_buf, format="GIF")
+    jpeg = jpeg_buf.getvalue()
+    gif = gif_buf.getvalue()
+    if key_bytes != PLAIN_KEY:
+        jpeg = _add_key(jpeg, key_bytes)
+        gif = _add_key(gif, key_bytes)
+    header = MAGIC + key_bytes + struct.pack(
+        "<IIIII", len(table), int(kind), len(jpeg), len(gif), 0
+    )
+    body = b"".join(struct.pack("<IIIIii", *row) for row in table)
+    return header + body + jpeg + gif
+
+
 def dumps_png(data: bytes, frame: int = 0, crop: bool = True, trim: bool = False) -> bytes:
     buf = io.BytesIO()
     image = ale_to_rgba(data, frame=frame)

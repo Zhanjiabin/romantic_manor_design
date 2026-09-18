@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Disk-backed desk saves (terrain, building, and cloth)."""
+"""Disk-backed desk saves (terrain, building, cloth, and billboard)."""
 from __future__ import annotations
 
 import hashlib
@@ -12,6 +12,7 @@ import threading
 import time
 import zipfile
 from contextvars import ContextVar
+from contextlib import contextmanager
 from pathlib import Path
 
 from game_paths import ROOT
@@ -22,6 +23,7 @@ _INHERIT_LOCK = threading.Lock()
 _ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 VERSION_CAP = 30
 _save_user: ContextVar[str] = ContextVar("manor_save_user", default="")
+_papers_folder: ContextVar[str] = ContextVar("manor_papers_folder", default="building-papers")
 _LEGACY_FILES = ("terrain-draft.json", "building-session.json", "building-customs.json")
 _LEGACY_DIRS = ("terrain-versions", "terrain-assets", "building-papers")
 
@@ -290,9 +292,20 @@ def load_terrain_asset(ident: str) -> tuple[bytes, str] | None:
 
 
 def _papers_root() -> Path:
-    root = saves_root() / "building-papers"
+    folder = _papers_folder.get() or "building-papers"
+    root = saves_root() / folder
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+@contextmanager
+def papers_folder(folder: str):
+    """Temporarily point paper-library helpers at another desk folder."""
+    token = _papers_folder.set(str(folder or "building-papers"))
+    try:
+        yield
+    finally:
+        _papers_folder.reset(token)
 
 
 def _library_meta_path() -> Path:
@@ -911,6 +924,8 @@ def _merge_cloth_items(existing_items, incoming_items) -> list:
         merged = dict(row)
         if not merged.get("png") and prev and prev.get("png"):
             merged["png"] = prev["png"]
+        if not merged.get("pages") and prev and prev.get("pages"):
+            merged["pages"] = prev["pages"]
         by_id[ident] = merged
     items = list(by_id.values())
     items.sort(key=lambda row: int(row.get("savedAt") or 0), reverse=True)
@@ -1000,6 +1015,115 @@ def save_cloth_bundle(doc: dict) -> dict:
             else:
                 raise ValueError("prompts must be an object")
     return load_cloth_bundle()
+
+
+def load_board_bundle() -> dict:
+    root = saves_root()
+    session = _read_json(root / "board-session.json")
+    designs = _read_json(root / "board-designs.json")
+    ai = _read_json(root / "board-ai.json")
+    prompts = _read_json(root / "board-prompts.json")
+    return {
+        "session": session if isinstance(session, dict) else None,
+        "designs": designs if isinstance(designs, dict) else None,
+        "ai": ai if isinstance(ai, dict) else None,
+        "prompts": prompts if isinstance(prompts, dict) else None,
+    }
+
+
+def save_board_bundle(doc: dict) -> dict:
+    if not isinstance(doc, dict):
+        raise ValueError("board save must be an object")
+    with _LOCK:
+        root = saves_root()
+        if "session" in doc:
+            session = doc.get("session")
+            path = root / "board-session.json"
+            if session is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(session, dict):
+                _atomic_write(path, session)
+            else:
+                raise ValueError("session must be an object")
+        if "designs" in doc:
+            designs = doc.get("designs")
+            path = root / "board-designs.json"
+            if designs is None:
+                pass
+            elif isinstance(designs, dict):
+                _write_cloth_items(path, designs)
+            else:
+                raise ValueError("designs must be an object")
+        if "ai" in doc:
+            ai = doc.get("ai")
+            path = root / "board-ai.json"
+            if ai is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(ai, dict):
+                _atomic_write(path, ai)
+            else:
+                raise ValueError("ai must be an object")
+        if "prompts" in doc:
+            prompts = doc.get("prompts")
+            path = root / "board-prompts.json"
+            if prompts is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(prompts, dict):
+                _write_cloth_items(path, prompts)
+            else:
+                raise ValueError("prompts must be an object")
+    return load_board_bundle()
+
+
+def load_remodel_bundle() -> dict:
+    root = saves_root()
+    session = _read_json(root / "remodel-session.json")
+    customs = _read_json(root / "remodel-customs.json")
+    return {
+        "session": session if isinstance(session, dict) else None,
+        "customs": customs if isinstance(customs, dict) else None,
+    }
+
+
+def save_remodel_bundle(doc: dict) -> dict:
+    if not isinstance(doc, dict):
+        raise ValueError("remodel save must be an object")
+    with _LOCK:
+        root = saves_root()
+        if "session" in doc:
+            session = doc.get("session")
+            path = root / "remodel-session.json"
+            if session is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(session, dict):
+                _atomic_write(path, session)
+            else:
+                raise ValueError("session must be an object")
+        if "customs" in doc:
+            customs = doc.get("customs")
+            path = root / "remodel-customs.json"
+            if customs is None:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            elif isinstance(customs, dict):
+                _atomic_write(path, customs)
+            else:
+                raise ValueError("customs must be an object")
+    return load_remodel_bundle()
 
 
 BACKUP_CAP = 30

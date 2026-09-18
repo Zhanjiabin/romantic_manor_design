@@ -24,6 +24,7 @@ PROMPTS_PATH = ROOT / "data" / "cloth_ai_prompts.json"
 OPENROUTEX_HOST = "api.openroutex.top"
 OPENROUTEX_BASE = "https://api.openroutex.top/v1"
 CHAT_IMAGE_INTENT = "请生成一张完整的游戏 UV 贴图。必须输出图片，不要只回复文字。"
+BILLBOARD_CHAT_IMAGE_INTENT = "请生成一张完整的横版电子广告牌画面。必须输出图片，不要只回复文字。"
 GEMINI_EXTRA_IMAGE_MODELS = (
     "gemini-3-pro-image-preview",
     "gemini-3-pro-image",
@@ -53,7 +54,7 @@ IMAGE_HINTS = (
     "midjourney",
     "playground",
 )
-KIND_SIZES = {
+CLOTH_KIND_SIZES = {
     "female-short": (256, 256),
     "female-long": (256, 256),
     "female-skirt": (256, 256),
@@ -62,6 +63,10 @@ KIND_SIZES = {
     "expression": (256, 256),
     "face": (256, 256),
     "hair": (512, 256),
+}
+KIND_SIZES = {
+    **CLOTH_KIND_SIZES,
+    "billboard-hd": (720, 480),
 }
 
 
@@ -129,7 +134,23 @@ def canvas_size(kind: str, width: int | None = None, height: int | None = None) 
     return default_w, default_h
 
 
+def billboard_layout_contract(width: int, height: int, has_ref: bool, has_mask: bool = False) -> str:
+    size = f"{width}×{height}"
+    lines = [
+        f"硬性规则：输出必须是一张 {size} 的横版电子广告牌画面，铺满画布，不要黑边、白边、字母水印。",
+        "这会量化成 36×24 颗彩灯。只用大色块和高对比，不要细线、小字、照片级渐变。",
+        "风格贴近 2000 年代国内休闲养成游戏里的霓虹灯牌，饱和、平光。",
+    ]
+    if has_mask:
+        lines.append("这是局部重绘：只改蒙版标明的灯区。未圈选区域必须与参考图像素一致。")
+    elif has_ref:
+        lines.append("附图是构图参考：沿用主体位置、大小和配色倾向，用更粗的色块重画成灯牌，不要临摹照片纹理，不要写字。")
+    return "\n".join(lines)
+
+
 def layout_contract(kind: str, width: int, height: int, has_ref: bool, has_mask: bool = False, has_uv_map: bool = False) -> str:
+    if str(kind or "").startswith("billboard"):
+        return billboard_layout_contract(width, height, has_ref, has_mask)
     size = f"{width}×{height}"
     lines = [
         f"硬性规则：输出必须是一张 {size} 的游戏 UV 贴图，铺满画布，不要黑边、白边、字母水印。",
@@ -758,7 +779,9 @@ def generate_image(
             return done
 
     if route == "chat" or (not is_openai_images_model(model_id) and errors) or has_mask or (has_uv_map and errors):
-        parts: list[Any] = [{"type": "text", "text": CHAT_IMAGE_INTENT}]
+        billboard = str(kind or "").startswith("billboard")
+        chat_intent = BILLBOARD_CHAT_IMAGE_INTENT if billboard else CHAT_IMAGE_INTENT
+        parts: list[Any] = [{"type": "text", "text": chat_intent}]
         attached = False
         if uv_map:
             parts.append(_chat_image(uv_map))
@@ -769,9 +792,13 @@ def generate_image(
             attached = True
         if has_ref and ref:
             parts.append(_chat_image(ref))
+            if billboard:
+                ref_caption = "这张是当前灯牌参考。" if has_mask else "这张是构图参考。请沿用主体位置和大色块，画成灯珠广告牌，不要写真或小字。"
+            else:
+                ref_caption = "这张是当前画布参考图。" if has_mask else "这张是参考图，请沿用它的岛位与接缝。"
             parts.append({
                 "type": "text",
-                "text": "这张是当前画布参考图。" if has_mask else "这张是参考图，请沿用它的岛位与接缝。",
+                "text": ref_caption,
             })
             attached = True
             if has_mask and coverage is not None:
@@ -779,7 +806,7 @@ def generate_image(
                 parts.append({"type": "image_url", "image_url": {"url": mask_url}})
                 parts.append({"type": "text", "text": "这张是蒙版：白=只改这里，黑=必须保持参考图像素。"})
         parts.append({"type": "text", "text": full_prompt})
-        content: Any = parts if attached else f"{CHAT_IMAGE_INTENT}\n{full_prompt}"
+        content: Any = parts if attached else f"{chat_intent}\n{full_prompt}"
         body = {"model": model_id, "messages": [{"role": "user", "content": content}], "stream": False}
         status, parsed, raw = _post_json(base, "/chat/completions", key, body)
         if status < 400 and parsed is not None:

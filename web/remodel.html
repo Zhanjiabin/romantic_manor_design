@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="建筑设计桌" />
+  <meta name="apple-mobile-web-app-title" content="改造设计桌" />
   <meta name="theme-color" content="#1e4a36" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <title>建筑设计桌</title>
+  <title>改造设计桌</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/favicon.ico" sizes="32x32" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -16,12 +16,13 @@
   <link rel="stylesheet" href="/web/desk-chrome.css?v=13" />
   <link rel="stylesheet" href="/web/paper-library.css?v=15" />
   <link rel="stylesheet" href="/web/building.css?v=201" />
+              <link rel="stylesheet" href="/web/remodel.css?v=5" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
   <link rel="stylesheet" href="/web/materials-dock.css?v=9" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
 </head>
 <body>
-  <div class="app building-app phase-select" id="buildingApp">
+  <div class="app building-app remodel-app phase-select" id="buildingApp">
     <header class="topbar">
       <div class="topbar-left">
         <div class="brand">
@@ -30,9 +31,9 @@
         </div>
         <nav class="desk-switch-inline" aria-label="设计桌切换">
           <a href="/">地形<span class="desk-switch-rest">设计桌</span></a>
-          <a class="on" href="/web/building.html" aria-current="page">建筑<span class="desk-switch-rest">设计桌</span></a>
+          <a href="/web/building.html">建筑<span class="desk-switch-rest">设计桌</span></a>
           <a href="/web/cloth.html">衣服<span class="desk-switch-rest">设计桌</span></a>
-          <a href="/web/remodel.html">改造<span class="desk-switch-rest">设计桌</span></a>
+          <a class="on" href="/web/remodel.html" aria-current="page">改造<span class="desk-switch-rest">设计桌</span></a>
           <a href="/web/board.html">广告牌<span class="desk-switch-rest">设计桌</span></a>
         </nav>
       </div>
@@ -124,6 +125,7 @@
                     <button type="button" class="tool-btn" data-command="flip" title="转向 R"><span class="tool-glyph">↻</span><kbd>R</kbd></button>
                     <button type="button" class="tool-btn" data-command="lock" title="锁定/解锁 Ctrl+L"><span class="tool-glyph">🔒</span><kbd>Ctrl+L</kbd></button>
                     <button type="button" class="tool-btn" data-command="duplicate" title="复制 Ctrl+D"><span class="tool-glyph">⧉</span><kbd>Ctrl+D</kbd></button>
+                    <button type="button" class="tool-btn" data-command="copyToGame" title="复制到游戏 Ctrl+Shift+C"><span class="tool-glyph">⎘</span><kbd>Ctrl+Shift+C</kbd></button>
                     <button type="button" class="tool-btn" data-command="group" title="成组 C"><span class="tool-glyph">▢</span><kbd>C</kbd></button>
                     <button type="button" class="tool-btn" data-command="ungroup" title="拆组 Ctrl+Shift+G"><span class="tool-glyph">⬚</span><kbd>Ctrl+Shift+G</kbd></button>
                     <button type="button" class="tool-btn" data-command="savePreset" title="存为组件 P"><span class="tool-glyph">★</span><kbd>P</kbd></button>
@@ -146,14 +148,14 @@
             </div>
         </div>
 
-        <div class="canvas-shell" id="canvasShell" role="application" aria-label="建筑设计画布" tabindex="0">
+        <div class="canvas-shell" id="canvasShell" role="application" aria-label="改造设计画布" tabindex="0">
           <div class="canvas-zoom-inner" id="canvasZoomInner">
             <div class="canvas-frame" id="canvasFrame">
               <canvas id="buildingView" width="570" height="550"></canvas>
               <div class="canvas-empty" id="canvasEmpty" hidden role="button" tabindex="0">
-                <strong>选择户型</strong>
-                <span class="desktop-workspace-only">先选户型，再点「开始设计」</span>
-                <span class="canvas-empty-action mobile-workspace-only">点这里选户型</span>
+                <strong>选择基座</strong>
+                <span class="desktop-workspace-only">先选基座大小，再点「开始设计」</span>
+                <span class="canvas-empty-action mobile-workspace-only">点这里选基座</span>
               </div>
               <div class="marquee-overlay" id="marqueeOverlay" hidden></div>
               <div class="selection-overlay" id="selectionOverlay" hidden></div>
@@ -250,6 +252,7 @@
             </div>
           </div>
           <div class="hud-stack" id="hudStack">
+            <p class="remodel-clip-note" id="remodelClipNote" hidden>注意！超出亮光部分会被剪裁</p>
             <div class="base-meta" id="baseMeta">
               <div id="paperFileRow" hidden><span>图纸</span><strong id="paperFileName"></strong></div>
               <div><span>名称</span><strong id="buildingName">无</strong></div>
@@ -283,6 +286,7 @@
             <button type="button" data-command="up" aria-label="上移一层">↑</button>
             <button type="button" data-command="flip" aria-label="转向">↻</button>
             <button type="button" data-command="duplicate" aria-label="复制">⧉</button>
+            <button type="button" data-command="copyToGame" aria-label="复制到游戏">游戏</button>
             <button type="button" data-command="savePreset" aria-label="存为组件">★</button>
             <button type="button" class="danger" data-command="delete" aria-label="删除">✕</button>
           </div>
@@ -347,7 +351,7 @@
         <button type="button" class="rail-resizer" id="railResizer" aria-label="调整侧栏宽度"></button>
         <div class="rail-panel" id="baseSelectSide">
           <div class="rail-head">
-            <h2 class="rail-title">选择户型</h2>
+            <h2 class="rail-title">选择基座</h2>
           </div>
           <div class="base-preview-box" id="basePreviewBox">
             <img id="basePreviewImg" alt="" />
@@ -357,6 +361,11 @@
           <div class="rail-sub">材料需求</div>
           <div class="base-mat-list" id="baseMatList"></div>
           <div class="rail-actions">
+            <p class="remodel-kind-hint">游戏按家具占地 <code>SetPut(putw,puth)</code> 从 46 个基座里选，装饰 / 家具 / 椅子 / 床各有一套大小。</p>
+            <label class="check remodel-showman" id="showManField" hidden>
+              <input type="checkbox" id="showMan" />
+              <span>显示人物</span>
+            </label>
             <button type="button" class="btn btn-primary btn-block" id="btnNextBase">开始设计</button>
             <button type="button" class="btn btn-ghost btn-block" id="btnBackBase">返回</button>
           </div>
@@ -365,13 +374,13 @@
         <div class="rail-panel design-panel" id="materialSide" hidden>
           <div class="base-current">
             <div class="base-current-text">
-              <span class="rail-sub">当前户型</span>
+              <span class="rail-sub">当前基座</span>
               <strong id="currentBase">无</strong>
             </div>
             <div class="base-current-actions">
               <button type="button" class="btn btn-compact" id="btnImageBuilding" title="实验性：截图自动还原尚未完成。可导入图片后手绘墙线选件，默认不会清空现有装修。">图→建</button>
               <button type="button" class="btn btn-compact" id="btnChooseBase">更换</button>
-              <button type="button" class="btn btn-compact btn-clear-design" id="btnClearDesign" title="清空现有装修，保留户型">清空</button>
+              <button type="button" class="btn btn-compact btn-clear-design" id="btnClearDesign" title="清空现有装修，保留基座">清空</button>
             </div>
           </div>
 
@@ -512,7 +521,7 @@
             <span class="desk-account-name">切换账号</span>
           </button>
           <div class="project-base-summary">
-            <span>当前户型</span>
+            <span>当前基座</span>
             <strong id="projectCurrentBase">无</strong>
             <button type="button" class="btn btn-compact" id="btnProjectImageBuilding" title="实验性：截图自动还原尚未完成。可导入图片后手绘墙线选件，默认不会清空现有装修。">图→建</button>
             <button type="button" class="btn btn-compact" id="btnProjectChooseBase">更换</button>
@@ -522,16 +531,21 @@
             <button type="button" class="btn btn-compact" id="btnProjectMaterialsTab">材料清单</button>
             <button type="button" class="btn btn-compact" id="btnProjectMaterials">明细</button>
           </div>
-          <p class="project-mobile-copy mobile-workspace-only">生成、导入和管理当前建筑图纸。</p>
+          <p class="project-mobile-copy mobile-workspace-only">生成、导入和管理当前改造图纸。用「复制到游戏」可粘贴进物件设计向导。</p>
           <div class="rail-foot">
             <label class="check keep-foundation">
               <input type="checkbox" id="keepFoundation" checked />
-              <span>保留地基</span>
+              <span>显示基座</span>
+            </label>
+            <label class="check remodel-showman" id="showManDesignField" hidden>
+              <input type="checkbox" id="showManDesign" />
+              <span>显示人物</span>
             </label>
             <div class="panel-actions">
               <button type="button" class="btn" id="btnSaveDesign" title="保存到图纸库：新图纸或写回原图纸 (Ctrl+S)">保存设计</button>
               <button type="button" class="btn btn-primary" id="btnMakeBuilding">生成图纸</button>
-              <button type="button" class="btn btn-wide" id="btnPlaceOnTerrain" title="把当前建筑和户型一起放到地形设计桌预览">放到地形桌</button>
+              <button type="button" class="btn btn-wide" id="btnCopyToGame" data-command="copyToGame" title="按游戏 CopyToClipBoard 写出 V1; 文本到剪贴板，再到物件设计桌 Ctrl+V">复制到游戏</button>
+              <button type="button" class="btn btn-wide" id="btnPlaceOnTerrain" title="把当前建筑和基座一起放到地形设计桌预览">放到地形桌</button>
               <button type="button" class="btn" id="btnImportDesign" title="清空当前内容后导入图纸">覆盖导入</button>
               <button type="button" class="btn" id="btnMergeDesign" title="保留当前内容，将另一张图纸合并进来">合并导入</button>
               <button type="button" class="btn btn-wide" id="btnBatchPreview" title="打开图纸库">图纸库</button>
@@ -572,8 +586,7 @@
             <div class="paper-library-filters" role="toolbar" aria-label="图纸筛选">
               <div class="paper-kind-tabs" role="tablist" aria-label="图纸类型">
                 <button type="button" class="on" data-paper-kind="all" aria-selected="true">全部</button>
-                <button type="button" data-paper-kind="desk" aria-selected="false">建筑</button>
-                <button type="button" data-paper-kind="terrain" aria-selected="false">地形</button>
+                <button type="button" data-paper-kind="desk" aria-selected="false">改造</button>
               </div>
               <div class="paper-group-tabs" id="paperGroupTabs" role="tablist" aria-label="图纸分组"></div>
               <button type="button" class="btn btn-compact" id="btnPaperLibraryNewGroup"><span class="btn-label-full">新建分组</span><span class="btn-label-short">+分组</span></button>
@@ -653,7 +666,7 @@
     </div>
     <nav class="mobile-bottom-dock building-mobile-dock" id="buildingMobileDock" aria-label="移动端建筑工具">
       <button type="button" class="mobile-dock-button" id="btnBuildingMobileAssets" aria-expanded="false">
-        <span class="mobile-dock-glyph">▦</span><span id="buildingMobileAssetsLabel">户型</span>
+        <span class="mobile-dock-glyph">▦</span><span id="buildingMobileAssetsLabel">基座</span>
       </button>
       <button type="button" class="mobile-dock-button" id="btnBuildingMobileTools" aria-pressed="false">
         <span class="mobile-dock-glyph">✎</span><span>工具</span>
@@ -711,7 +724,7 @@
           <p class="image-terrain-status" id="imageBuildingStatus">导入图片后会显示待确认的结构和配色提示；手绘调整后再选件。</p>
           <div class="image-building-pieces" id="imageBuildingPieces" role="list" aria-label="识别结果"></div>
           <div class="image-color-map" id="imageBuildingColorMap" hidden role="list" aria-hidden="true"></div>
-          <button type="button" class="btn btn-primary btn-block" id="btnApplyImageBuilding" disabled>铺到当前户型</button>
+          <button type="button" class="btn btn-primary btn-block" id="btnApplyImageBuilding" disabled>铺到当前基座</button>
         </div>
       </div>
     </div>
@@ -801,6 +814,20 @@
     </div>
   </div>
 
+  <div class="modal" id="dlgRemodelClip" hidden>
+    <div class="modal-card modal-narrow" role="dialog" aria-modal="true" aria-labelledby="remodelClipTitle" aria-describedby="remodelClipHint">
+      <div class="modal-cap">
+        <span id="remodelClipTitle">复制到游戏</span>
+        <button type="button" class="icon-x" data-close-modal="dlgRemodelClip" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body" data-mobile-sheet-scroll>
+        <p class="app-dialog-msg" id="remodelClipHint">浏览器没把内容写进系统剪贴板。点下面的框，按 Ctrl+C（手机长按复制），再到游戏物件设计桌 Ctrl+V。</p>
+        <textarea class="input remodel-clip-text" id="remodelClipText" readonly rows="4" aria-label="游戏复制文本"></textarea>
+        <button type="button" class="btn btn-primary btn-block" id="btnRemodelClipSelect">全选并复制</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="dlgApp" hidden>
     <div class="modal-card modal-narrow app-dialog" role="dialog" aria-modal="true" aria-labelledby="dlgAppTitle" aria-describedby="dlgAppMessage">
       <div class="modal-cap">
@@ -826,7 +853,7 @@
   <input type="file" id="buildingFolder" accept=".txt,text/plain" multiple webkitdirectory directory hidden />
   <input type="file" id="paperLibraryFilePick" accept=".txt,text/plain" multiple hidden />
   <script src="/web/codec.js?v=43"></script>
-  <script src="/web/paper-library-core.js?v=22"></script>
+  <script src="/web/remodel-paper-library-core.js?v=1"></script>
   <script src="/web/app-dialog.js?v=2"></script>
   <script src="/web/desk-account.js?v=7"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
@@ -834,6 +861,6 @@
   <script src="/web/building-preview.js?v=10"></script>
   <script src="/web/material-ledger.js?v=3"></script>
   <script src="/web/building-image-convert.js?v=5"></script>
-  <script src="/web/building.js?v=280"></script>
+  <script src="/web/remodel.js?v=3"></script>
 </body>
 </html>

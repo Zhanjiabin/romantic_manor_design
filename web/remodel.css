@@ -1,0 +1,78 @@
+/* Remodel desk extras. Building.css is linked as-is and not modified. */
+
+.remodel-app .smart-building-panel,
+.remodel-app .smart-building-tool,
+.remodel-app .smart-building-overlay,
+.remodel-app #btnImageBuilding,
+.remodel-app #btnProjectImageBuilding,
+.remodel-app #btnPlaceOnTerrain,
+.remodel-app #dlgImageBuilding,
+.remodel-app [data-paper-kind="terrain"] {
+  display: none !important;
+}
+
+.remodel-app #componentKinds [role="tab"]:disabled {
+  display: none !important;
+}
+
+.remodel-app .hud-stack .remodel-clip-note {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 4;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: rgba(255, 244, 180, 0.92);
+  border: 1px solid #d4b43a;
+  color: #5a3d08;
+  font: 700 13px/1.4 var(--font, "Microsoft YaHei", sans-serif);
+  pointer-events: none;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.remodel-app.phase-design .base-meta {
+  top: 48px;
+}
+
+.remodel-app.phase-select .remodel-clip-note,
+.remodel-clip-note[hidden] {
+  display: none !important;
+}
+
+.remodel-kind-hint {
+  margin: 8px 0 0;
+  color: var(--ink-soft, #5b6b62);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.remodel-showman {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  min-height: 44px;
+}
+
+.remodel-showman[hidden] {
+  display: none !important;
+}
+
+.remodel-app .keep-foundation span::before {
+  content: none;
+}
+
+.remodel-clip-text {
+  width: 100%;
+  min-height: 88px;
+  margin: 8px 0 12px;
+  font-size: 16px;
+  font-family: ui-monospace, Consolas, monospace;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+#btnRemodelClipSelect {
+  min-height: 44px;
+}

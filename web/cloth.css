@@ -1465,6 +1465,12 @@ html.is-mobile-workspace .preview-body-pick {
   font-size: 13px;
 }
 
+#btnClothAiGenerate.is-generating,
+#btnClothAiGenerate[aria-busy="true"] {
+  opacity: 0.88;
+  pointer-events: none;
+}
+
 .cloth-ai-prompt-actions {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

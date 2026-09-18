@@ -952,7 +952,9 @@
       else label.textContent = "图案设计";
     }
     const generate = document.getElementById("btnClothAiGenerate");
-    if (generate && !generateBusy) generate.textContent = patch?.checked && ink ? "只改圈选" : "生成到画布";
+    if (generate && !generateBusy && generate.getAttribute("aria-busy") !== "true") {
+      generate.textContent = patch?.checked && ink ? "只改圈选" : "生成到画布";
+    }
     document.querySelectorAll("[data-selection-bar]").forEach((bar) => {
       bar.hidden = !ink;
     });
@@ -2346,10 +2348,13 @@
   function sanitizeAiPrompt(text) {
     return String(text || "")
       .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-      .replace(/\[[^\]]*\]\([^)]+\.(?:jpe?g|png|webp|gif)[^)]*\)/gi, "")
-      .replace(/(?:https?:\/\/\S+\.(?:jpe?g|png|webp|gif)|\b[A-Za-z0-9_-]{12,}\.(?:jpe?g|png|webp|gif))\)?/gi, "")
+      .replace(/\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/https?:\/\/\S+/gi, "")
+      .replace(/20\d{12,}[A-Za-z0-9_-]*(?:\.(?:jpe?g|png|webp|gif))?[)\]\}]*/gi, "")
+      .replace(/\b[A-Za-z0-9_-]{16,}\.(?:jpe?g|png|webp|gif)[)\]\}]*/gi, "")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
+      .replace(/[)\]\}]+$/g, "")
       .trim();
   }
 
@@ -2370,6 +2375,8 @@
     const button = document.getElementById("btnClothAiGenerate");
     if (!button) return;
     button.disabled = generateBusy;
+    button.setAttribute("aria-busy", generateBusy ? "true" : "false");
+    button.classList.toggle("is-generating", generateBusy);
     if (generateBusy) button.textContent = "生成中";
     else syncMaskChrome();
   }
@@ -2524,6 +2531,7 @@
     closeClothSheets();
     setAiTab("prompt");
     syncAiDialog();
+    readAiPrompt();
     setAiStatus("");
     setModalVisible("dlgClothAi", true);
   }
@@ -2624,7 +2632,7 @@
     };
     state.prompts = [...(state.prompts || []), item];
     state.aiPromptId = item.id;
-    if (textarea && !textarea.value.trim()) textarea.value = item.prompt;
+    if (textarea && !textarea.value.trim()) setAiPrompt(item.prompt);
     savePrompts();
     fillAiPromptPick();
     setAiStatus("已新建「" + item.name + "」。");
@@ -2710,6 +2718,7 @@
     setGenerateBusy(true);
     setAiStatus("生成中…");
     readAiPrompt();
+    await nextPaint();
     try {
       const key = String(document.getElementById("clothAiKey")?.value || "").trim();
       const custom = String(document.getElementById("clothAiModelCustom")?.value || "").trim();
@@ -2756,10 +2765,14 @@
           setAiStatus("");
           return;
         }
+        setGenerateBusy(true);
+        setAiStatus("生成中…");
+        await nextPaint();
       }
       state.aiKey = key;
       state.aiModel = model;
       saveAiSettings();
+      setGenerateBusy(true);
       setAiStatus("正在生成，可能要等一会儿…");
       const { width, height } = canvasSize();
       const referencePng = maskPng ? snapshotPng() : await aiReferencePng();
@@ -2791,6 +2804,7 @@
       setAiStatus(maskPng ? "圈选已改，圈外像素锁在原画上。不满意可再圈、再生成。" : "已画到画布，可继续改提示词再生成。");
     } catch (error) {
       const message = sanitizeAiPrompt(String(error.message || error)) || "生图失败";
+      readAiPrompt();
       setAiStatus(message);
     } finally {
       setGenerateBusy(false);
@@ -3373,6 +3387,16 @@
       if (row) setAiPrompt(row.prompt);
       setAiStatus(row ? "已填入「" + row.name + "」，可以改完再生成。" : "");
     });
+    document.getElementById("clothAiPrompt")?.addEventListener("blur", () => {
+      readAiPrompt();
+    });
+    document.getElementById("clothAiPrompt")?.addEventListener("input", () => {
+      const textarea = document.getElementById("clothAiPrompt");
+      if (!textarea) return;
+      if (/20\d{12,}|!\[[^\]]*\]\(|\.(?:jpe?g|png|webp|gif)\)?/i.test(textarea.value)) {
+        readAiPrompt();
+      }
+    });
     document.getElementById("clothAiKey")?.addEventListener("change", () => {
       state.aiKey = String(document.getElementById("clothAiKey")?.value || "").trim();
       saveAiSettings();
@@ -3677,6 +3701,15 @@
     const promptState = localPromptAt >= remotePromptAt ? localPrompts : (remote?.prompts || localPrompts);
     state.prompts = Array.isArray(promptState.items) ? promptState.items : [];
     state.promptDeletedIds = Array.isArray(promptState.deletedIds) ? promptState.deletedIds : [];
+    let promptsCleaned = false;
+    state.prompts = state.prompts.map((row) => {
+      if (!row || typeof row.prompt !== "string") return row;
+      const cleaned = sanitizeAiPrompt(row.prompt);
+      if (cleaned === row.prompt) return row;
+      promptsCleaned = true;
+      return { ...row, prompt: cleaned };
+    });
+    if (promptsCleaned) savePrompts();
     const push = {};
     const remoteDesignIds = new Set((remote?.designs?.items || []).map((row) => row?.id).filter(Boolean));
     const extraDesigns = (merged.items || []).filter((row) => row?.id && row.png && !remoteDesignIds.has(row.id));

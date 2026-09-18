@@ -222,7 +222,25 @@ def redact(text: str) -> str:
     cleaned = re.sub(r"(?i)(bearer\s+)([^\s,;]+)", r"\1***", cleaned)
     cleaned = re.sub(r"(?i)(api[_-]?key[\"']?\s*[:=]\s*[\"']?)([^\"'\s,]+)", r"\1***", cleaned)
     cleaned = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-***", cleaned)
-    return cleaned
+    cleaned = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", cleaned)
+    cleaned = re.sub(r"\[[^\]]*\]\([^)]*\)", "", cleaned)
+    cleaned = re.sub(r"https?://\S+", "", cleaned, flags=re.I)
+    cleaned = re.sub(
+        r"20\d{12,}[A-Za-z0-9_-]*(?:\.(?:jpe?g|png|webp|gif))?[)\]\}]*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"\b[A-Za-z0-9_-]{16,}\.(?:jpe?g|png|webp|gif)[)\]\}]*", "", cleaned, flags=re.I)
+    return cleaned.strip()
+
+
+def sanitize_user_prompt(text: str) -> str:
+    cleaned = redact(str(text or ""))
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[)\]\}]+$", "", cleaned)
+    return cleaned.strip()
 
 
 def infer_aspect_ratio(width: int, height: int) -> str:
@@ -642,7 +660,7 @@ def generate_image(
     model_id = canonicalize_model_id(model)
     if not model_id:
         raise ClothAiError("请选择图片模型")
-    user_prompt = str(prompt or "").strip()
+    user_prompt = sanitize_user_prompt(prompt)
     if not user_prompt:
         raise ClothAiError("请先填写提示词")
     w, h = canvas_size(kind, width, height)

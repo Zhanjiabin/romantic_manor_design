@@ -254,3 +254,20 @@ def test_generate_sends_uv_map_on_chat(monkeypatch):
     assert "轮廓地图" in blob
     assert "岛" in blob
     assert "短款碎花" in blob
+
+
+def test_sanitize_user_prompt_strips_image_ids_without_extension():
+    dirty = (
+        "五官眼睛大小和位置一样"
+        "20260918113639674426899b0SLCOvF)"
+        " 还有一句"
+    )
+    cleaned = cloth_ai.sanitize_user_prompt(dirty)
+    assert "20260918" not in cleaned
+    assert "SLCOvF" not in cleaned
+    assert ")" not in cleaned
+    assert "五官眼睛大小和位置一样" in cleaned
+    assert "还有一句" in cleaned
+    assert cloth_ai.sanitize_user_prompt("正常提示词，不要黑边") == "正常提示词，不要黑边"
+    assert "jpg" not in cloth_ai.sanitize_user_prompt("a ![x](20260918103328120350463XsUY.jpg) b")
+    assert cloth_ai.redact("fail 20260918103328120350463XsUY.jpg) ok").find("20260918") < 0

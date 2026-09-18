@@ -2381,9 +2381,18 @@
     else syncMaskChrome();
   }
 
+  function friendlyAiStatus(text) {
+    const cleaned = sanitizeAiPrompt(String(text || ""));
+    if (!cleaned) return "";
+    if (/quota|not enough/i.test(cleaned)) return "额度不足，换 Key 或稍后再试。";
+    if (/timeout|timed?\s*out|ECONN|network/i.test(cleaned)) return "网络超时，稍后再试。";
+    if (/api\s*key|unauthorized|401|invalid.+key/i.test(cleaned)) return "API Key 无效，去设置里检查。";
+    return cleaned.length > 160 ? cleaned.slice(0, 157) + "…" : cleaned;
+  }
+
   function setAiStatus(text) {
     document.querySelectorAll("[data-ai-status]").forEach((node) => {
-      node.textContent = text || "";
+      node.textContent = friendlyAiStatus(text);
     });
   }
 

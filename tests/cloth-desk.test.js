@@ -189,7 +189,7 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /setTool\("sculpt"\)/);
   assert.match(clothJs, /function kindHasUvIslands/);
   assert.match(clothJs, /kindId !== "expression"/);
-  assert.match(clothHtml, /cloth\.js\?v=50/);
+  assert.match(clothHtml, /cloth\.js\?v=51/);
   assert.match(clothJs, /function snapshotSaveImage/);
   assert.match(clothJs, /image\/jpeg", 0\.86/);
   assert.match(clothJs, /await nextPaint\(\);/);
@@ -199,8 +199,11 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(saveDesign, /okBtn\.textContent = "保存中"/);
   assert.match(clothJs, /index < 8 && row\.png/);
   assert.match(clothJs, /if \(!newer\.png && older\.png\) newer\.png = older\.png/);
-  assert.match(clothHtml, /cloth\.css\?v=43/);
+  assert.match(clothHtml, /cloth\.css\?v=44/);
   assert.match(clothCss, /#btnClothAiGenerate\.is-generating/);
+  assert.match(clothCss, /\.cloth-ai-options/);
+  assert.match(clothCss, /\.cloth-ai-foot/);
+  assert.doesNotMatch(clothHtml, /cloth-ai-note/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {
@@ -285,7 +288,12 @@ test("clothes desk AI design fills prompt templates without sending them", () =>
     assert.match(clothHtml, /id="clothAiPatch"/);
     assert.match(clothHtml, /id="clothAiUv"/);
     assert.match(clothHtml, /id="btnClearMask"/);
-    assert.match(clothCss, /\.cloth-ai-patch/);
+    assert.match(clothJs, /function friendlyAiStatus/);
+  assert.match(clothJs, /额度不足/);
+  assert.match(clothCss, /\.cloth-ai-patch/);
+  assert.match(clothHtml, /cloth-ai-options/);
+  assert.match(clothHtml, /cloth-ai-foot/);
+  assert.match(clothHtml, /cloth-ai-status/);
   assert.match(clothJs, /function openAiDialog/);
   assert.match(clothJs, /function setAiTab/);
   assert.match(clothHtml, /data-ai-tab="prompt"/);

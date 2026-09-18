@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=12" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=43" />
+  <link rel="stylesheet" href="/web/cloth.css?v=44" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -278,19 +278,22 @@
             </div>
             <label class="field cloth-ai-prompt-field">
               <span>提示词</span>
-              <textarea class="input cloth-ai-prompt" id="clothAiPrompt" rows="14" maxlength="4000"></textarea>
+              <textarea class="input cloth-ai-prompt" id="clothAiPrompt" rows="10" maxlength="4000"></textarea>
             </label>
-            <p class="cloth-ai-note">选模板只会填进编辑框。勾选底图会附上当前种类的默认 UV 轮廓地图和范围提示词。</p>
-            <label class="cloth-ai-patch">
-              <input type="checkbox" id="clothAiUv" checked />
-              <span>底图（按当前种类 UV 范围生成）</span>
-            </label>
-            <label class="cloth-ai-patch">
-              <input type="checkbox" id="clothAiPatch" />
-              <span>只改圈选区域（圈外锁住）</span>
-            </label>
-            <p class="kind-meta" id="clothAiStatus" data-ai-status role="status"></p>
-            <button type="button" class="btn btn-primary btn-block" id="btnClothAiGenerate">生成到画布</button>
+            <div class="cloth-ai-options">
+              <label class="cloth-ai-patch">
+                <input type="checkbox" id="clothAiUv" checked />
+                <span>底图（按当前种类 UV 范围生成）</span>
+              </label>
+              <label class="cloth-ai-patch">
+                <input type="checkbox" id="clothAiPatch" />
+                <span>只改圈选区域（圈外锁住）</span>
+              </label>
+            </div>
+            <div class="cloth-ai-foot">
+              <p class="cloth-ai-status" id="clothAiStatus" data-ai-status role="status"></p>
+              <button type="button" class="btn btn-primary btn-block" id="btnClothAiGenerate">生成到画布</button>
+            </div>
           </section>
         </div>
         <div class="cloth-ai-layout" id="clothAiPaneSettings" data-ai-pane="settings" role="tabpanel" hidden>
@@ -367,6 +370,6 @@
   <script src="/web/desk-account.js?v=7"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/cloth-preview.js?v=13"></script>
-  <script src="/web/cloth.js?v=50"></script>
+  <script src="/web/cloth.js?v=51"></script>
 </body>
 </html>

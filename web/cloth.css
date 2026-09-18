@@ -1408,7 +1408,7 @@ html.is-mobile-workspace .preview-body-pick {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  gap: 6px;
+  gap: 8px;
 }
 
 .cloth-ai-card .field {
@@ -1422,20 +1422,41 @@ html.is-mobile-workspace .preview-body-pick {
   min-height: 0;
 }
 
-.cloth-ai-note {
+.cloth-ai-options {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin: 0;
+  padding: 8px 0 0;
+  border-top: 1px solid rgba(183, 200, 178, 0.65);
+}
+
+.cloth-ai-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cloth-ai-status {
+  margin: 0;
+  min-height: 1.2em;
+  max-height: 3.6em;
+  overflow: auto;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
+  word-break: break-word;
 }
 
 .cloth-ai-patch {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
+  min-height: 36px;
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
 }
 
@@ -1460,9 +1481,9 @@ html.is-mobile-workspace .preview-body-pick {
 }
 
 #btnClothAiGenerate {
-  min-height: 36px;
-  margin-top: 2px;
-  font-size: 13px;
+  min-height: 40px;
+  margin: 0;
+  font-size: 14px;
 }
 
 #btnClothAiGenerate.is-generating,
@@ -1475,11 +1496,13 @@ html.is-mobile-workspace .preview-body-pick {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
+  flex: none;
 }
 
 .cloth-ai-prompt {
   flex: 1 1 auto;
-  min-height: 220px;
+  min-height: 140px;
+  height: 100%;
   resize: vertical;
   font-size: 16px;
   line-height: 1.45;
@@ -1546,13 +1569,28 @@ html.is-mobile-workspace .cloth-ai-card .cloth-ai-model-row .btn {
 }
 
 html.is-mobile-workspace .cloth-ai-card #btnClothAiGenerate {
-  min-height: 36px !important;
-  font-size: 13px;
+  min-height: 44px !important;
+  font-size: 15px;
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace):not(.mobile-landscape) .cloth-ai-prompt {
-  min-height: min(48vh, 340px);
+  min-height: 0;
   resize: none;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace):not(.mobile-landscape) .cloth-ai-prompt-field {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+
+html.is-mobile-workspace .cloth-ai-options {
+  gap: 2px;
+  padding-top: 6px;
+}
+
+html.is-mobile-workspace .cloth-ai-status {
+  font-size: 12px;
+  max-height: 2.8em;
 }
 
 html.is-mobile-workspace .cloth-ai-side .input,
@@ -1683,7 +1721,7 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .cloth-board-edit {
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .cloth-ai-patch {
   min-height: 44px;
-  font-size: 16px;
+  font-size: 15px;
 }
 
 html.is-mobile-workspace:not(.is-tablet-workspace) .beauty-family {

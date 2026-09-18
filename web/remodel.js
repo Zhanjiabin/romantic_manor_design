@@ -22,15 +22,27 @@ const ASSET_VIRTUAL_MIN = 80;
 const MATERIAL_CATEGORIES = ["装饰", "门窗", "地面", "屋顶", "墙壁"];
 /** 对齐 builddesign.cfg 素材列表 / 截图顺序；首格全部，末格用自定义组件顶替原版套件 */
 const CATEGORY_ORDER = [ALL_CATEGORY, ...MATERIAL_CATEGORIES, CUSTOM_CATEGORY];
-/** 对齐原版图鉴 合成时间 顺序；未登记的包放最后 */
+/** Fallback order if item_pack_uids.json has not loaded yet. */
 const THEME_ORDER = [
+  "o_china01",
+  "o_china02",
   "o_china03",
-  "o_military03",
+  "o_military01",
   "o_military02",
+  "o_military03",
+  "o_q01",
   "o_q02",
-  "i_xmas03",
-  "i_xmas02",
+  "i_animal01",
+  "i_candy01",
+  "i_china01",
+  "i_fruit01",
+  "i_fun01",
+  "i_tool01",
+  "i_xmas01",
   "i_tool02",
+  "i_xmas02",
+  "i_tool03",
+  "i_xmas03",
 ];
 const BASE_KIND_TABS = [
   { kind: 0, label: "装饰" },
@@ -92,6 +104,9 @@ const state = {
   catalog: null,
   uidCatalog: null,
   packUids: {},
+  packUidAliases: {},
+  itemPackMeta: [],
+  itemPacksAll: [],
   itemIcons: {},
   packs: [],
   pack: null,
@@ -512,13 +527,70 @@ function syncShowManChecks() {
   if (designField) designField.hidden = !show || state.phase !== "design";
 }
 
+function itemPackFamily(kind = Number(state.base?.kind) || 0) {
+  return Number(kind) === 0 ? "ornament" : "furniture";
+}
+
+function itemPacketName(kind = Number(state.base?.kind) || 0) {
+  return Number(kind) === 0 ? "装饰素材包" : "家具素材包";
+}
+
+function packFamilyOf(pack) {
+  const key = String(pack?.key || pack || "").toLowerCase();
+  const row = (state.itemPackMeta || []).find((item) => item.key === key);
+  if (row?.family) return row.family;
+  if (key.startsWith("i_")) return "furniture";
+  if (key.startsWith("o_")) return "ornament";
+  return "";
+}
+
+function stubItemPack(row) {
+  return {
+    key: row.key,
+    name: row.name || row.key,
+    kind: "item",
+    folder: row.folder || "",
+    components: [],
+    _stub: true,
+  };
+}
+
+function applyRemodelPackFamily(base = state.base) {
+  const family = itemPackFamily(base?.kind);
+  const catalog = state.itemPacksAll || [];
+  const byKey = new Map(catalog.map((pack) => [pack.key, pack]));
+  const meta = (state.itemPackMeta || []).filter((row) => row.family === family);
+  const rows = meta.length
+    ? meta
+    : catalog.filter((pack) => packFamilyOf(pack) === family).map((pack) => ({ key: pack.key, name: pack.name, family }));
+  state.packs = sortThemes(
+    rows.map((row) => {
+      const existing = byKey.get(row.key);
+      if (existing) return existing;
+      const stub = stubItemPack(row);
+      if (!PACK_INDEX.has(stub.key)) PACK_INDEX.set(stub.key, stub);
+      return stub;
+    })
+  );
+  const currentKey = state.pack?.key;
+  if (!currentKey || packFamilyOf(state.pack) !== family) {
+    state.pack = state.packs.find((pack) => (pack.components || []).length) || state.packs[0] || null;
+    if (state.themeFilter !== THEME_ALL) state.themeFilter = state.pack?.key || THEME_ALL;
+  } else if (state.themeFilter !== THEME_ALL && !state.packs.some((pack) => pack.key === state.themeFilter)) {
+    state.themeFilter = THEME_ALL;
+  }
+  fillThemes();
+  ensureActiveCategory();
+  fillCategories();
+  fillComponents();
+}
+
 function applyRemodelKindRules(base = state.base) {
   const kind = Number(base?.kind) || 0;
   state.scaleMode = nativeScaleMode(kind);
   state.userAction = nativeUserAction(kind);
   syncShowManChecks();
-  const clip = document.getElementById("remodelClipNote");
-  if (clip) clip.hidden = state.phase !== "design";
+  applyRemodelPackFamily(base);
 }
 
 window.RemodelNative = {
@@ -566,6 +638,7 @@ async function bootRemodel() {
   state.uidCatalog = uidCatalog;
   state.packUids = packUids.mapping || {};
   state.packUidAliases = packUids.aliases || {};
+  state.itemPackMeta = Array.isArray(packUids.packs) ? packUids.packs : [];
   state.itemIcons = itemIcons.icons || {};
   state.smartBuilder.styles = [
     ...normalizeSemanticStyles(semanticStyles),
@@ -575,22 +648,16 @@ async function bootRemodel() {
     state.smartBuilder.styles.find((style) => style.id === "bazaar-bookshop")?.id ||
     state.smartBuilder.styles[0]?.id ||
     "";
-  state.packs = sortThemes(catalog.building.packs.filter((pack) => pack.kind === "item"));
-  state.indexedPacks = (catalog.building.packs || []).filter(
-    (pack) => pack.kind === "item"
-  );
+  state.itemPacksAll = (catalog.building.packs || []).filter((pack) => pack.kind === "item");
+  state.indexedPacks = state.itemPacksAll.slice();
   PACK_INDEX.clear();
   COMPONENT_LOOKUP.clear();
   (state.indexedPacks || []).forEach((pack) => PACK_INDEX.set(pack.key, pack));
-  state.packs.forEach((pack) => {
-    if (!PACK_INDEX.has(pack.key)) PACK_INDEX.set(pack.key, pack);
-  });
-  state.pack =
-    state.packs.find((pack) => pack.key === "europe") || state.packs[0] || null;
+  state.pack = null;
   state.themeFilter = THEME_ALL;
-  ensureActiveCategory();
   state.base =
     designBases().find((base) => base.kind === 0) || designBases()[0] || null;
+  applyRemodelPackFamily(state.base);
   const remoteSaves = await remoteSavesPromise;
   loadCustoms();
   if (remoteSaves && remoteSaves.customs != null) {
@@ -692,7 +759,11 @@ async function bootRemodel() {
 }
 
 function sortThemes(packs) {
-  const rank = new Map(THEME_ORDER.map((key, index) => [key, index]));
+  const family = itemPackFamily();
+  const fromMeta = (state.itemPackMeta || [])
+    .filter((row) => !family || row.family === family)
+    .map((row) => row.key);
+  const rank = new Map((fromMeta.length ? fromMeta : THEME_ORDER).map((key, index) => [key, index]));
   return [...packs].sort((a, b) => {
     const ai = rank.has(a.key) ? rank.get(a.key) : 1000;
     const bi = rank.has(b.key) ? rank.get(b.key) : 1000;
@@ -857,6 +928,7 @@ function setPhase(phase) {
   if (workspaceMode().mobile) setMobileToolsOpen(phase === "design");
   applyRemodelKindRules(state.base);
   markBuildingDirty();
+  if (phase === "design") requestAnimationFrame(() => centerCanvasInShell());
 }
 
 function placedDesignCount() {
@@ -1719,18 +1791,35 @@ function updateToolHint() {
 }
 
 function packUidOf(pack = state.pack) {
-  if (!pack) return null;
+  const key = String(pack?.key || pack || "").toLowerCase();
+  if (!key) return null;
+  const row = (state.itemPackMeta || []).find((item) => item.key === key);
+  if (row && Number.isFinite(Number(row.uid))) return Number(row.uid);
   const mapping = state.packUids || {};
   let found = null;
-  for (const [uid, key] of Object.entries(mapping)) {
-    if (key !== pack.key) continue;
+  for (const [uid, mapped] of Object.entries(mapping)) {
+    if (mapped !== key) continue;
     const n = Number(uid);
     if (found == null || n > found) found = n;
   }
   return found;
 }
 
+function itemPaperMat(local, packKey, meta = state.itemPackMeta) {
+  const raw = Math.max(0, Math.round(Number(local) || 0));
+  const localId = raw >= 1000 ? raw % 1000 : raw;
+  const key = String(packKey || "").toLowerCase();
+  const row = (meta || []).find((item) => item.key === key);
+  if (!row || localId <= 0 || !Number.isFinite(Number(row.uid))) return raw;
+  return Number(row.uid) * 1000 + localId;
+}
+
 function packForPaperUid(paperUid) {
+  const uid = Number(paperUid);
+  const family = itemPackFamily();
+  const rows = (state.itemPackMeta || []).filter((item) => Number(item.uid) === uid);
+  const matched = rows.find((item) => item.family === family) || rows[0];
+  if (matched) return packByKey(matched.key);
   const key =
     (state.packUids || {})[String(paperUid)] ||
     (state.packUidAliases || {})[String(paperUid)];
@@ -1739,12 +1828,11 @@ function packForPaperUid(paperUid) {
 
 function componentUid(componentId, pack = state.pack) {
   const usePack = pack || state.pack;
-  const component = usePack?.components.find((row) => row.id === componentId);
+  const component = usePack?.components?.find((row) => row.id === componentId);
   if (component?.kind !== "sprite") return null;
-  const packUid = packUidOf(usePack);
   const local = Number(componentId);
-  if (packUid != null) return packUid * 1000 + local;
-  return local;
+  if (!Number.isFinite(local) || local <= 0) return null;
+  return itemPaperMat(local, usePack?.key);
 }
 
 function indexedPacks() {
@@ -1752,7 +1840,7 @@ function indexedPacks() {
 }
 
 function findSpriteInPack(pack, localId) {
-  if (!pack) return null;
+  if (!pack || !Array.isArray(pack.components)) return null;
   const direct = pack.components.find(
     (component) => component.kind === "sprite" && component.id === localId
   );
@@ -1771,7 +1859,8 @@ function componentByUid(uid, pack = state.pack) {
   if (raw >= 1000) {
     const paperUid = Math.floor(raw / 1000);
     const local = raw % 1000;
-    const primary = packForPaperUid(paperUid);
+    const givenUid = packUidOf(pack);
+    const primary = givenUid === paperUid ? pack : packForPaperUid(paperUid) || pack;
     found = findSpriteInPack(primary, local);
   } else {
     const preferred = pack || state.pack;
@@ -1795,8 +1884,9 @@ function packByKey(key) {
 }
 
 function recordPack(record) {
-  if (record?.pack) return record.pack;
-  if (record?.packKey) return packByKey(record.packKey);
+  if (record?.pack && typeof record.pack === "object") return record.pack;
+  const key = typeof record?.pack === "string" ? record.pack : record?.packKey;
+  if (key) return packByKey(key);
   if (record?.localPackUnknown) return null;
   return state.pack;
 }
@@ -1831,15 +1921,16 @@ function spriteUrl(component, pack = state.pack, frame = 0, thumb = false) {
 function buildingBaseUrl(base, preferWork = false) {
   const src = preferWork && base?.workImage ? base.workImage : base?.baseImage;
   if (!src) return "";
-  return `/bdesign/imgs/${src.split("/").map(encodeURIComponent).join("/")}.png?f=0`;
+  // customroot.tab paths are relative to item/, not the house imgs/ folder.
+  return `/bdesign/item/${src.split("/").map(encodeURIComponent).join("/")}.png?f=0`;
 }
 
 function buildingMaskUrl(base) {
   if (!base?.maskImage) return "";
   const path = base.maskImage.split("/").map(encodeURIComponent).join("/");
   return base.maskImage.toLowerCase().endsWith(".ale")
-    ? `/bdesign/imgs/${path}.png?f=0`
-    : `/bdesign/imgs/${path}`;
+    ? `/bdesign/item/${path}.png?f=0`
+    : `/bdesign/item/${path}`;
 }
 
 function pumpImageQueue() {
@@ -2138,8 +2229,8 @@ let pendingZoomAnchor = null;
 function fitStageToShell() {
   applyZoom();
   requestAnimationFrame(() => {
-    centerCanvasInShell();
     renderBuilding();
+    requestAnimationFrame(() => centerCanvasInShell());
   });
 }
 
@@ -2202,13 +2293,83 @@ function applyZoom() {
   requestAnimationFrame(() => syncViewportOverlays());
 }
 
+function remodelSubjectBitmap(layout = state.baseLayout, keepFoundation = state.keepFoundation, phase = state.phase) {
+  if (!layout) return null;
+  const hasFloor = Number(layout.floorW) > 0 && Number(layout.floorH) > 0;
+  const hasMask = Number(layout.maskW) > 0 && Number(layout.maskH) > 0;
+  const showFloor = hasFloor && (phase !== "design" || keepFoundation);
+  if (showFloor) {
+    return {
+      x: Number(layout.floorX) + Number(layout.floorW) / 2,
+      y: Number(layout.floorY) + Number(layout.floorH) / 2,
+    };
+  }
+  if (hasMask) {
+    return {
+      x: Number(layout.maskX) + Number(layout.maskW) / 2,
+      y: Number(layout.maskY) + Number(layout.maskH) / 2,
+    };
+  }
+  if (hasFloor) {
+    return {
+      x: Number(layout.floorX) + Number(layout.floorW) / 2,
+      y: Number(layout.floorY) + Number(layout.floorH) / 2,
+    };
+  }
+  return null;
+}
+
+function remodelVisibleInsets(shell) {
+  const shellRect = shell.getBoundingClientRect();
+  const inset = { left: 0, right: 0, top: 0, bottom: 0 };
+  const absorb = (el, edge) => {
+    if (!el || el.hidden) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 8 || rect.height < 8) return;
+    const overlapW = Math.min(rect.right, shellRect.right) - Math.max(rect.left, shellRect.left);
+    const overlapH = Math.min(rect.bottom, shellRect.bottom) - Math.max(rect.top, shellRect.top);
+    if (overlapW <= 0 || overlapH <= 0) return;
+    if (edge === "left" && rect.left <= shellRect.left + 24) {
+      inset.left = Math.max(inset.left, Math.round(Math.min(overlapW, rect.right - shellRect.left)));
+    }
+    if (edge === "bottom" && rect.bottom >= shellRect.bottom - 24) {
+      inset.bottom = Math.max(inset.bottom, Math.round(Math.min(overlapH, shellRect.bottom - rect.top)));
+    }
+  };
+  absorb(document.getElementById("canvasToolDock"), "left");
+  absorb(document.getElementById("designDock"), "bottom");
+  return inset;
+}
+
+function remodelSubjectClient() {
+  const point = remodelSubjectBitmap();
+  if (!point) return null;
+  return viewportTransform({ dx: 0, dy: 0 }).sceneToClient(point.x, point.y);
+}
+
 function centerCanvasInShell() {
   const shell = document.getElementById("canvasShell");
   if (!shell) return;
+  const mode = workspaceMode();
+  const phone = !!(mode.mobile && !mode.tablet);
+  if (phone) {
+    const subject = remodelSubjectClient();
+    if (subject && Number.isFinite(subject.x) && Number.isFinite(subject.y)) {
+      const insets = remodelVisibleInsets(shell);
+      const rect = shell.getBoundingClientRect();
+      const viewW = Math.max(1, shell.clientWidth - insets.left - insets.right);
+      const viewH = Math.max(1, shell.clientHeight - insets.top - insets.bottom);
+      const viewCx = rect.left + insets.left + viewW / 2;
+      const viewCy = rect.top + insets.top + viewH / 2;
+      shell.scrollLeft += subject.x - viewCx;
+      shell.scrollTop += subject.y - viewCy;
+      return;
+    }
+  }
   const maxX = Math.max(0, shell.scrollWidth - shell.clientWidth);
   const maxY = Math.max(0, shell.scrollHeight - shell.clientHeight);
   shell.scrollLeft = maxX / 2;
-  const nudge = state.zoom > 1.01 ? VIEW_NUDGE_Y : 0;
+  const nudge = !phone && state.zoom > 1.01 ? VIEW_NUDGE_Y : 0;
   shell.scrollTop = Math.max(0, maxY / 2 - nudge);
 }
 
@@ -2705,6 +2866,7 @@ function fillThemes() {
 
 function fillCategories() {
   const list = document.getElementById("componentKinds");
+  if (!list) return;
   list.innerHTML = "";
   const counts = categoryCounts();
   CATEGORY_ORDER.forEach((category) => {
@@ -3626,7 +3788,8 @@ function drawBase() {
 }
 
 function afterBaseDrawn() {
-  const key = `${state.base?.no || "?"}|${canvas.width}x${canvas.height}|${Number(state.zoom) || 1}`;
+  const ready = isBaseLayoutReady() ? "ready" : "wait";
+  const key = `${state.base?.no || "?"}|${ready}|${canvas.width}x${canvas.height}|${Number(state.zoom) || 1}`;
   if (key === lastSceneKey) return;
   const prevKey = lastSceneKey;
   lastSceneKey = key;
@@ -3640,9 +3803,11 @@ function afterBaseDrawn() {
     });
     return;
   }
-  const prevBase = prevKey.split("|")[0];
+  const prevParts = prevKey.split("|");
+  const prevBase = prevParts[0];
+  const prevReady = prevParts[1];
   const baseNo = String(state.base?.no || "?");
-  if (!prevKey || prevBase !== baseNo) {
+  if (!prevKey || prevBase !== baseNo || (ready === "ready" && prevReady !== "ready")) {
     requestAnimationFrame(() => centerCanvasInShell());
   }
 }
@@ -5321,7 +5486,8 @@ function hydrateRecord(record) {
   const pack = packByKey(packKey) || (localPackUnknown ? null : state.pack);
   const x = decodeS15(record.x);
   const y = decodeS15(record.y);
-  const mat = Number(record.mat) || 0;
+  let mat = Number(record.mat) || 0;
+  if (packKey && mat > 0) mat = itemPaperMat(mat, packKey);
   return {
     mode: record.mode || "desk",
     x,
@@ -5972,10 +6138,25 @@ function encodeNativeDesignClip(records) {
 }
 
 function nativeClipExportRecords(indices) {
+  const family = itemPackFamily();
   return (indices || [])
     .map((index) => state.records[index])
     .filter((record) => record && !record.hidden)
-    .map(serializeExportRecord);
+    .filter((record) => {
+      const key = paperPackKey(record);
+      return !key || packFamilyOf(key) === family;
+    })
+    .map((record) => {
+      const exported = serializeExportRecord(record);
+      exported.mat = nativePaperMat(record);
+      return exported;
+    });
+}
+
+function nativePaperMat(record) {
+  const raw = Math.max(0, Math.round(Number(record?.mat) || 0));
+  const key = paperPackKey(record, recordPack(record)?.key || "");
+  return itemPaperMat(raw, key) || raw;
 }
 
 function nativeCopyIndices() {
@@ -6033,17 +6214,26 @@ function teachGamePaste(count) {
   const n = Number(count) || 0;
   if (typeof appAlert === "function") {
     appAlert(
-      `已复制 ${n} 件到系统剪贴板（游戏 CopyToClipBoard 的 V1; 格式）。打开游戏物件设计向导，选好同样大小的基座后 Ctrl+V 粘贴。超出亮光部分会被剪裁。`,
+      `已复制 ${n} 件到系统剪贴板（游戏 CopyToClipBoard 的 V1; 格式）。打开游戏「${itemPacketName()}」向导，选好同样大小的基座后 Ctrl+V 粘贴。装饰图纸只能贴进装饰改造，家具/椅子/床图纸只能贴进家具改造。超出亮光部分会被剪裁。`,
       { title: "复制到游戏", okLabel: "去游戏粘贴" }
     );
   }
 }
 
 async function copyRecordsToGame(indices, options = {}) {
+  const wanted = (indices || [])
+    .map((index) => state.records[index])
+    .filter((record) => record && !record.hidden);
   const records = nativeClipExportRecords(indices);
   if (!records.length) {
     if (options.alertEmpty !== false && typeof appAlert === "function") {
-      await appAlert("请先选择一些物品", { title: "无法拷贝" });
+      const other = itemPacketName() === "装饰素材包" ? "家具素材包" : "装饰素材包";
+      await appAlert(
+        wanted.length
+          ? `这些件属于「${other}」，不能贴进当前的「${itemPacketName()}」。请换到对应改造向导，或改用当前图纸里的素材。`
+          : "请先选择一些物品",
+        { title: "无法拷贝" }
+      );
     }
     return false;
   }
@@ -6092,6 +6282,10 @@ function copySelected() {
 }
 
 window.RemodelNative.encodeNativeDesignClip = encodeNativeDesignClip;
+window.RemodelNative.nativePaperMat = nativePaperMat;
+window.RemodelNative.itemPaperMat = itemPaperMat;
+window.RemodelNative.itemPackFamily = itemPackFamily;
+window.RemodelNative.remodelSubjectBitmap = remodelSubjectBitmap;
 window.RemodelNative.NATIVE_CLIP_MAX = NATIVE_CLIP_MAX;
 
 function pasteClipboard(atScene) {
@@ -9191,8 +9385,8 @@ const batchLibrary = {
   archiveView: false,
 };
 
-const PAPER_LIBRARY_DESK = "building";
-const PAPER_LIBRARY_DB = "manor-paper-library";
+const PAPER_LIBRARY_DESK = "remodel";
+const PAPER_LIBRARY_DB = "manor-remodel-paper-library";
 const PAPER_LIBRARY_STORE = "papers";
 
 function openPaperLibraryDb() {
@@ -9240,7 +9434,7 @@ function paperKindLabel(kind) {
 }
 
 function libraryAcceptsKind(kind) {
-  return kind === "desk" || kind === "terrain" || kind === "manor";
+  return kind === "desk";
 }
 
 async function loadPaperLibraryCacheMap() {
@@ -9417,7 +9611,7 @@ function syncPaperArchiveUi() {
       if (copy) copy.textContent = "主列表里点「归档」的图纸会出现在这里，可以随时恢复。";
     } else {
       if (heading) heading.textContent = "还没有图纸";
-      if (copy) copy.textContent = "导入文件夹或文件。建筑图纸可在本桌打开，地形图纸会收入库并转到地形桌查看；已有图纸会按内容去重后叠加。";
+      if (copy) copy.textContent = "导入文件夹或文件。只收入改造图纸；地形图纸和建筑图纸不会写入本桌图纸库，也不会改另外两张设计桌。";
     }
   }
 }
@@ -10082,22 +10276,16 @@ async function importLibraryPaper(entry, mode) {
   if (entry?.kind && entry.kind !== "desk") {
     closePaperInspect();
     setPaperLibraryOpen(false);
-    const bytes = entry.file ? new Uint8Array(await entry.file.arrayBuffer()) : null;
-    if (!bytes?.length) {
-      await appAlert("这张图纸无法带到地形桌。", { title: "导入失败" });
+    if (entry.kind === "terrain") {
+      const bytes = entry.file ? new Uint8Array(await entry.file.arrayBuffer()) : null;
+      if (!bytes?.length) {
+        await appAlert("这张地形图纸读不出来。", { title: "导入失败" });
+        return;
+      }
+      handOffTerrainPaper(bytes, entry.name || entry.file?.name || "地形.txt", entry.documentData?._source?.encoding || "gbk");
       return;
     }
-    const expect = entry.kind === "terrain" ? "terrain" : "build";
-    sessionStorage.setItem(
-      expect === "terrain" ? "manor-pending-terrain-import" : "manor-pending-building-import",
-      JSON.stringify({
-        name: entry.name || entry.file?.name || "图纸.txt",
-        encoding: entry.documentData?._source?.encoding || "gbk",
-        base64: PaperLibraryCore.bytesToBase64(bytes),
-        at: Date.now(),
-      })
-    );
-    location.href = expect === "terrain" ? "/web/index.html?importTerrain=1" : "/web/index.html?importBuilding=1";
+    await appAlert("改造图纸库只保存改造作品，不会写进建筑设计桌或地形设计桌。", { title: "不会影响其他设计桌" });
     return;
   }
   if (mode === "replace" && state.records.length) {
@@ -11055,30 +11243,37 @@ function importedPaperRows(records, layers) {
   return { rows: BI.applyDeskLayers(rows, layers), lastTheme };
 }
 
+function handOffTerrainPaper(bytes, name, encoding) {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  sessionStorage.setItem(
+    "manor-pending-terrain-import",
+    JSON.stringify({
+      name: name || "地形.txt",
+      encoding: encoding || "gbk",
+      base64: PaperLibraryCore.bytesToBase64(view),
+      at: Date.now(),
+    })
+  );
+  location.href = "/web/index.html?importTerrain=1";
+}
+
 async function importDesign(file, options = {}) {
   const { buffer, documentData } = await parseBuildingFile(file);
   if (documentData.kind !== "desk") {
+    if (documentData.kind !== "terrain") {
+      await appAlert("这张图纸不是改造作品，改造设计桌不会把它写进建筑设计桌。", { title: "图纸类型不对" });
+      return;
+    }
     const goTerrain = await appConfirm(
-      `「${file.name}」是庄园摆放图（共 ${documentData.records?.length || 0} 个点），不是户型装修图。\n\n是否打开地形设计桌导入？`,
+      `「${file.name}」是庄园摆放图（共 ${documentData.records?.length || 0} 个点），不是改造图纸。\n\n是否打开地形设计桌查看？改造图纸库不会改这张地形图。`,
       { title: "图纸类型不对", okLabel: "去地形桌", cancelLabel: "取消" }
     );
     if (!goTerrain) return;
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-    }
-    sessionStorage.setItem(
-      "manor-pending-building-import",
-      JSON.stringify({
-        name: PaperLibraryCore.paperNameFromFile(file),
-        encoding: documentData._source?.encoding || "gbk",
-        base64: btoa(binary),
-        at: Date.now(),
-      })
+    handOffTerrainPaper(
+      new Uint8Array(buffer),
+      PaperLibraryCore.paperNameFromFile(file),
+      documentData._source?.encoding || "gbk"
     );
-    location.href = "/web/index.html?importBuilding=1";
     return;
   }
   const records = documentData.records || [];
@@ -11281,27 +11476,9 @@ function serializeTerrainPreviewRecords(records = state.records) {
 }
 
 async function placeCurrentBuildingOnTerrain() {
-  if (!state.base) {
-    await appAlert("请先选择改造基座。", { title: "无法放置" });
-    return;
+  if (typeof appAlert === "function") {
+    await appAlert("改造作品只保存在改造设计桌，不会放到地形桌或建筑设计桌。", { title: "不会影响其他设计桌" });
   }
-  const records = serializeTerrainPreviewRecords();
-  if (!records.some((record) => Number(record.mat))) {
-    await appAlert("当前建筑还没有可预览的素材。", { title: "无法放置" });
-    return;
-  }
-  const payload = {
-    v: 1,
-    name: paperFileStem() || state.base?.name || "设计建筑",
-    baseNo: Number(state.base.no),
-    localPackKey: state.pack?.key || "",
-    coordinateSpace: state.paperLayout ? "paper" : "editor",
-    documentData: { kind: "desk", records },
-    createdAt: Date.now(),
-  };
-  sessionStorage.setItem("manor-pending-preview-building", JSON.stringify(payload));
-  await saveBuildingSession();
-  location.href = "/?placeBuilding=1";
 }
 
 async function exportDesign() {

@@ -83,6 +83,7 @@
   let lastCell = null;
   let lineStart = null;
   let aiRefUploadPng = null;
+  let aiRefUploadImage = null;
   let gesture = null;
   let pageClipboard = null;
   let playing = false;
@@ -237,7 +238,7 @@
     const message = all
       ? "已复制全部页。打开游戏「高清电子广告牌设计」，点「全部粘贴」。游戏没有文件导入。"
       : "已复制当前页。打开游戏「高清电子广告牌设计」，按 Ctrl+V 或点「粘贴」。多页请用「复制全部页」，再到游戏里全部粘贴。";
-    if (typeof appAlert === "function") appAlert(message, { title: "复制到游戏", okLabel: "去游戏粘贴" });
+    if (typeof appAlert === "function") appAlert(message, { title: "复制", okLabel: "去游戏粘贴" });
   }
 
   function showClipFallback(text, kind) {
@@ -272,7 +273,7 @@
     const pages = clip.trim() ? decodeBoardClip(clip) : [];
     const page = pages[0] || pageClipboard;
     if (!page) {
-      if (typeof appAlert === "function") appAlert("剪贴板里没有灯珠页。先在本桌点「复制到游戏」，或在游戏里复制。", { title: "无法粘贴" });
+      if (typeof appAlert === "function") appAlert("剪贴板里没有灯珠页。先在本桌点「复制」，或在游戏里复制。", { title: "无法粘贴" });
       return;
     }
     commitHistory();
@@ -988,7 +989,7 @@
   }
 
   function analyzeImage(image) {
-    const source = rasterizeImage(image);
+    const source = rasterizeImage(image, 1800);
     if (window.BoardImage?.analyze) {
       return window.BoardImage.analyze(source, state.palette, { cols: COLS, rows: ROWS, dark: DARK });
     }
@@ -1138,7 +1139,7 @@
   function exportJpg(name) {
     const a = document.createElement("a");
     a.href = snapshotJpg();
-    a.download = (name || state.designName || "广告牌") + ".jpg";
+    a.download = (name || state.designName || "广告") + ".jpg";
     a.click();
   }
 
@@ -1487,15 +1488,49 @@
       return;
     }
     const image = await loadImageFile(file);
+    aiRefUploadImage = image;
     aiRefUploadPng = imageToAiPng(image);
     state.aiRefUploadName = String(file.name || "参考图");
     state.aiRefMode = "upload";
     syncAiRefChrome();
+    const bead = localBeadFromUpload();
+    if (bead) {
+      adoptBeadPromptIfIdle();
+      setAiStatus((bead.message || "认出拼豆色号表。") + " 色号表不走 AI 生图，点生成会按格子收灯。");
+      return;
+    }
     setAiStatus("已选「" + state.aiRefUploadName + "」，生成时会带上。");
+  }
+
+  function localBeadFromUpload() {
+    if (state.aiRefMode !== "upload" || !aiRefUploadImage) return null;
+    const result = analyzeImage(aiRefUploadImage);
+    if (result.mode !== "grid" || (result.sourceLit || 0) < 24) return null;
+    return result;
+  }
+
+  function adoptBeadPromptIfIdle() {
+    const beads = kindPrompts().find((row) => row.id === "builtin:billboard-hd:beads");
+    if (!beads) return;
+    const current = selectedPrompt();
+    const text = readAiPrompt();
+    const idle = !text
+      || (current?.builtin && (current.id === "builtin:billboard-hd:default" || /太阳小山|小山/.test(text)));
+    if (!idle) return;
+    state.aiPromptId = beads.id;
+    setAiPrompt(beads.prompt);
+    fillAiPromptPick();
+  }
+
+  function pageFromGeneratedImage(image) {
+    const result = analyzeImage(image);
+    if (result.mode === "grid" && (result.sourceLit || 0) >= 24) return result.page;
+    return quantizeImage(image);
   }
 
   function clearAiRefUpload() {
     aiRefUploadPng = null;
+    aiRefUploadImage = null;
     state.aiRefUploadName = "";
     const input = document.getElementById("fileBoardAiRef");
     if (input) input.value = "";
@@ -1576,10 +1611,10 @@
       return;
     }
     const current = selectedPrompt();
-    let name = current?.name || "广告牌模板";
+    let name = current?.name || "广告模板";
     if (!current || current.builtin) {
       const typed = typeof appPrompt === "function"
-        ? await appPrompt("会保存到广告牌提示词列表。选中只填进编辑框。", {
+        ? await appPrompt("会保存到广告提示词列表。选中只填进编辑框。", {
           title: current ? "另存提示词模板" : "新建提示词模板",
           fieldLabel: "模板名称",
           value: name,
@@ -1608,17 +1643,17 @@
       ? await appPrompt("新建后出现在下拉框里。选中只填入编辑框。", {
         title: "新建提示词模板",
         fieldLabel: "模板名称",
-        value: "广告牌模板",
+        value: "广告模板",
         okLabel: "新建",
       })
-      : window.prompt("模板名称", "广告牌模板");
+      : window.prompt("模板名称", "广告模板");
     if (typed == null) return;
     state.aiPromptId = "";
     setAiPrompt("");
     const item = {
       id: `p${Date.now().toString(36)}`,
       kind: KIND,
-      name: String(typed).trim() || "广告牌模板",
+      name: String(typed).trim() || "广告模板",
       prompt: "",
       savedAt: Date.now(),
     };
@@ -1701,6 +1736,35 @@
     readAiPrompt();
     await nextPaint();
     try {
+      const patchOn = Boolean(document.getElementById("boardAiPatch")?.checked);
+      const maskPng = patchOn ? exportMaskPng() : null;
+      if (patchOn && !maskPng) {
+        setAiStatus("先用笔触里的「圈选」涂要改的灯珠，再勾「只改圈选灯珠」。");
+        return;
+      }
+      if (!maskPng) {
+        const bead = localBeadFromUpload();
+        if (bead) {
+          if (state.dirty) {
+            const ok = typeof appConfirm === "function"
+              ? await appConfirm("生成结果会压到当前页灯珠上。未保存的笔触会被盖住。", { title: "生成到灯牌", okLabel: "生成" })
+              : window.confirm("生成会盖住当前页，继续？");
+            if (!ok) {
+              setAiStatus("");
+              return;
+            }
+          }
+          commitHistory();
+          currentPage().set(bead.page);
+          markDirty();
+          drawBoard();
+          renderPages();
+          setAiStatus((bead.message || "已按色号格收灯。") + " 色号表不走 AI 生图。");
+          setSaveStatus(bead.message || "已按色号格收灯。");
+          setModalVisible("dlgBoardAi", false);
+          return;
+        }
+      }
       const key = String(document.getElementById("boardAiKey")?.value || "").trim();
       const custom = String(document.getElementById("boardAiModelCustom")?.value || "").trim();
       const model = custom || String(document.getElementById("boardAiModel")?.value || "").trim();
@@ -1717,12 +1781,6 @@
       }
       if (!prompt) {
         setAiStatus("提示词是空的。可以先选一份模板再改。");
-        return;
-      }
-      const patchOn = Boolean(document.getElementById("boardAiPatch")?.checked);
-      const maskPng = patchOn ? exportMaskPng() : null;
-      if (patchOn && !maskPng) {
-        setAiStatus("先用笔触里的「圈选」涂要改的灯珠，再勾「只改圈选灯珠」。");
         return;
       }
       if (state.dirty && !maskPng) {
@@ -1780,7 +1838,7 @@
       if (!res.ok) throw new Error(payload.error || ("HTTP " + res.status));
       if (!payload.png) throw new Error("没有返回图片");
       const image = await loadDataUrl(payload.png);
-      const quantized = quantizeImage(image);
+      const quantized = pageFromGeneratedImage(image);
       commitHistory();
       if (maskPng) {
         const page = currentPage();
@@ -1919,7 +1977,7 @@
   async function saveDesign() {
     if (saveDesignBusy) return;
     const okBtn = document.getElementById("btnBoardSaveOk");
-    const name = String(document.getElementById("boardSaveName")?.value || "").trim() || "未命名广告牌";
+    const name = String(document.getElementById("boardSaveName")?.value || "").trim() || "未命名广告";
     saveDesignBusy = true;
     if (okBtn) {
       okBtn.disabled = true;
@@ -1998,7 +2056,7 @@
     if (!(state.designs || []).length) {
       const empty = document.createElement("p");
       empty.className = "kind-meta";
-      empty.textContent = "还没有保存的广告牌。";
+      empty.textContent = "还没有保存的广告。";
       list.append(empty);
       return;
     }

@@ -319,6 +319,8 @@ def terrain_catalog(missing: list[dict], decode_errors: list[dict]) -> dict:
 def parse_base_table(path: Path, missing: list[dict], decode_errors: list[dict]) -> list[dict]:
     result = []
     roots = [BUILD_RUNTIME, BUILD_DESIGN, BUILD_DESIGN / "imgs"]
+    if path.name == "customroot.tab":
+        roots = [BUILD_DESIGN / "item", BUILD_DESIGN / "imgs", BUILD_RUNTIME, BUILD_DESIGN]
     for columns in parse_tab(path):
         if not columns or not columns[0].strip().strip('"').isdigit():
             continue

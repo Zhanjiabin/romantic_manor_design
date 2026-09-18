@@ -679,14 +679,19 @@ html.is-tablet-workspace .board-app .page-io {
 .board-ai-prompt-field {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
+  overflow: hidden;
 }
 
 .board-ai-prompt {
-  flex: 1 1 auto;
-  min-height: 96px;
+  flex: none;
+  box-sizing: border-box;
+  min-height: 88px;
+  max-height: 132px;
+  height: 112px;
   resize: vertical;
+  overflow: auto;
   font-size: 16px;
   line-height: 1.45;
 }
@@ -694,18 +699,29 @@ html.is-tablet-workspace .board-app .page-io {
 .board-ai-ref {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 6px;
+  position: relative;
+  z-index: 1;
 }
 
+.board-ai-ref-label,
 .board-ai-ref > span {
+  display: block;
+  flex: none;
   font-size: 12px;
   font-weight: 650;
   color: var(--ink-soft);
+  line-height: 1.4;
+  margin: 2px 0 0;
+  padding: 0;
 }
 
 .board-ai-ref-modes {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: none;
   gap: 4px;
 }
 
@@ -731,6 +747,8 @@ html.is-tablet-workspace .board-app .page-io {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .board-ai-ref-card {
@@ -781,6 +799,14 @@ html.is-tablet-workspace .board-app .page-io {
   margin: 0;
   flex: 1 1 120px;
   font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.board-ai-ref-hint {
+  margin: 0;
+  flex: 1 1 100%;
+  font-size: 11px;
+  line-height: 1.35;
   color: var(--ink-soft);
 }
 

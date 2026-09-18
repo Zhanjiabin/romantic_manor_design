@@ -210,6 +210,7 @@ def test_game_art_prefixes_are_public():
         "/ale/wlink014.png",
         "/bdesign/ale/res/snow/windows01.ale.png",
         "/bdesign/imgs/glsbg.gif",
+        "/bdesign/item/baseimg/4&4.gif",
         "/item-ale/foo.ale.png",
     ):
         assert any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES)

@@ -24,7 +24,7 @@ REMOTE = "/opt/manor-desk"
 ROOT = Path(__file__).resolve().parents[1]
 
 RUNTIME_PREFIXES = ("web/", "data/", "codec/")
-RUNTIME_FILES = {"server.py", "saves.py", "export_xlsx.py", "cloth_ai.py", "board_ai.py"}
+RUNTIME_FILES = {"server.py", "saves.py", "export_xlsx.py", "game_paths.py", "cloth_ai.py", "board_ai.py"}
 SKIP_PREFIXES = ("data/saves/", "data/image_to_building/")
 SKIP_PARTS = ("__pycache__/", ".pytest_cache/")
 
@@ -45,6 +45,7 @@ def working_tree_runtime_files():
             "server.py",
             "saves.py",
             "export_xlsx.py",
+            "game_paths.py",
             "cloth_ai.py",
             "board_ai.py",
         ],

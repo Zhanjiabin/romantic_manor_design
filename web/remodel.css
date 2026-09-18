@@ -15,31 +15,6 @@
   display: none !important;
 }
 
-.remodel-app .hud-stack .remodel-clip-note {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 4;
-  margin: 0;
-  padding: 4px 10px;
-  border-radius: 4px;
-  background: rgba(255, 244, 180, 0.92);
-  border: 1px solid #d4b43a;
-  color: #5a3d08;
-  font: 700 13px/1.4 var(--font, "Microsoft YaHei", sans-serif);
-  pointer-events: none;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
-}
-
-.remodel-app.phase-design .base-meta {
-  top: 48px;
-}
-
-.remodel-app.phase-select .remodel-clip-note,
-.remodel-clip-note[hidden] {
-  display: none !important;
-}
-
 .remodel-kind-hint {
   margin: 8px 0 0;
   color: var(--ink-soft, #5b6b62);
@@ -75,4 +50,84 @@
 
 #btnRemodelClipSelect {
   min-height: 44px;
+}
+
+/* Leftover canvas clip HUD (removed) must never cover the mobile toolrail. */
+.remodel-app .remodel-clip-note {
+  display: none !important;
+}
+
+/*
+ * Phone topbar stays one row: desk switch + snap/veil. Overflow scrolls
+ * sideways instead of wrapping. Building desk keeps shared layout.
+ */
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app .topbar {
+  display: flex;
+  flex-wrap: nowrap;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 44px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-bottom: 6px;
+  padding-left: max(8px, env(safe-area-inset-left));
+  padding-right: max(8px, env(safe-area-inset-right));
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app .topbar-left,
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app .top-actions {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app .desk-switch-inline {
+  display: flex;
+  flex-wrap: nowrap;
+  width: auto;
+  max-width: none;
+  margin-left: 0;
+  overflow: visible;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app .desk-switch-inline a {
+  flex: 0 0 auto;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 36px;
+  height: 36px;
+  padding-inline: 7px;
+  font: 650 12px/36px var(--font);
+  white-space: nowrap;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app .top-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  overflow: visible !important;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app .snap-cluster,
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app .veil-cluster {
+  flex: 0 0 auto;
+  min-width: max-content;
+  overflow: visible !important;
+}
+
+html.is-mobile-workspace:not(.is-tablet-workspace) .building-app.remodel-app.phase-design .canvas-tool-dock {
+  top: max(8px, env(safe-area-inset-top, 0px)) !important;
+  left: max(8px, env(safe-area-inset-left, 0px)) !important;
+}
+
+html.mobile-landscape:not(.is-tablet-workspace) .building-app.remodel-app .zoom-control,
+html.mobile-landscape:not(.is-tablet-workspace) .building-app.remodel-app .nudge-pad {
+  left: auto !important;
+  right: max(8px, env(safe-area-inset-right)) !important;
 }

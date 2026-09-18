@@ -13,8 +13,13 @@ from codec.remodel import (
     NATIVE_CLIP_MAX,
     format_native_clip,
     get_base_index,
+    item_paper_mat,
     load_custom_bases,
+    load_item_formula_packs,
+    load_item_pack_uids,
     native_get_clipboard,
+    pack_family_for_kind,
+    packet_name_for_kind,
     parse_put,
     scale_mode_for_kind,
     show_person_for_kind,
@@ -65,6 +70,39 @@ def test_get_base_index_matches_native_setput():
     assert get_base_index(bases, 0, 6, 6)["name"] == "装饰基座6×6"
 
 
+def test_item_packets_split_decoration_and_furniture():
+    assert packet_name_for_kind(0) == "装饰素材包"
+    assert packet_name_for_kind(1) == "家具素材包"
+    assert packet_name_for_kind(2) == "家具素材包"
+    assert packet_name_for_kind(3) == "家具素材包"
+    assert pack_family_for_kind(0) == "ornament"
+    assert pack_family_for_kind(1) == "furniture"
+    uids = load_item_pack_uids()
+    packs = uids["packs"]
+    assert any(row["key"] == "o_china03" and row["uid"] == 2 and row["family"] == "ornament" for row in packs)
+    assert any(row["key"] == "i_xmas03" and row["uid"] == 10 and row["family"] == "furniture" for row in packs)
+    q02 = next(row for row in packs if row["key"] == "o_q02")
+    tool02 = next(row for row in packs if row["key"] == "i_tool02")
+    assert q02["uid"] == tool02["uid"] == 7
+    assert q02["family"] != tool02["family"]
+    assert item_paper_mat(101, "i_xmas03") == 10101
+    assert item_paper_mat(101, "i_tool02") == 7101
+    assert item_paper_mat(101, "o_china03") == 2101
+    ornament = [row["key"] for row in packs if row["family"] == "ornament"]
+    furniture = [row["key"] for row in packs if row["family"] == "furniture"]
+    assert all(key.startswith("o_") for key in ornament)
+    assert all(key.startswith("i_") for key in furniture)
+    assert "i_xmas03" not in ornament
+    assert "o_china03" not in furniture
+    assert len(ornament) == 8
+    assert len(furniture) == 11
+    formula = load_item_formula_packs()
+    if formula:
+        by_key = {(row["family"], row["key"]): row["uid"] for row in formula}
+        for row in packs:
+            assert by_key[(row["family"], row["key"])] == row["uid"], row
+
+
 def test_scale_mode_and_person_follow_itemdesign_guide():
     assert scale_mode_for_kind(0) == 0
     assert scale_mode_for_kind(1) == 2
@@ -112,6 +150,21 @@ def test_native_clip_matches_txt_export_desk_v1():
     assert parse_v1(signed, kind="desk")["records"][0]["x"] == -1
 
 
+def test_custom_base_art_lives_in_item_folder():
+    from game_paths import BDESIGN_ITEM
+
+    folder = BDESIGN_ITEM / "baseimg"
+    if not folder.is_dir():
+        return
+    missing = []
+    for base in load_custom_bases():
+        for key in ("baseImage", "maskImage", "workImage"):
+            name = Path(str(base.get(key) or "")).name
+            if name and not (folder / name).is_file():
+                missing.append((base["name"], key, name))
+    assert missing == []
+
+
 def test_remodel_saves_are_isolated_from_building():
     tmp = tempfile.mkdtemp(prefix="manor-remodel-saves-")
     prev = os.environ.get("MANOR_SAVES")
@@ -120,10 +173,16 @@ def test_remodel_saves_are_isolated_from_building():
     try:
         save_building_bundle({"session": {"v": 1, "desk": "building", "baseNo": 212}})
         save_remodel_bundle({"session": {"v": 1, "desk": "remodel", "baseNo": 1}})
+        save_building_bundle({"customs": {"v": 1, "items": [{"id": "b1", "name": "house-custom"}]}})
+        save_remodel_bundle({"customs": {"v": 1, "items": [{"id": "r1", "name": "item-custom"}]}})
         building = load_building_bundle()
         remodel = load_remodel_bundle()
         assert building["session"]["desk"] == "building"
         assert remodel["session"]["desk"] == "remodel"
+        assert building["customs"]["items"][0]["id"] == "b1"
+        assert remodel["customs"]["items"][0]["id"] == "r1"
+        assert (Path(tmp) / "building-customs.json").is_file()
+        assert (Path(tmp) / "remodel-customs.json").is_file()
         save_building_papers(
             [{"id": "bldpaper1", "name": "house.txt", "data": "VjE7QUFB", "kind": "desk"}]
         )

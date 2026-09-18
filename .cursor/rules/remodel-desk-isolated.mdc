@@ -1,0 +1,30 @@
+---
+description: Remodel desk saves, customs, and paper library stay isolated from building and terrain desks.
+alwaysApply: true
+---
+
+# Remodel desk data is isolated
+
+The remodel desk (改造设计桌) has its own materials, works, and paper library. **Never write those into the building desk or terrain desk, and never read/overwrite building or terrain saves from remodel code.** Losing or mixing those stores is not an acceptable "cleanup".
+
+## Separate stores (do not merge, rename onto, or delete across)
+
+| Kind | Remodel only | Building only | Terrain only |
+|------|--------------|---------------|--------------|
+| Session | `remodel-session.json` `/api/saves/remodel` `manor-remodel-session-v1` | `building-session.json` `/api/saves/building` `manor-building-session-v1` | `terrain-draft.json` `/api/saves/terrain` |
+| Customs / 作品组件 | `remodel-customs.json` `manor-remodel-customs-v1` | `building-customs.json` `manor-building-customs-v1` | not these files |
+| Paper library | `remodel-papers/` `/api/saves/remodel/papers` IndexedDB `manor-remodel-paper-library` | `building-papers/` `/api/saves/building/papers` IndexedDB `manor-paper-library` | `terrain-versions/` `terrain-assets/` |
+| Pack UID table | `data/item_pack_uids.json` | `data/building_pack_uids.json` (locked) | n/a |
+
+## Forbidden
+
+- Editing `web/building.js`, `web/app.js`, `data/building_pack_uids.json`, or terrain save paths to "share" remodel features.
+- Remodel calling `/api/saves/building`, `/api/saves/terrain`, or writing `manor-pending-building-import` / `manor-pending-preview-building`.
+- Pointing remodel IndexedDB at `manor-paper-library`.
+- Clearing or migrating building/terrain folders when changing remodel.
+- Regenerating the remodel desk by copying building.js without re-applying the isolation replacements in `tools/gen_remodel_desk.py`.
+
+## Allowed
+
+- A terrain **file** opened on the remodel desk may jump to the terrain desk via `manor-pending-terrain-import` only, without saving it into `remodel-papers` or `building-papers`.
+- Read-only game art (`editor_catalog.json`, ALE) may be shared. User works may not.

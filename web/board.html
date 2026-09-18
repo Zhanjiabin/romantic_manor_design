@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="广告牌设计桌" />
+  <meta name="apple-mobile-web-app-title" content="广告设计桌" />
   <meta name="theme-color" content="#1a2430" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <title>广告牌设计桌</title>
+  <title>广告设计桌</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/favicon.ico" sizes="32x32" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=13" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/board.css?v=10" />
+  <link rel="stylesheet" href="/web/board.css?v=12" />
 </head>
 <body>
   <div class="app board-app" id="boardApp">
@@ -30,7 +30,7 @@
           <a href="/web/building.html">建筑<span class="desk-switch-rest">设计桌</span></a>
           <a href="/web/cloth.html">衣服<span class="desk-switch-rest">设计桌</span></a>
           <a href="/web/remodel.html">改造<span class="desk-switch-rest">设计桌</span></a>
-          <a class="on" href="/web/board.html" aria-current="page">广告牌<span class="desk-switch-rest">设计桌</span></a>
+          <a class="on" href="/web/board.html" aria-current="page">广告<span class="desk-switch-rest">设计桌</span></a>
         </nav>
         <div class="save-status" id="saveStatus">未保存</div>
       </div>
@@ -40,11 +40,11 @@
         <button type="button" class="btn btn-compact" id="btnImportPng" title="导入到本桌：ALE / GIF / 图片。游戏设计窗没有文件导入，要用复制粘贴">导入</button>
         <button type="button" class="btn btn-compact" id="btnExportPng" title="导出当前页 JPG">导出图片</button>
         <button type="button" class="btn btn-compact" id="btnPreview" title="预览翻页、播放和间隔">预览</button>
-        <button type="button" class="btn btn-compact btn-primary" id="btnBoardCopy" title="复制当前页到剪贴板，再到游戏高清电子广告牌设计里粘贴">复制到游戏</button>
+        <button type="button" class="btn btn-compact btn-primary" id="btnBoardCopy" title="复制当前页到剪贴板，再到游戏高清电子广告牌设计里粘贴">复制</button>
         <button type="button" class="btn btn-compact" id="btnFinalize" title="下载 .ale 备用。进游戏请先复制粘贴，再在游戏里最终定稿">定稿</button>
         <button type="button" class="btn btn-compact" id="btnBoardAi" title="用第三方图片模型出图再压成灯珠">AI 设计</button>
         <button type="button" class="btn btn-compact" id="btnBoardSmart" title="上传图片，本地分析色号网格或色系，压成 36×24 灯珠">智能生成</button>
-        <button type="button" class="btn btn-compact board-new-btn" id="btnNewDesign" title="新建空白广告牌">新建</button>
+        <button type="button" class="btn btn-compact board-new-btn" id="btnNewDesign" title="新建空白广告">新建</button>
         <button type="button" class="btn btn-compact btn-primary" id="btnSaveDesign" title="保存到本桌作品">完成</button>
         <button type="button" class="top-command-btn top-backup-btn" data-desk-backup hidden title="全量备份当前账号数据并下载，不会改原文件">备份</button>
         <button type="button" class="top-command-btn top-account-btn" id="btnSwitchAccount" data-account-switch hidden title="切换账号">
@@ -61,9 +61,9 @@
           <div class="rail-head">规格</div>
           <p class="kind-meta" id="kindMeta">36×24 · 最多 10 页</p>
           <div class="rail-head board-board-head">页 <span class="project-count" id="pageCount">1</span></div>
-          <div class="page-strip" id="pageStrip" role="listbox" aria-label="广告牌页"></div>
+          <div class="page-strip" id="pageStrip" role="listbox" aria-label="广告页"></div>
           <div class="io-row page-io board-copy-io">
-            <button type="button" class="btn btn-primary" id="btnBoardCopyRail" title="复制当前页到剪贴板，游戏里粘贴">复制到游戏</button>
+            <button type="button" class="btn btn-primary" id="btnBoardCopyRail" title="复制当前页到剪贴板，游戏里粘贴">复制</button>
             <button type="button" class="btn btn-compact" data-board-page="copy-all" title="复制全部页，游戏里用全部粘贴">复制全部页</button>
           </div>
           <div class="io-row page-io">
@@ -91,20 +91,20 @@
           <span class="stage-meta"><strong id="canvasSizeLabel">36×24</strong> · <span id="designerLabel">灯珠设计</span></span>
           <div class="stage-actions">
             <button type="button" class="btn btn-compact" id="btnClearMask" hidden title="去掉圈选">清空圈选</button>
-            <button type="button" class="btn btn-compact" id="btnBoardCopyHud" title="复制当前页到剪贴板，再到游戏里粘贴">复制到游戏</button>
+            <button type="button" class="btn btn-compact" id="btnBoardCopyHud" title="复制当前页到剪贴板，再到游戏里粘贴">复制</button>
             <button type="button" class="btn btn-compact" id="btnBoardSmartHud" title="上传图片，本地分析色系后压成灯珠">智能生成</button>
             <button type="button" class="btn btn-compact btn-primary" id="btnBoardAiHud" title="用第三方图片模型出图再压成灯珠">AI 设计</button>
           </div>
         </div>
 
         <div class="stage-canvas-wrap">
-          <div class="paint-board" id="paintBoard" tabindex="0" aria-label="高清电子广告牌画布">
+          <div class="paint-board" id="paintBoard" tabindex="0" aria-label="广告画布">
             <div class="paint-view" id="paintView">
-              <canvas id="paintCanvas" width="648" height="432" aria-label="高清电子广告牌 36×24 灯珠"></canvas>
+              <canvas id="paintCanvas" width="648" height="432" aria-label="广告 36×24 灯珠"></canvas>
             </div>
           </div>
         </div>
-        <p class="paint-hint" id="paintHint">进游戏请点「复制到游戏」，再打开游戏高清电子广告牌设计，Ctrl+V 或点粘贴；多页用「复制全部页」再在游戏里全部粘贴。一指点灯，双指拖动缩放。</p>
+        <p class="paint-hint" id="paintHint">进游戏请点「复制」，再打开游戏高清电子广告牌设计，Ctrl+V 或点粘贴；多页用「复制全部页」再在游戏里全部粘贴。一指点灯，双指拖动缩放。</p>
       </main>
 
       <aside class="rail rail-right board-rail mobile-sheet" id="boardToolSheet" data-sheet-mode="draw">
@@ -127,7 +127,7 @@
           <div class="rail-head">灯色 · 5×10</div>
           <div class="palette-grid" id="paletteGrid" role="listbox" aria-label="灯珠调色板"></div>
           <div class="io-row">
-            <button type="button" class="btn btn-compact" data-board-io="copy">复制到游戏</button>
+            <button type="button" class="btn btn-compact" data-board-io="copy">复制</button>
             <button type="button" class="btn btn-compact" data-board-io="new">新建</button>
             <button type="button" class="btn btn-compact" data-board-io="import">导入</button>
             <button type="button" class="btn btn-compact" id="btnBoardSmartRail">智能生成</button>
@@ -154,8 +154,8 @@
       </aside>
     </div>
 
-    <nav class="mobile-bottom-dock board-mobile-dock" id="boardMobileDock" aria-label="移动端广告牌工具">
-      <button type="button" class="mobile-dock-button" id="btnBoardMobileNew" title="新建空白广告牌">
+    <nav class="mobile-bottom-dock board-mobile-dock" id="boardMobileDock" aria-label="移动端广告工具">
+      <button type="button" class="mobile-dock-button" id="btnBoardMobileNew" title="新建空白广告">
         <span class="mobile-dock-glyph">＋</span><span>新建</span>
       </button>
       <button type="button" class="mobile-dock-button" id="btnBoardMobilePages" aria-expanded="false">
@@ -192,12 +192,12 @@
   <div class="modal" id="dlgBoardPreview" hidden>
     <div class="modal-card board-preview-card" role="dialog" aria-modal="true" aria-labelledby="boardPreviewTitle">
       <div class="modal-cap">
-        <span id="boardPreviewTitle">电子广告牌预览</span>
+        <span id="boardPreviewTitle">广告预览</span>
         <button type="button" class="icon-x" data-close-modal="dlgBoardPreview" aria-label="关闭"></button>
       </div>
       <div class="modal-body board-preview-body" data-mobile-sheet-scroll>
         <p class="dlg-desc" id="previewHint">和游戏预览一样：先看当前页，再播放或翻页。间隔只影响预览，进游戏后仍用「设置时间」。</p>
-        <canvas id="previewCanvas" width="648" height="432" aria-label="广告牌预览"></canvas>
+        <canvas id="previewCanvas" width="648" height="432" aria-label="广告预览"></canvas>
         <label class="field board-preview-interval">
           <span>播放时间间隔</span>
           <span class="board-preview-interval-row">
@@ -247,7 +247,7 @@
         <div class="board-ai-layout" id="boardAiPanePrompt" data-ai-pane="prompt" role="tabpanel">
           <section class="board-ai-main">
             <label class="field">
-              <span>提示词模板 · <b id="boardAiKindLabel">高清电子广告牌</b></span>
+              <span>提示词模板 · <b id="boardAiKindLabel">高清广告</b></span>
               <select class="input" id="boardAiPromptPick" aria-label="提示词模板"></select>
             </label>
             <div class="board-ai-prompt-actions">
@@ -258,10 +258,10 @@
             </div>
             <label class="field board-ai-prompt-field">
               <span>提示词</span>
-              <textarea class="input board-ai-prompt" id="boardAiPrompt" rows="8" maxlength="4000"></textarea>
+              <textarea class="input board-ai-prompt" id="boardAiPrompt" rows="4" maxlength="4000"></textarea>
             </label>
             <div class="board-ai-ref">
-              <span>参考图</span>
+              <span class="board-ai-ref-label">参考图</span>
               <div class="board-ai-ref-modes" role="radiogroup" aria-label="参考图来源">
                 <button type="button" class="board-ai-ref-mode on" data-ai-ref="none" aria-pressed="true">不参考</button>
                 <button type="button" class="board-ai-ref-mode" data-ai-ref="template" aria-pressed="false">参考模板</button>
@@ -272,6 +272,7 @@
                 <button type="button" class="btn btn-compact" id="btnBoardAiRefPick">选择 PNG 或 JPG</button>
                 <button type="button" class="btn btn-compact" id="btnBoardAiRefClear" hidden>清除</button>
                 <p class="board-ai-ref-name" id="boardAiRefUploadName">还没选图</p>
+                <p class="board-ai-ref-hint">拼豆/色号表会按格子收灯，不走生图。普通配图才发给 AI。</p>
                 <img class="board-ai-ref-preview" id="boardAiRefPreview" alt="上传的参考图" hidden />
               </div>
             </div>
@@ -307,7 +308,7 @@
             </label>
             <details class="board-ai-rules">
               <summary>生成时自动附上的画布规则</summary>
-              <p id="boardAiContract">输出必须是 720×480 横版广告牌大色块，随后压成游戏 36×24 灯珠，不要人物写真或小字。</p>
+              <p id="boardAiContract">输出必须是 720×480 横版广告大色块，随后压成游戏 36×24 灯珠，不要人物写真或小字。</p>
             </details>
             <p class="kind-meta" data-ai-status></p>
           </aside>
@@ -319,7 +320,7 @@
   <div class="modal" id="dlgBoardClip" hidden>
     <div class="modal-card board-smart-card" role="dialog" aria-modal="true" aria-labelledby="boardClipTitle">
       <div class="modal-cap">
-        <span id="boardClipTitle">复制到游戏</span>
+        <span id="boardClipTitle">复制</span>
         <button type="button" class="icon-x" data-close-modal="dlgBoardClip" aria-label="关闭"></button>
       </div>
       <div class="modal-body board-smart-body" data-mobile-sheet-scroll>
@@ -337,7 +338,7 @@
         <button type="button" class="icon-x" data-close-modal="dlgBoardSave" aria-label="关闭"></button>
       </div>
       <div class="modal-body">
-        <p class="dlg-desc" id="boardSaveHint">保存到本桌。进游戏请点「复制到游戏」，打开游戏高清电子广告牌设计后粘贴；游戏里再点最终定稿才会变成可摆放的灯牌。</p>
+        <p class="dlg-desc" id="boardSaveHint">保存到本桌。进游戏请点「复制」，打开游戏高清电子广告牌设计后粘贴；游戏里再点最终定稿才会变成可摆放的灯牌。</p>
         <label class="field">
           <span>作品名称</span>
           <input class="input" id="boardSaveName" maxlength="48" placeholder="例如 夜市灯牌" autocomplete="off" />
@@ -373,7 +374,7 @@
   <script src="/web/app-dialog.js?v=2"></script>
   <script src="/web/desk-account.js?v=7"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
-  <script src="/web/board-image.js?v=2"></script>
-  <script src="/web/board.js?v=9"></script>
+  <script src="/web/board-image.js?v=6"></script>
+  <script src="/web/board.js?v=12"></script>
 </body>
 </html>

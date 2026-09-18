@@ -39,6 +39,15 @@ test("paper white maps to dark lamps, not palette white", () => {
   assert.equal(BoardImage.nearestFrame([245, 245, 245], palette, DARK), DARK);
   assert.notEqual(BoardImage.nearestFrame([48, 160, 64], palette, DARK), DARK);
   assert.notEqual(BoardImage.nearestFrame([103, 75, 60], palette, DARK), DARK);
+  const brown = BoardImage.nearestFrame([73, 44, 26], palette, DARK);
+  const green = BoardImage.nearestFrame([45, 60, 21], palette, DARK);
+  const mauve = BoardImage.nearestFrame([210, 172, 209], palette, DARK);
+  const rose = BoardImage.nearestFrame([175, 130, 129], palette, DARK);
+  assert.equal(brown, 0, "dark brown outline uses dusty-rose lamp, palette has no brown");
+  assert.ok(brown !== 1 && brown !== 2 && brown !== 10 && brown !== 30, "brown must not become red, olive, or purple");
+  assert.ok(green < 45 && green >= 15 && green <= 24, "dark green beads stay on green lamps");
+  assert.equal(mauve, 42, "JPEG pink/mauve beads stay on hot-pink lamps, not purple");
+  assert.equal(rose, 42, "muted rose cheeks stay pink, not brown outline");
 });
 
 test("color-code grid ignores center labels and keeps fills on", () => {
@@ -51,8 +60,13 @@ test("color-code grid ignores center labels and keeps fills on", () => {
     if (col >= 4 && col <= 7 && row >= 10 && row <= 15) return pink;
     return [248, 248, 248];
   });
+  // Only put dark glyphs on filled cells (like 画像素 color codes), not on empty paper.
   for (let row = 0; row < 20; row += 1) {
     for (let col = 0; col < 24; col += 1) {
+      const filled = (col >= 8 && col <= 16 && row >= 3 && row <= 7)
+        || (col >= 6 && col <= 18 && row >= 8 && row <= 16)
+        || (col >= 4 && col <= 7 && row >= 10 && row <= 15);
+      if (!filled) continue;
       const x0 = col * 16 + 6;
       const y0 = row * 16 + 6;
       for (let y = y0; y < y0 + 5; y += 1) {
@@ -97,6 +111,45 @@ test("color-code grid is detected, clustered, and fit into 36x24", () => {
   assert.match(result.message, /关灯/);
 });
 
+test("large color-code cells still detect as a bead grid", () => {
+  const brown = [120, 72, 40];
+  const image = colorGrid(18, 16, 48, (col, row) => {
+    if (col >= 4 && col <= 14 && row >= 3 && row <= 12) return brown;
+    return [248, 248, 248];
+  });
+  const result = BoardImage.analyze(image, palette, { cols: 36, rows: 24, dark: DARK });
+  assert.equal(result.mode, "grid");
+  assert.ok(result.grid.cols >= 10);
+  assert.ok(result.page.filter((frame) => frame !== DARK).length > 20);
+  assert.equal(result.page.includes(49), false);
+});
+
+test("white bead cells with center glyphs become white lamps, empty paper stays off", () => {
+  const image = colorGrid(20, 16, 16, (col, row) => {
+    if (col >= 6 && col <= 13 && row >= 4 && row <= 11) return [248, 248, 248];
+    return [248, 248, 248];
+  });
+  for (let row = 4; row <= 11; row += 1) {
+    for (let col = 6; col <= 13; col += 1) {
+      const x0 = col * 16 + 6;
+      const y0 = row * 16 + 6;
+      for (let y = y0; y < y0 + 5; y += 1) {
+        for (let x = x0; x < x0 + 5; x += 1) {
+          const o = (y * image.width + x) * 4;
+          image.data[o] = 30;
+          image.data[o + 1] = 30;
+          image.data[o + 2] = 30;
+        }
+      }
+    }
+  }
+  const result = BoardImage.analyze(image, palette, { cols: 36, rows: 24, dark: DARK });
+  assert.equal(result.mode, "grid");
+  const white = result.page.filter((frame) => frame === 49).length;
+  assert.ok(white >= 8, "H2-style white beads should light white lamps");
+  assert.ok(result.page.filter((frame) => frame === DARK).length > 200);
+});
+
 test("center glyphs on white paper become lamp color", () => {
   const brown = [92, 56, 28];
   const image = colorGrid(20, 16, 16, () => [248, 248, 248]);
@@ -117,6 +170,7 @@ test("center glyphs on white paper become lamp color", () => {
   assert.ok(result.page.filter((frame) => frame !== DARK).length > 20);
   assert.equal(result.page.includes(49), false);
 });
+
 test("plain photos still quantize without inventing a grid", () => {
   const image = source(240, 160, (x, y) => {
     if (x > 40 && x < 200 && y > 30 && y < 130) return [40, 90, 200];

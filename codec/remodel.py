@@ -33,6 +33,21 @@ KIND_LABELS = {
     3: "床",
 }
 
+# svr_designguide.txt Item_物件设计向导.LoadAgv
+PACKET_BY_KIND = {
+    0: "装饰素材包",
+    1: "家具素材包",
+    2: "家具素材包",
+    3: "家具素材包",
+}
+FAMILY_BY_KIND = {
+    0: "ornament",
+    1: "furniture",
+    2: "furniture",
+    3: "furniture",
+}
+ITEM_UIDS_PATH = ROOT / "data" / "item_pack_uids.json"
+
 PUT_RE = re.compile(r"SetPut\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)")
 DESIGN_W = 570
 DESIGN_H = 550
@@ -125,6 +140,75 @@ def load_custom_bases_from_tab(tab_path: Path | None = None) -> list[dict]:
                 "workImage": columns[11],
                 "command": command,
                 "footprint": [put[0], put[1]] if put else None,
+            }
+        )
+    return rows
+
+
+def pack_family_for_kind(kind: int) -> str:
+    return FAMILY_BY_KIND.get(int(kind), "ornament")
+
+
+def packet_name_for_kind(kind: int) -> str:
+    return PACKET_BY_KIND.get(int(kind), "装饰素材包")
+
+
+def load_item_pack_uids(path: Path | None = None) -> dict:
+    uid_path = path or ITEM_UIDS_PATH
+    if not uid_path.is_file():
+        return {"packs": []}
+    return json.loads(uid_path.read_text(encoding="utf-8"))
+
+
+def item_pack_meta(key: str, uids: dict | None = None) -> dict | None:
+    needle = str(key or "").casefold()
+    for row in (uids or load_item_pack_uids()).get("packs") or []:
+        if str(row.get("key") or "").casefold() == needle:
+            return row
+    return None
+
+
+def item_paper_mat(local: int, pack_key: str, uids: dict | None = None) -> int:
+    """Native 0x658d1b: live mat = 合成时间 * 1000 + mat.cfg local."""
+    local_id = max(0, int(local or 0))
+    row = item_pack_meta(pack_key, uids)
+    if not row or local_id <= 0:
+        return local_id
+    return int(row["uid"]) * 1000 + local_id
+
+
+def load_item_formula_packs(tab_path: Path | None = None) -> list[dict]:
+    from game_paths import GAME
+
+    path = tab_path or (GAME / "sourceCode" / "leo" / "rcsys" / "playerdata" / "formula.tab")
+    if not path.is_file():
+        return []
+    rows: list[dict] = []
+    for columns in csv.reader(StringIO(read_text(path))):
+        if len(columns) < 8:
+            continue
+        packet = columns[0].strip().strip('"')
+        if packet == "装饰素材包":
+            family = "ornament"
+        elif packet == "家具素材包":
+            family = "furniture"
+        else:
+            continue
+        folder = columns[3].strip().strip('"')
+        if not folder:
+            continue
+        try:
+            uid = int(columns[7])
+        except ValueError:
+            continue
+        rows.append(
+            {
+                "uid": uid,
+                "key": folder.casefold(),
+                "folder": folder,
+                "name": columns[1].strip().strip('"'),
+                "family": family,
+                "packet": packet,
             }
         )
     return rows

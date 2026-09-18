@@ -16,10 +16,10 @@
   <link rel="stylesheet" href="/web/desk-chrome.css?v=13" />
   <link rel="stylesheet" href="/web/paper-library.css?v=15" />
   <link rel="stylesheet" href="/web/building.css?v=201" />
-              <link rel="stylesheet" href="/web/remodel.css?v=5" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
   <link rel="stylesheet" href="/web/materials-dock.css?v=9" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
+  <link rel="stylesheet" href="/web/remodel.css?v=10" />
 </head>
 <body>
   <div class="app building-app remodel-app phase-select" id="buildingApp">
@@ -34,7 +34,7 @@
           <a href="/web/building.html">建筑<span class="desk-switch-rest">设计桌</span></a>
           <a href="/web/cloth.html">衣服<span class="desk-switch-rest">设计桌</span></a>
           <a class="on" href="/web/remodel.html" aria-current="page">改造<span class="desk-switch-rest">设计桌</span></a>
-          <a href="/web/board.html">广告牌<span class="desk-switch-rest">设计桌</span></a>
+          <a href="/web/board.html">广告<span class="desk-switch-rest">设计桌</span></a>
         </nav>
       </div>
       <div class="top-actions">
@@ -252,7 +252,6 @@
             </div>
           </div>
           <div class="hud-stack" id="hudStack">
-            <p class="remodel-clip-note" id="remodelClipNote" hidden>注意！超出亮光部分会被剪裁</p>
             <div class="base-meta" id="baseMeta">
               <div id="paperFileRow" hidden><span>图纸</span><strong id="paperFileName"></strong></div>
               <div><span>名称</span><strong id="buildingName">无</strong></div>
@@ -361,7 +360,7 @@
           <div class="rail-sub">材料需求</div>
           <div class="base-mat-list" id="baseMatList"></div>
           <div class="rail-actions">
-            <p class="remodel-kind-hint">游戏按家具占地 <code>SetPut(putw,puth)</code> 从 46 个基座里选，装饰 / 家具 / 椅子 / 床各有一套大小。</p>
+            <p class="remodel-kind-hint">游戏按占地 <code>SetPut(putw,puth)</code> 从 46 个基座里选。装饰改造右侧是装饰素材包，家具 / 椅子 / 床右侧是家具素材包，两套图纸不能混用。</p>
             <label class="check remodel-showman" id="showManField" hidden>
               <input type="checkbox" id="showMan" />
               <span>显示人物</span>
@@ -609,7 +608,7 @@
         </div>
         <div class="paper-library-empty" id="paperLibraryEmpty">
           <strong>还没有图纸</strong>
-          <p>导入文件夹或文件。建筑图纸可在本桌打开，地形图纸会收入库并转到地形桌查看；已有图纸会按内容去重后叠加。</p>
+          <p>导入文件夹或文件。只收入改造图纸；地形图纸和建筑图纸不会写入本桌图纸库，也不会改另外两张设计桌。</p>
           <button type="button" class="btn btn-primary" id="btnPaperLibraryPick">导入图纸</button>
         </div>
         <div class="paper-preview-grid" id="paperPreviewGrid" hidden></div>
@@ -861,6 +860,6 @@
   <script src="/web/building-preview.js?v=10"></script>
   <script src="/web/material-ledger.js?v=3"></script>
   <script src="/web/building-image-convert.js?v=5"></script>
-  <script src="/web/remodel.js?v=3"></script>
+  <script src="/web/remodel.js?v=10"></script>
 </body>
 </html>

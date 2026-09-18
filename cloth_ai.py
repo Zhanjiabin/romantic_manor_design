@@ -24,7 +24,7 @@ PROMPTS_PATH = ROOT / "data" / "cloth_ai_prompts.json"
 OPENROUTEX_HOST = "api.openroutex.top"
 OPENROUTEX_BASE = "https://api.openroutex.top/v1"
 CHAT_IMAGE_INTENT = "请生成一张完整的游戏 UV 贴图。必须输出图片，不要只回复文字。"
-BILLBOARD_CHAT_IMAGE_INTENT = "请生成一张完整的横版电子广告牌画面。必须输出图片，不要只回复文字。"
+BILLBOARD_CHAT_IMAGE_INTENT = "请生成一张完整的横版电子广告牌画面。必须输出图片，不要只回复文字。若参考图是色号表，只画格子里的色块图形，不要把文字和表格画进去。"
 GEMINI_EXTRA_IMAGE_MODELS = (
     "gemini-3-pro-image-preview",
     "gemini-3-pro-image",
@@ -144,7 +144,14 @@ def billboard_layout_contract(width: int, height: int, has_ref: bool, has_mask: 
     if has_mask:
         lines.append("这是局部重绘：只改蒙版标明的灯区。未圈选区域必须与参考图像素一致。")
     elif has_ref:
-        lines.append("附图是构图参考：沿用主体位置、大小和配色倾向，用更粗的色块重画成灯牌，不要临摹照片纹理，不要写字。")
+        lines.append(
+            "附图是构图参考。若是拼豆/像素色号表（格子、色号字母、白底）：只临摹每个格子里的填色图形，"
+            "忽略文字、网格线、坐标轴、水印和图例；白格空格必须画成关灯的深色，不要点成白灯，不要把表格本身画进成品。"
+        )
+        lines.append(
+            "若是普通配图：沿用主体剪影、位置和配色，用更粗的实心色块重画成灯牌。"
+            "不要另起炉灶画太阳小山或霓虹字，除非用户提示词明确要求。"
+        )
     return "\n".join(lines)
 
 

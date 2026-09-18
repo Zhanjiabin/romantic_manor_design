@@ -92,8 +92,12 @@ def test_billboard_layout_is_led_not_uv():
     assert cloth_ai.KIND_SIZES["female-short"] == (256, 256)
     ref = cloth_ai.layout_contract("billboard-hd", 720, 480, True)
     assert "构图参考" in ref
+    assert "色号表" in ref
+    assert "白格" in ref
+    assert "太阳小山" in ref
     assert "UV" not in ref
     assert "电子广告牌" in cloth_ai.BILLBOARD_CHAT_IMAGE_INTENT
+    assert "色号表" in cloth_ai.BILLBOARD_CHAT_IMAGE_INTENT
     assert "UV" in cloth_ai.CHAT_IMAGE_INTENT
 
 

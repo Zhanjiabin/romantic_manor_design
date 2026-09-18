@@ -45,9 +45,9 @@ test("all four desks can switch to the billboard designer", () => {
     assert.match(html, /href="\/web\/cloth\.html"/);
     assert.match(html, /href="\/web\/building\.html"/);
     assert.match(html, /href="\/"/);
-    assert.match(html, /广告牌<span class="desk-switch-rest">设计桌<\/span>/);
+    assert.match(html, /广告<span class="desk-switch-rest">设计桌<\/span>/);
   }
-  assert.match(boardHtml, /aria-current="page">广告牌/);
+  assert.match(boardHtml, /aria-current="page">广告/);
 });
 
 test("billboard desk is isolated from the other three designers' scripts", () => {
@@ -124,10 +124,20 @@ test("billboard desk copies clothes AI dialog habits without clothes UV tools", 
   assert.match(boardHtml, /data-ai-ref="upload"/);
   assert.match(boardHtml, /id="fileBoardAiRef"/);
   assert.match(boardHtml, /选择 PNG 或 JPG/);
+  assert.match(boardHtml, /拼豆\/色号表会按格子收灯/);
   assert.match(boardJs, /function aiReferencePng/);
+  assert.match(boardJs, /function localBeadFromUpload/);
+  assert.match(boardJs, /function pageFromGeneratedImage/);
+  assert.match(boardJs, /色号表不走 AI 生图/);
   assert.match(boardJs, /function setAiRefMode/);
+  assert.ok(prompts.templates.some((row) => row.id === "builtin:billboard-hd:beads"));
+  assert.match(prompts.templates.find((row) => row.id === "builtin:billboard-hd:beads").prompt, /白格/);
+  assert.match(prompts.templates.find((row) => row.id === "builtin:billboard-hd:default").prompt, /不要改画成太阳小山/);
   assert.match(boardJs, /board_ai_refs\.json/);
   assert.match(boardCss, /\.board-ai-ref-mode/);
+  assert.match(boardCss, /\.board-ai-ref-hint/);
+  assert.match(boardCss, /\.board-ai-prompt \{[\s\S]*max-height:\s*132px/);
+  assert.match(boardHtml, /class="board-ai-ref-label"/);
   assert.match(boardCss, /\.board-ai-ref-grid\[hidden\]/);
   const refs = JSON.parse(fs.readFileSync(path.join(root, "data/board_ai_refs.json"), "utf8"));
   assert.ok(refs.templates.length >= 5);
@@ -163,7 +173,8 @@ test("billboard finalize writes native AEX ale for in-game import", () => {
 
 test("billboard desk copies native clipboard text and preview controls", () => {
   assert.match(boardHtml, /id="btnBoardCopy"/);
-  assert.match(boardHtml, /复制到游戏/);
+  assert.match(boardHtml, /id="btnBoardCopy"[^>]*>复制</);
+  assert.doesNotMatch(boardHtml, /复制到游戏/);
   assert.match(boardHtml, /复制全部页/);
   assert.match(boardHtml, /id="btnBoardMobileCopy"/);
   assert.match(boardJs, /encodePageClip/);

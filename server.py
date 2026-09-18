@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parent
-from game_paths import GAME, TILE, BDESIGN_RES, BDESIGN_IMGS, RCITEM, MAPDESIGN
+from game_paths import GAME, TILE, BDESIGN_RES, BDESIGN_IMGS, BDESIGN_ITEM, RCITEM, MAPDESIGN
 WEB = ROOT / "web"
 DATA = ROOT / "data"
 PROBE_REFERENCE = ROOT / "data" / "probe_reference.jpg"
@@ -93,6 +93,7 @@ PUBLIC_PREFIXES = (
     "/item-ale/",
     "/bdesign/ale/",
     "/bdesign/imgs/",
+    "/bdesign/item/",
     "/bdesign/res/",
 )
 SESSION_COOKIE = "manor_session"
@@ -639,6 +640,15 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._send(400, b"invalid frame", "text/plain")
                 return self._bdesign_img_ale_png(rel[:-4], frame)
             return self._file(BDESIGN_IMGS / rel.replace("\\", "/"), guess=True)
+        if path.startswith("/bdesign/item/"):
+            rel = path[len("/bdesign/item/") :]
+            if rel.lower().endswith(".ale.png"):
+                try:
+                    frame = max(0, int(query.get("f", ["0"])[0]))
+                except ValueError:
+                    return self._send(400, b"invalid frame", "text/plain")
+                return self._bdesign_item_ale_png(rel[:-4], frame)
+            return self._file(BDESIGN_ITEM / rel.replace("\\", "/"), guess=True)
         if path == "/api/kinds":
             kinds = DATA / "kinds.json"
             if not kinds.is_file():
@@ -1184,14 +1194,20 @@ class Handler(SimpleHTTPRequestHandler):
         return self._send_png(png, etag)
 
     def _bdesign_img_ale_png(self, name: str, frame: int = 0):
+        return self._bdesign_root_ale_png(BDESIGN_IMGS, name, frame, "building-img")
+
+    def _bdesign_item_ale_png(self, name: str, frame: int = 0):
+        return self._bdesign_root_ale_png(BDESIGN_ITEM, name, frame, "item-base")
+
+    def _bdesign_root_ale_png(self, root: Path, name: str, frame: int = 0, cache_prefix: str = "building-img"):
         clean = name.replace("\\", "/").lstrip("/")
         if not clean.lower().endswith(".ale"):
             return self._send(404, b"missing", "text/plain")
-        root = BDESIGN_IMGS.resolve()
+        root = root.resolve()
         src = _resolve_under(root, clean)
         if src is None or not src.is_file():
             return self._send(404, b"missing", "text/plain")
-        cache_key = f"building-img:{rel_cache_key(src, root)}:frame={frame}"
+        cache_key = f"{cache_prefix}:{rel_cache_key(src, root)}:frame={frame}"
         etag = self._asset_etag(src, cache_key)
         if self._if_none_match(etag):
             return self._send_not_modified(etag)
@@ -1214,6 +1230,7 @@ class Handler(SimpleHTTPRequestHandler):
             TILE.resolve(),
             BDESIGN_RES.resolve(),
             BDESIGN_IMGS.resolve(),
+            BDESIGN_ITEM.resolve(),
             RCITEM.resolve(),
             WEB.resolve(),
             DATA.resolve(),
@@ -1225,7 +1242,13 @@ class Handler(SimpleHTTPRequestHandler):
         # Game asset trees never change at runtime; editor files (web/data)
         # revalidate with ETag so deploys show up immediately but unchanged
         # files cost a 304 instead of a re-transfer.
-        immutable_roots = (TILE.resolve(), BDESIGN_RES.resolve(), BDESIGN_IMGS.resolve(), RCITEM.resolve())
+        immutable_roots = (
+            TILE.resolve(),
+            BDESIGN_RES.resolve(),
+            BDESIGN_IMGS.resolve(),
+            BDESIGN_ITEM.resolve(),
+            RCITEM.resolve(),
+        )
         cache = (
             ASSET_CACHE
             if any(_is_under(path, root) for root in immutable_roots)

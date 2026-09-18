@@ -108,6 +108,8 @@ def patch_js(src: str) -> str:
     text = text.replace("manor-building-", "manor-remodel-")
     text = text.replace("/api/saves/building", "/api/saves/remodel")
     text = text.replace("/data/building_pack_uids.json", "/data/item_pack_uids.json")
+    text = text.replace('const PAPER_LIBRARY_DESK = "building";', 'const PAPER_LIBRARY_DESK = "remodel";')
+    text = text.replace('const PAPER_LIBRARY_DB = "manor-paper-library";', 'const PAPER_LIBRARY_DB = "manor-remodel-paper-library";')
     text = text.replace("bootBuilding", "bootRemodel")
     text = text.replace("建筑设计桌", "改造设计桌")
     text = text.replace("请先选择户型。", "请先选择基座。")
@@ -199,11 +201,11 @@ def patch_html(src: str) -> str:
     text = text.replace(
         '          <a class="on" href="/web/building.html" aria-current="page">建筑<span class="desk-switch-rest">设计桌</span></a>\n'
         '          <a href="/web/cloth.html">衣服<span class="desk-switch-rest">设计桌</span></a>\n'
-        '          <a href="/web/board.html">广告牌<span class="desk-switch-rest">设计桌</span></a>',
+        '          <a href="/web/board.html">广告<span class="desk-switch-rest">设计桌</span></a>',
         '          <a href="/web/building.html">建筑<span class="desk-switch-rest">设计桌</span></a>\n'
         '          <a href="/web/cloth.html">衣服<span class="desk-switch-rest">设计桌</span></a>\n'
         '          <a class="on" href="/web/remodel.html" aria-current="page">改造<span class="desk-switch-rest">设计桌</span></a>\n'
-        '          <a href="/web/board.html">广告牌<span class="desk-switch-rest">设计桌</span></a>',
+        '          <a href="/web/board.html">广告<span class="desk-switch-rest">设计桌</span></a>',
     )
     text = text.replace("选择户型", "选择基座")
     text = text.replace("当前户型", "当前基座")

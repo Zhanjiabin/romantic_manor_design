@@ -15,6 +15,8 @@ def test_board_prompts_and_kind():
     assert rows
     assert all(row["kind"] == "billboard-hd" for row in rows)
     assert all("36×24" in row["prompt"] or "720×480" in row["prompt"] for row in rows)
+    assert any(row["id"] == "builtin:billboard-hd:beads" for row in rows)
+    assert any("白格" in row["prompt"] and "关灯" in row["prompt"] for row in rows)
     assert board_ai.KIND == "billboard-hd"
     assert board_ai.AI_SIZE == (720, 480)
 

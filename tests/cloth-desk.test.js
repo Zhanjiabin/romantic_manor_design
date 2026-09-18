@@ -189,7 +189,7 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(clothJs, /setTool\("sculpt"\)/);
   assert.match(clothJs, /function kindHasUvIslands/);
   assert.match(clothJs, /kindId !== "expression"/);
-  assert.match(clothHtml, /cloth\.js\?v=51/);
+  assert.match(clothHtml, /cloth\.js\?v=52/);
   assert.match(clothJs, /function snapshotSaveImage/);
   assert.match(clothJs, /image\/jpeg", 0\.86/);
   assert.match(clothJs, /await nextPaint\(\);/);
@@ -199,11 +199,14 @@ test("clothes desk uses Meitu-style beauty tools instead of freehand liquify", (
   assert.match(saveDesign, /okBtn\.textContent = "保存中"/);
   assert.match(clothJs, /index < 8 && row\.png/);
   assert.match(clothJs, /if \(!newer\.png && older\.png\) newer\.png = older\.png/);
-  assert.match(clothHtml, /cloth\.css\?v=44/);
+  assert.match(clothHtml, /cloth\.css\?v=45/);
   assert.match(clothCss, /#btnClothAiGenerate\.is-generating/);
   assert.match(clothCss, /\.cloth-ai-options/);
   assert.match(clothCss, /\.cloth-ai-foot/);
   assert.doesNotMatch(clothHtml, /cloth-ai-note/);
+  assert.match(clothJs, /api\.openroutex\.top\/v1/);
+  assert.doesNotMatch(clothJs, /ai\.qiaojiangapp\.cn/);
+  assert.match(clothHtml, /OpenRouterX/);
 });
 
 test("clothes desk work list can filter, search, and sort", () => {

@@ -45,9 +45,16 @@ def test_routes_match_movie_factory():
     assert cloth_ai.image_route("gemini-2.5-flash-image", True) == "chat"
 
 
-def test_base_url_is_qiaojiang_only():
-    assert cloth_ai.normalize_base_url("") == cloth_ai.QIAOJIANG_BASE
-    assert cloth_ai.normalize_base_url("https://ai.qiaojiangapp.cn") == cloth_ai.QIAOJIANG_BASE
+def test_base_url_is_openroutex_only():
+    assert cloth_ai.normalize_base_url("") == cloth_ai.OPENROUTEX_BASE
+    assert cloth_ai.normalize_base_url("https://api.openroutex.top") == cloth_ai.OPENROUTEX_BASE
+    assert cloth_ai.normalize_base_url("https://api.openroutex.top/console") == cloth_ai.OPENROUTEX_BASE
+    assert cloth_ai.normalize_base_url("https://api.openroutex.top/v1") == cloth_ai.OPENROUTEX_BASE
+    try:
+        cloth_ai.normalize_base_url("https://ai.qiaojiangapp.cn/v1")
+        assert False
+    except cloth_ai.ClothAiError:
+        pass
     try:
         cloth_ai.normalize_base_url("https://127.0.0.1/v1")
         assert False

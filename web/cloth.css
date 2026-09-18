@@ -1450,6 +1450,13 @@ html.is-mobile-workspace .preview-body-pick {
   word-break: break-word;
 }
 
+.cloth-ai-provider-note {
+  margin: -2px 0 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .cloth-ai-patch {
   display: flex;
   align-items: center;

@@ -2564,7 +2564,7 @@
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: key, baseUrl: "https://ai.qiaojiangapp.cn/v1" }),
+        body: JSON.stringify({ apiKey: key, baseUrl: "https://api.openroutex.top/v1" }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload.error || ("HTTP " + res.status));
@@ -2800,7 +2800,7 @@
           maskPng,
           useUvMap,
           uvMapPng,
-          baseUrl: "https://ai.qiaojiangapp.cn/v1",
+          baseUrl: "https://api.openroutex.top/v1",
         }),
       });
       const payload = await res.json().catch(() => ({}));

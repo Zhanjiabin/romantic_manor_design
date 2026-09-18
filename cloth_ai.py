@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Qiaojiang OpenAI-compatible image models for the clothes desk."""
+"""OpenRouterX OpenAI-compatible image models for the clothes desk."""
 from __future__ import annotations
 
 import base64
@@ -20,8 +20,9 @@ from PIL import Image, ImageFilter
 ROOT = Path(__file__).resolve().parent
 PROMPTS_PATH = ROOT / "data" / "cloth_ai_prompts.json"
 
-QIAOJIANG_HOST = "ai.qiaojiangapp.cn"
-QIAOJIANG_BASE = "https://ai.qiaojiangapp.cn/v1"
+# Same image relay used by nuannuan movie_factory (OpenAI-compatible /v1).
+OPENROUTEX_HOST = "api.openroutex.top"
+OPENROUTEX_BASE = "https://api.openroutex.top/v1"
 CHAT_IMAGE_INTENT = "请生成一张完整的游戏 UV 贴图。必须输出图片，不要只回复文字。"
 GEMINI_EXTRA_IMAGE_MODELS = (
     "gemini-3-pro-image-preview",
@@ -99,19 +100,19 @@ def load_builtin_prompts() -> list[dict]:
 
 
 def normalize_base_url(raw: str | None) -> str:
-    text = str(raw or "").strip() or QIAOJIANG_BASE
+    text = str(raw or "").strip() or OPENROUTEX_BASE
     if "://" not in text:
         text = "https://" + text
     parsed = urlparse(text)
     host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https" or host != QIAOJIANG_HOST:
-        raise ClothAiError("只支持巧匠图片接口 https://ai.qiaojiangapp.cn/")
+    if parsed.scheme != "https" or host != OPENROUTEX_HOST:
+        raise ClothAiError("只支持 OpenRouterX 图片接口 https://api.openroutex.top/")
     path = (parsed.path or "").rstrip("/")
-    if not path or path == "/":
+    if not path or path == "/" or path == "/console" or path.startswith("/console/"):
         path = "/v1"
     elif not path.endswith("/v1"):
         path = path + "/v1"
-    return f"https://{QIAOJIANG_HOST}{path}"
+    return f"https://{OPENROUTEX_HOST}{path}"
 
 
 def canvas_size(kind: str, width: int | None = None, height: int | None = None) -> tuple[int, int]:
@@ -452,7 +453,7 @@ def list_image_models(api_key: str, base_url: str | None = None) -> list[str]:
     if isinstance(rows, list):
         for item in rows:
             if isinstance(item, dict):
-                ident = item.get("id") or item.get("name")
+                ident = item.get("id") or item.get("model_name") or item.get("name")
                 if ident:
                     ids.append(str(ident))
             elif isinstance(item, str):

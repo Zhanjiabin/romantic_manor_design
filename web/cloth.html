@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/web/app.css?v=107" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=12" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/cloth.css?v=44" />
+  <link rel="stylesheet" href="/web/cloth.css?v=45" />
 </head>
 <body>
   <div class="app cloth-app" id="clothApp">
@@ -299,9 +299,10 @@
         <div class="cloth-ai-layout" id="clothAiPaneSettings" data-ai-pane="settings" role="tabpanel" hidden>
           <aside class="cloth-ai-side">
             <label class="field">
-              <span>API Key</span>
-              <input class="input" id="clothAiKey" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴你自己的 Key" />
+              <span>API Key · OpenRouterX</span>
+              <input class="input" id="clothAiKey" type="password" autocomplete="off" spellcheck="false" placeholder="在 api.openroutex.top 控制台复制 Key" />
             </label>
+            <p class="cloth-ai-provider-note">图片接口：https://api.openroutex.top/v1（只接入生图，不走文本）</p>
             <div class="cloth-ai-model-row">
               <label class="field">
                 <span>图片模型</span>
@@ -370,6 +371,6 @@
   <script src="/web/desk-account.js?v=7"></script>
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/cloth-preview.js?v=13"></script>
-  <script src="/web/cloth.js?v=51"></script>
+  <script src="/web/cloth.js?v=52"></script>
 </body>
 </html>

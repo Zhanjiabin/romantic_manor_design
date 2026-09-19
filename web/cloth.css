@@ -339,6 +339,11 @@
     transform var(--cloth-dur) var(--cloth-ease);
 }
 
+.canvas-hud-btn[hidden],
+.cloth-ai-patch[hidden] {
+  display: none !important;
+}
+
 .canvas-hud-btn:hover {
   background: rgba(28, 36, 46, 0.92);
 }

@@ -111,6 +111,8 @@
     uvGuideOn = false;
   }
   const uvGuideCache = new Map();
+  let uvGuideRequest = 0;
+  const NATIVE_UV_KINDS = new Set(["female-short", "female-long", "female-skirt", "male-short", "male-long"]);
   let boardEditOn = false;
   let designEditOn = false;
   let saveDesignBusy = false;
@@ -656,11 +658,34 @@
     }
   }
 
+  function traceUvMask(content, width, height, fillIslands = false) {
+    const out = new ImageData(width, height);
+    const MAGENTA = [255, 20, 168];
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const p = y * width + x;
+        if (!content[p]) continue;
+        const edge = x === 0 || y === 0 || x === width - 1 || y === height - 1
+          || !content[p - 1] || !content[p + 1] || !content[p - width] || !content[p + width];
+        if (!edge && !fillIslands) continue;
+        out.data.set(MAGENTA, p * 4);
+        out.data[p * 4 + 3] = edge ? 255 : 78;
+      }
+    }
+    // A one-pixel inner contour preserves even a one-pixel gap between islands.
+    return out;
+  }
+
   function extractUvOutline(imageData, options = {}) {
     const width = imageData.width;
     const height = imageData.height;
     const src = imageData.data;
     const fillIslands = Boolean(options.fillIslands);
+    if (options.coverageMask) {
+      const coverage = new Uint8Array(width * height);
+      for (let p = 0; p < coverage.length; p += 1) coverage[p] = src[p * 4 + 3] >= 128 ? 1 : 0;
+      return traceUvMask(coverage, width, height, fillIslands);
+    }
     const [br, bg, bb] = borderMedianBg(src, width, height);
     const bgLuma = br * 0.299 + bg * 0.587 + bb * 0.114;
     let bgMask;
@@ -673,7 +698,7 @@
     } else {
       bgMask = floodPaperBackground(src, width, height, br, bg, bb, 46);
     }
-    fillSmallInteriorBg(bgMask, width, height, 1200);
+    fillSmallInteriorBg(bgMask, width, height, 24);
     const content = new Uint8Array(width * height);
     let filled = 0;
     for (let p = 0; p < content.length; p += 1) {
@@ -682,64 +707,9 @@
         filled += 1;
       }
     }
-    const out = new ImageData(width, height);
-    const dst = out.data;
-    const MAGENTA = [255, 20, 168];
-    const lumaAt = (i) => src[i] * 0.299 + src[i + 1] * 0.587 + src[i + 2] * 0.114;
-    const stamp = (p, rgb, alpha) => {
-      const i = p * 4;
-      if (alpha <= dst[i + 3]) return;
-      dst[i] = rgb[0];
-      dst[i + 1] = rgb[1];
-      dst[i + 2] = rgb[2];
-      dst[i + 3] = alpha;
-    };
-    const thicken = () => {
-      const copy = new Uint8ClampedArray(dst);
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const p = y * width + x;
-          if (copy[p * 4 + 3] >= 200) continue;
-          const near = (x > 0 && copy[(p - 1) * 4 + 3] >= 200)
-            || (x < width - 1 && copy[(p + 1) * 4 + 3] >= 200)
-            || (y > 0 && copy[(p - width) * 4 + 3] >= 200)
-            || (y < height - 1 && copy[(p + width) * 4 + 3] >= 200);
-          if (near) stamp(p, MAGENTA, 255);
-        }
-      }
-    };
     const useIslands = filled > width * height * 0.02 && filled < width * height * 0.985;
-    if (useIslands) {
-      if (fillIslands) {
-        for (let p = 0; p < content.length; p += 1) {
-          if (content[p]) stamp(p, MAGENTA, 78);
-        }
-      }
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const p = y * width + x;
-          if (!content[p]) continue;
-          const edge = x === 0 || y === 0 || x === width - 1 || y === height - 1
-            || !content[p - 1] || !content[p + 1] || !content[p - width] || !content[p + width];
-          if (edge) stamp(p, MAGENTA, 255);
-        }
-      }
-      thicken();
-    } else {
-      for (let y = 1; y < height - 1; y += 1) {
-        for (let x = 1; x < width - 1; x += 1) {
-          const i = (y * width + x) * 4;
-          const gx = -lumaAt(i - 4 - width * 4) + lumaAt(i + 4 - width * 4)
-            - 2 * lumaAt(i - 4) + 2 * lumaAt(i + 4)
-            - lumaAt(i - 4 + width * 4) + lumaAt(i + 4 + width * 4);
-          const gy = -lumaAt(i - 4 - width * 4) - 2 * lumaAt(i - width * 4) - lumaAt(i + 4 - width * 4)
-            + lumaAt(i - 4 + width * 4) + 2 * lumaAt(i + width * 4) + lumaAt(i + 4 + width * 4);
-          if (Math.hypot(gx, gy) >= 96) stamp(y * width + x, MAGENTA, 255);
-        }
-      }
-      thicken();
-    }
-    return out;
+    // Texture edges are not UV boundaries. Never fall back to tracing fabric details.
+    return useIslands ? traceUvMask(content, width, height, fillIslands) : new ImageData(width, height);
   }
 
   function kindHasUvIslands(kindId) {
@@ -769,8 +739,9 @@
   async function uvOutlineForKind(kindId, options = {}) {
     if (!kindHasUvIslands(kindId)) return null;
     const kind = kindById(kindId);
+    const coverageMask = NATIVE_UV_KINDS.has(kindId);
     const stock = kind?.templates?.[0];
-    const url = stock?.url;
+    const url = coverageMask ? `/data/cloth/uv-masks/${kindId}.png?v=1` : stock?.url;
     if (!url) return null;
     const fillIslands = Boolean(options.fillIslands);
     const width = Number(kind.width) || canvas.width;
@@ -784,7 +755,7 @@
     const octx = off.getContext("2d", { willReadFrequently: true });
     octx.imageSmoothingEnabled = false;
     octx.drawImage(image, 0, 0, off.width, off.height);
-    octx.putImageData(extractUvOutline(octx.getImageData(0, 0, off.width, off.height), { fillIslands }), 0, 0);
+    octx.putImageData(extractUvOutline(octx.getImageData(0, 0, off.width, off.height), { fillIslands, coverageMask }), 0, 0);
     uvGuideCache.set(key, off);
     return off;
   }
@@ -798,11 +769,22 @@
     const octx = off.getContext("2d");
     octx.fillStyle = PAPER;
     octx.fillRect(0, 0, off.width, off.height);
+    // The stock artwork identifies the front, back, skirt and shoe pieces;
+    // isolated pink silhouettes alone do not tell an image model which is which.
+    const stock = kindById(kindId)?.templates?.[0];
+    if (NATIVE_UV_KINDS.has(kindId) && stock?.url) {
+      const image = await loadImage(stock.url);
+      octx.filter = "grayscale(1)";
+      octx.drawImage(image, 0, 0, off.width, off.height);
+      octx.filter = "none";
+    }
     octx.drawImage(outline, 0, 0);
     return off.toDataURL("image/png");
   }
 
   async function refreshUvGuide() {
+    const request = ++uvGuideRequest;
+    const kindId = state.kindId;
     const node = guideCanvas();
     const gtx = node?.getContext("2d");
     if (!node || !gtx) return;
@@ -810,8 +792,8 @@
     syncUvGuideButton();
     if (!uvGuideOn || !kindHasUvIslands(state.kindId)) return;
     try {
-      const outline = await uvOutlineForKind(state.kindId);
-      if (!uvGuideOn || !outline) return;
+      const outline = await uvOutlineForKind(kindId);
+      if (request !== uvGuideRequest || state.kindId !== kindId || !uvGuideOn || !outline) return;
       gtx.drawImage(outline, 0, 0, node.width, node.height);
     } catch (error) {
       console.warn(error);
@@ -2410,11 +2392,11 @@
     ];
     if (kind?.id === "hair") parts.push("头巾必须是 512×256 横图：左头发或布料，右饰品展开。");
     if (aiUvMapOn()) {
-      parts.push("必须按当前种类默认 UV 轮廓地图的岛范围画，岛外不要画图案，不要重排岛，也不要把描边颜色画进成品。");
+      parts.push("以当前种类的 UV 底图确定位置和轮廓，参考图只提供款式和配色。不要移动、缩放或连接各片，也不要把描边颜色画进成品。");
     }
     if (document.getElementById("clothAiPatch")?.checked) {
       parts.push("局部重绘时只改圈选，圈外像素由本桌锁在当前画布上。");
-    } else {
+    } else if (!aiUvMapOn()) {
       parts.push("若勾选了参考图，必须沿用参考图里每个 UV 岛的位置和轮廓，只改花色。");
     }
     return parts.join("");

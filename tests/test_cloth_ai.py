@@ -4,6 +4,10 @@ from __future__ import annotations
 import base64
 import io
 import json
+from email.parser import BytesParser
+from email import policy
+
+import pytest
 
 from PIL import Image
 
@@ -296,3 +300,63 @@ def test_sanitize_user_prompt_strips_image_ids_without_extension():
     assert cloth_ai.sanitize_user_prompt("正常提示词，不要黑边") == "正常提示词，不要黑边"
     assert "jpg" not in cloth_ai.sanitize_user_prompt("a ![x](20260918103328120350463XsUY.jpg) b")
     assert cloth_ai.redact("fail 20260918103328120350463XsUY.jpg) ok").find("20260918") < 0
+
+
+def test_edits_keep_both_reference_and_lossless_uv_map_with_mask_on_first_image(monkeypatch):
+    ref = Image.new("RGBA", (256, 256), (25, 80, 180, 255))
+    uv = Image.new("RGBA", (256, 256), (244, 240, 234, 255))
+    uv.putpixel((120, 120), (255, 20, 168, 255))
+    mask = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    mask.putpixel((80, 80), (226, 72, 128, 255))
+    requests = []
+
+    def fake_http(method, url, *, headers=None, data=None, timeout=60):
+        requests.append((url, headers, data))
+        return 200, json.dumps({"data": [{"b64_json": base64.b64encode(_encode(ref)).decode()}]}).encode()
+
+    monkeypatch.setattr(cloth_ai, "http_request", fake_http)
+    cloth_ai.generate_image(api_key="test", model="gpt-image-2", prompt="蓝色学院风",
+                            kind="female-short", reference_png=_png_url(ref),
+                            uv_map_png=_png_url(uv), use_uv_map=True, mask_png=_png_url(mask))
+    url, headers, data = requests[0]
+    assert url.endswith("/images/edits")
+    message = BytesParser(policy=policy.default).parsebytes(
+        ("Content-Type: " + headers["Content-Type"] + "\r\n\r\n").encode() + data)
+    files = [part for part in message.iter_parts() if part.get_filename()]
+    assert [part.get_filename() for part in files] == ["reference.png", "uv-layout.png", "mask.png"]
+    assert [part.get_param("name", header="content-disposition") for part in files] == ["image[]", "image[]", "mask"]
+    for part, expected in zip(files, [ref, uv]):
+        actual = Image.open(io.BytesIO(part.get_payload(decode=True))).convert("RGBA")
+        assert actual.size == expected.size
+        assert actual.tobytes() == expected.tobytes()
+
+
+def test_uv_map_remains_attached_when_edits_falls_back_to_chat(monkeypatch):
+    uv = _png_url(Image.new("RGBA", (256, 256), (255, 20, 168, 255)))
+    requests = []
+
+    def fake_http(method, url, *, headers=None, data=None, timeout=60):
+        requests.append((url, data))
+        if url.endswith("/images/edits"):
+            return 400, b'{"error":"unsupported multipart image array"}'
+        return 200, json.dumps({"data": [{"b64_json": base64.b64encode(_png_bytes()).decode()}]}).encode()
+
+    monkeypatch.setattr(cloth_ai, "http_request", fake_http)
+    cloth_ai.generate_image(api_key="test", model="gpt-image-2", prompt="蓝色学院风",
+                            kind="female-short", reference_png=uv, uv_map_png=uv, use_uv_map=True)
+    assert len(requests) == 2
+    assert requests[-1][0].endswith("/chat/completions")
+    parts = json.loads(requests[-1][1])["messages"][0]["content"]
+    images = [part["image_url"]["url"] for part in parts if part["type"] == "image_url"]
+    assert len(images) == 2
+    assert images[0] == uv
+    assert "唯一依据" in cloth_ai.layout_contract("female-short", 256, 256, True, has_uv_map=True)
+
+
+def test_missing_enabled_uv_map_fails_before_contacting_provider(monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("must not generate without the enabled layout")
+    monkeypatch.setattr(cloth_ai, "http_request", unexpected)
+    with pytest.raises(cloth_ai.ClothAiError, match="UV 底图未加载"):
+        cloth_ai.generate_image(api_key="test", model="gpt-image-2", prompt="蓝色",
+                                kind="female-short", use_uv_map=True)

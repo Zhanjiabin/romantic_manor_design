@@ -169,8 +169,13 @@ def layout_contract(kind: str, width: int, height: int, has_ref: bool, has_mask:
     if has_uv_map:
         lines.append("必须按附图里当前种类的默认 UV 轮廓地图来画：亮线圈出的岛才是可贴图范围，图案、花色、阴影和高光都只能落在岛内，岛外保持空白或纯底色。")
         lines.append("不要移动、旋转、缩放、合并或重排这些岛，也不要把地图上的描边颜色画进成品。")
+        lines.append("UV 轮廓地图是位置与形状的唯一依据，优先于参考图和文字中的排版描述；底图内的灰度图仅用于辨认零件，不要求沿用原款式。")
+        if kind == "female-short":
+            lines.append("短款女装：左上整块是上衣前片及相连的双袖，左下是后片及双袖；右上小块是鞋面，其下大扇形是前裙片；右下大扇形是后裙片，中间小块须各自保留。不能把鞋子扩成两只另加袜子，也不能把裙片挪到画布中央。")
     if has_mask:
         lines.append("这是局部重绘：只改蒙版标明的区域。未圈选的 UV 岛必须与参考图像素一致，不要重排岛，不要重画袖口、裙褶或接缝。")
+    elif has_ref and has_uv_map:
+        lines.append("参考图只用于提取配色、面料、花纹和装饰。若参考图的零件错位，必须按 UV 轮廓地图纠正，不能沿用错误排版。")
     elif has_ref:
         lines.append("若提供了参考图，必须沿用参考图里每个 UV 岛的位置、轮廓和接缝，只改花色与图案，不要重排岛。")
     return "\n".join(lines)
@@ -391,11 +396,24 @@ def reference_jpeg(raw: bytes, max_edge: int = 1024) -> bytes:
     return buf.getvalue()
 
 
-def _chat_image(raw: bytes) -> dict:
+def reference_png_bytes(raw: bytes, width: int, height: int) -> bytes:
+    try:
+        image = Image.open(io.BytesIO(raw)).convert("RGBA")
+        if image.size != (width, height):
+            image = image.resize((width, height), Image.Resampling.NEAREST)
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as exc:
+        raise ClothAiError("参考图不是有效的图片数据") from exc
+
+
+def _chat_image(raw: bytes, *, lossless: bool = False) -> dict:
     return {
         "type": "image_url",
         "image_url": {
-            "url": "data:image/jpeg;base64," + base64.b64encode(reference_jpeg(raw)).decode("ascii"),
+            "url": ("data:image/png;base64," if lossless else "data:image/jpeg;base64,")
+            + base64.b64encode(raw if lossless else reference_jpeg(raw)).decode("ascii"),
         },
     }
 
@@ -696,6 +714,10 @@ def generate_image(
     ref = decode_data_url(reference_png)
     mask_bytes = decode_data_url(mask_png)
     uv_map = decode_data_url(uv_map_png)
+    if use_uv_map and not uv_map:
+        raise ClothAiError("UV 底图未加载成功，请刷新底图后重试")
+    if uv_map:
+        uv_map = reference_png_bytes(uv_map, w, h)
     coverage = mask_coverage(mask_bytes, w, h) if mask_bytes else None
     has_mask = coverage is not None
     if has_mask and not ref:
@@ -713,8 +735,16 @@ def generate_image(
         return bytes_to_png_data_url(raw_bytes, w, h)
 
     def openai_edits(source: bytes) -> str | None:
-        jpeg = reference_jpeg(source)
-        files = [("image", "uv.jpg", "image/jpeg", jpeg)]
+        source_png = reference_png_bytes(source, w, h)
+        if ref and uv_map:
+            # The edit mask applies to the first image. Keep the original first,
+            # and always attach the layout too, just as the chat route does.
+            files = [
+                ("image[]", "reference.png", "image/png", source_png),
+                ("image[]", "uv-layout.png", "image/png", uv_map),
+            ]
+        else:
+            files = [("image", "uv.png", "image/png", source_png)]
         if has_mask and coverage is not None:
             files.append(("mask", "mask.png", "image/png", openai_inpaint_mask(coverage)))
         for size_w, size_h in fallback_sizes(w, h):
@@ -791,7 +821,7 @@ def generate_image(
         parts: list[Any] = [{"type": "text", "text": chat_intent}]
         attached = False
         if uv_map:
-            parts.append(_chat_image(uv_map))
+            parts.append(_chat_image(uv_map, lossless=True))
             parts.append({
                 "type": "text",
                 "text": "这张是当前种类的默认 UV 轮廓地图：亮线圈出的岛才是可贴图范围，图案必须严格画在岛内，不要把描边颜色画进成品。",
@@ -802,7 +832,10 @@ def generate_image(
             if billboard:
                 ref_caption = "这张是当前灯牌参考。" if has_mask else "这张是构图参考。请沿用主体位置和大色块，画成灯珠广告牌，不要写真或小字。"
             else:
-                ref_caption = "这张是当前画布参考图。" if has_mask else "这张是参考图，请沿用它的岛位与接缝。"
+                ref_caption = "这张是当前画布参考图。" if has_mask else (
+                    "这张是款式参考图，配色和花纹参考此图，位置与轮廓以 UV 底图为准。"
+                    if has_uv_map else "这张是参考图，请沿用它的岛位与接缝。"
+                )
             parts.append({
                 "type": "text",
                 "text": ref_caption,

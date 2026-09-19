@@ -3207,16 +3207,27 @@ function fillBaseKindTabs() {
     if (!list.length) return;
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = `${tab.label} ${list.length}`;
-    button.title = `${tab.label} · ${list.length} 种户型`;
+    const label = document.createElement("span");
+    label.textContent = tab.label;
+    const count = document.createElement("span");
+    count.className = "remodel-base-count";
+    count.textContent = String(list.length);
+    button.append(label, count);
+    button.title = `${tab.label} · ${list.length} 种基座`;
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-pressed", String(tab.kind === state.baseKind));
     button.className = tab.kind === state.baseKind ? "on" : "";
     button.onclick = () => {
       state.baseKind = tab.kind;
       state.base = list.find((base) => base === state.base) || list[0];
       state.basePicked = true;
       invalidateBaseLayout();
-      fillBaseKindTabs();
+      for (const sibling of tabs.children) {
+        sibling.classList.toggle("on", sibling === button);
+        sibling.setAttribute("aria-pressed", String(sibling === button));
+      }
       fillBaseIcons();
+      document.getElementById("baseIconGrid").scrollTop = 0;
       updateBase();
       markBuildingDirty();
       renderBuilding();
@@ -3232,7 +3243,7 @@ function fillBaseIcons() {
   if (!list.length) {
     const empty = document.createElement("div");
     empty.className = "base-icon-empty";
-    empty.textContent = "当前分类没有户型";
+    empty.textContent = "当前分类没有基座";
     grid.appendChild(empty);
     return;
   }
@@ -3241,6 +3252,7 @@ function fillBaseIcons() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "base-icon" + (base === state.base ? " on" : "");
+    button.setAttribute("aria-pressed", String(base === state.base));
     const image = document.createElement("img");
     const workUrl = buildingBaseUrl(base, true);
     const floorUrl = buildingBaseUrl(base);
@@ -3255,8 +3267,15 @@ function fillBaseIcons() {
     const caption = document.createElement("span");
     caption.className = "base-icon-cap";
     const size = base.footprint?.join("×") || "";
-    caption.innerHTML = `<strong>${base.name}</strong>${size ? `<small>${size}</small>` : ""}`;
-    button.title = `${base.name}${size ? ` · ${size}` : ""}`;
+    const name = document.createElement("strong");
+    name.textContent = base.name;
+    caption.appendChild(name);
+    if (size) {
+      const footprint = document.createElement("small");
+      footprint.textContent = `占地 ${size}`;
+      caption.appendChild(footprint);
+    }
+    button.title = `${base.name}${size ? ` · 占地 ${size}` : ""}`;
     button.append(image, caption);
     button.onclick = () => {
       state.base = base;
@@ -3264,7 +3283,11 @@ function fillBaseIcons() {
       state.baseOverridden = false;
       state.paperBaseHint = "";
       invalidateBaseLayout();
-      fillBaseIcons();
+      // Keep the focused card and the list's scroll position when selecting a size.
+      for (const sibling of grid.children) {
+        sibling.classList.toggle("on", sibling === button);
+        sibling.setAttribute("aria-pressed", String(sibling === button));
+      }
       updateBase();
       markBuildingDirty();
       renderBuilding();
@@ -3304,7 +3327,7 @@ function fillBaseMaterials(base) {
     name.textContent = item.name;
     const count = document.createElement("span");
     count.className = "count";
-    count.textContent = String(item.count);
+    count.textContent = `×${item.count}`;
     row.append(name, count);
     list.appendChild(row);
   });
@@ -3316,6 +3339,12 @@ function updateBase() {
   const meta = document.getElementById("baseMeta");
   if (empty) empty.hidden = !!base;
   if (meta) meta.hidden = !base;
+  document.getElementById("remodelBaseName").textContent = base?.name || "请选择基座";
+  document.getElementById("remodelBaseSize").textContent = base ? `占地 ${base.footprint?.join(" × ") || "未知"}` : "";
+  document.getElementById("remodelBaseFamily").textContent = base ? (base.kind === 0 ? "搭配装饰素材" : "搭配家具素材") : "";
+  document.getElementById("btnNextBase").disabled = !base;
+  const preview = document.getElementById("basePreviewImg");
+  preview.hidden = !base;
   if (!base) {
     document.getElementById("currentBase").textContent = "无";
     const projectBase = document.getElementById("projectCurrentBase");
@@ -3344,9 +3373,14 @@ function updateBase() {
   fillBaseMaterials(base);
   applyRemodelKindRules(base);
   syncDesignResetButtons();
-  const preview = document.getElementById("basePreviewImg");
   const url = buildingBaseUrl(base);
-  preview.src = url || "";
+  const previewUrl = buildingBaseUrl(base, true) || url;
+  preview.alt = `${base.name}示意`;
+  preview.onerror = () => {
+    preview.onerror = null;
+    if (url && url !== previewUrl) preview.src = url;
+  };
+  preview.src = previewUrl;
   if (url) loadImage(url);
   const maskUrl = buildingMaskUrl(base);
   if (maskUrl) loadImage(maskUrl);
@@ -9118,11 +9152,11 @@ function syncBuildingRailAccessibility() {
 
 function syncMobileBuildingChrome() {
   const label = document.getElementById("buildingMobileAssetsLabel");
-  if (label) label.textContent = state.phase === "design" ? "素材" : "户型";
+  if (label) label.textContent = state.phase === "design" ? "素材" : "基座";
   const title = document.getElementById("buildingSheetTitle");
   if (!title) return;
   const mode = state.phase === "select" ? "base" : state.mobileSheetMode;
-  title.textContent = mode === "base" ? "户型" : mode === "layers" ? "图层" : mode === "materials" ? "材料" : mode === "project" ? "项目" : "素材";
+  title.textContent = mode === "base" ? "选择基座" : mode === "layers" ? "图层" : mode === "materials" ? "材料" : mode === "project" ? "项目" : "素材";
 }
 
 function applyRailState() {

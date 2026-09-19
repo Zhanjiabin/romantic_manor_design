@@ -1358,7 +1358,8 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
   border-color: #2f7751;
   background: #2f7751;
 }
-.image-preview-mode .btn { flex: 1 1 120px; }
+.image-preview-mode .btn { flex: 1 1 85px; }
+#imageTerrainCropTools[hidden], #imageTerrainEditor[hidden] { display: none; }
 .image-edit-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(96px, 0.55fr);
@@ -1375,6 +1376,65 @@ html.is-mobile-workspace:not(.is-tablet-workspace) .btn-label-short { display: i
 }
 .image-terrain-options { display: grid; gap: 10px; min-width: 0; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.image-terrain-region-tools {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid rgba(183, 200, 178, 0.78);
+  border-radius: 8px;
+  background: rgba(244, 248, 241, 0.7);
+}
+.image-terrain-region-actions {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+}
+.image-terrain-region-actions .btn { flex: 1 1 0; min-height: 38px; }
+.image-terrain-region-status {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.image-region-toolbar {
+  position: absolute;
+  z-index: 30;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #88ad92;
+  border-radius: 8px;
+  background: #f5faf3;
+  box-shadow: 0 3px 14px #152a2430;
+}
+.image-region-toolbar[hidden] { display: none; }
+.image-region-toolbar span { font-size: 13px; }
+.image-region-shape { display: flex; align-items: center; gap: 6px; }
+.image-region-shape .input { width: 132px; }
+.image-region-dimensions { display: flex; gap: 8px; }
+.image-region-dimensions[hidden] { display: none; }
+.image-region-dimensions label { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.image-region-dimensions .input { width: 82px; min-width: 0; }
+#imageRegionHelp { flex: 1 1 120px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.image-region-toolbar .check { white-space: nowrap; }
+.image-region-toolbar .btn { min-height: 40px; }
+#imageTerrainCropTools { display: grid; gap: 8px; }
+@media (max-width: 600px) {
+  .image-region-toolbar { top: 6px; left: 6px; right: 6px; gap: 6px; padding: 8px; }
+  .image-region-shape { flex: 1 1 132px; }
+  .image-region-shape > span { display: none; }
+  .image-region-shape .input { width: 100%; }
+  .image-region-dimensions { flex: 1 1 170px; gap: 6px; }
+  .image-region-dimensions label { flex: 1; }
+  .image-region-dimensions .input { width: 65px; flex: 1; }
+  #imageRegionHelp { flex: 1 1 100%; font-size: 11px; }
+  .image-region-toolbar .btn { flex: 1; padding-inline: 10px; }
+}
 .image-color-map {
   display: grid;
   gap: 6px;

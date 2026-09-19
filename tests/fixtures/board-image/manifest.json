@@ -1,0 +1,27 @@
+[
+  {
+    "name": "reference",
+    "width": 1080,
+    "height": 1182
+  },
+  {
+    "name": "jpeg-small",
+    "width": 810,
+    "height": 887
+  },
+  {
+    "name": "half-size",
+    "width": 540,
+    "height": 591
+  },
+  {
+    "name": "padded",
+    "width": 1212,
+    "height": 1280
+  },
+  {
+    "name": "cropped",
+    "width": 1021,
+    "height": 1021
+  }
+]

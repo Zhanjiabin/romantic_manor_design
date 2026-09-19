@@ -3,14 +3,15 @@
 
   const SESSION_KEY = "manor-board-session-v1";
   const DESIGNS_KEY = "manor-board-designs-v1";
-  const AI_KEY = "manor-board-ai-v1";
-  const PROMPTS_KEY = "manor-board-prompts-v1";
   const KIND = "billboard-hd";
   const COLS = 36;
   const ROWS = 24;
   const CELL = 18;
   const MAX_PAGES = 10;
   const DARK = 50;
+  const Mosaic = window.BoardMosaic;
+  let gridCols = COLS, gridRows = ROWS, cellPx = CELL;
+  let mosaicUi = null;
   const SHEET_COLS = 5;
   const SHEET_ROWS = 11;
   const HIGHLIGHT_URL = "/data/board_highlight.png";
@@ -21,9 +22,6 @@
     }
     return out;
   })();
-  const SIZE_MAX = 6;
-  const AI_SIZE = [720, 480];
-  const OPENROUTEX = "https://api.openroutex.top/v1";
   const TOOLS = [
     { id: "pencil", label: "细笔", glyph: "·" },
     { id: "round", label: "圆笔", glyph: "●" },
@@ -32,10 +30,9 @@
     { id: "line", label: "直线", glyph: "/" },
     { id: "fill", label: "填充", glyph: "▣" },
     { id: "eyedrop", label: "吸色", glyph: "◎" },
-    { id: "patch", label: "圈选", glyph: "◍" },
     { id: "pan", label: "画布", glyph: "✥" },
   ];
-  const TOOL_KEYS = { 1: "pencil", 2: "round", 3: "spray", 4: "eraser", 5: "line", 6: "fill", 7: "eyedrop", 8: "patch", 9: "pan" };
+  const TOOL_KEYS = { 1: "pencil", 2: "round", 3: "spray", 4: "eraser", 5: "line", 6: "fill", 7: "eyedrop", 8: "pan" };
 
   const canvas = document.getElementById("paintCanvas");
   const view = document.getElementById("paintView");
@@ -49,7 +46,6 @@
   const state = {
     tool: "round",
     color: 0,
-    size: 1,
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -62,28 +58,18 @@
     pages: [blankPage()],
     page: 0,
     interval: 1000,
+    layout: Mosaic.normalize(),
+    tile: 0,
     palette: defaultPalette(),
     mask: new Uint8Array(COLS * ROWS),
-    aiKey: "",
-    aiModel: "",
-    aiModels: [],
-    aiPromptId: "",
-    promptDefaults: [],
-    prompts: [],
-    promptDeletedIds: [],
-    aiRefs: [],
-    aiRefMode: "none",
-    aiRefId: "",
-    aiRefUploadName: "",
   };
 
   const pointers = new Map();
   let painting = false;
-  let strokeDirty = false;
+  let strokeBefore = null;
+  let pendingHistory = null;
   let lastCell = null;
   let lineStart = null;
-  let aiRefUploadPng = null;
-  let aiRefUploadImage = null;
   let gesture = null;
   let pageClipboard = null;
   let playing = false;
@@ -91,11 +77,19 @@
   let previewTimer = 0;
   let previewPage = 0;
   let previewPlaying = false;
-  let generateBusy = false;
   let saveDesignBusy = false;
   let designEditOn = false;
-  let nativeSpec = null;
   let smartPage = null;
+  let smartLayout = Mosaic.normalize();
+  let smartImage = null;
+  let smartAnimation = null;
+  let smartPages = null;
+  let smartFrame = 0;
+  let smartPreviewTimer = 0;
+  let smartStaticOptions = null;
+  let smartFileState = "idle";
+  let smartRequest = 0;
+  let importPalette = null;
 
   function defaultPalette() {
     return [
@@ -112,8 +106,22 @@
     ];
   }
 
-  function blankPage() {
-    return new Uint8Array(COLS * ROWS).fill(DARK);
+  function blankPage(cols = gridCols, rows = gridRows) {
+    return new Uint8Array(cols * rows).fill(DARK);
+  }
+
+  function installLayout(layout, tile = 0) {
+    state.layout = Mosaic.normalize(layout);
+    gridCols = state.layout.cols * COLS;
+    gridRows = state.layout.rows * ROWS;
+    cellPx = Math.min(CELL, Math.max(2, Math.floor(2304 / Math.max(gridCols, gridRows))));
+    state.mask = new Uint8Array(gridCols * gridRows);
+    state.tile = state.layout.mask[tile] ? tile : state.layout.mask.findIndex(Boolean);
+    mosaicUi?.sync();
+  }
+
+  function selectedTile(page = currentPage()) {
+    return Mosaic.extract(page, state.layout, state.tile);
   }
 
   function clonePage(page) {
@@ -125,7 +133,7 @@
   }
 
   function cellIndex(x, y) {
-    return y * COLS + x;
+    return y * gridCols + x;
   }
 
   function hexToRgb(hex) {
@@ -158,7 +166,7 @@
   }
 
   function encodePageClip(page) {
-    const cells = page || currentPage();
+    const cells = page || selectedTile();
     const parts = [];
     for (let i = 0; i < cells.length; i += 1) {
       if (i) parts.push(",");
@@ -168,7 +176,7 @@
   }
 
   function decodePageClip(text) {
-    const page = blankPage();
+    const page = blankPage(COLS, ROWS);
     const tokens = String(text || "").split(",");
     for (let i = 0; i < Math.min(page.length, tokens.length); i += 1) {
       const value = gboxAtoi(tokens[i]);
@@ -178,7 +186,7 @@
   }
 
   function encodeAllClip(pages) {
-    const rows = (pages || state.pages).slice(0, MAX_PAGES);
+    const rows = (pages || state.pages.map(selectedTile)).slice(0, MAX_PAGES);
     const inner = (rows.length ? rows : [blankPage()]).map((page) => `'${encodePageClip(page)}'`).join(",");
     return `(${inner})`;
   }
@@ -258,8 +266,8 @@
   }
 
   async function copyPage(options = {}) {
-    const text = encodePageClip(currentPage());
-    pageClipboard = clonePage(currentPage());
+    const text = encodePageClip(selectedTile());
+    pageClipboard = selectedTile();
     const ok = await writeClipText(text);
     setSaveStatus(ok ? "已复制当前页，到游戏里粘贴" : "复制被浏览器拦住，请手动全选复制");
     if (ok) {
@@ -281,8 +289,8 @@
   }
 
   async function copyAllPages(options = {}) {
-    const text = encodeAllClip(state.pages);
-    pageClipboard = clonePage(currentPage());
+    const text = encodeAllClip(state.pages.map(page => selectedTile(page)));
+    pageClipboard = selectedTile();
     const ok = await writeClipText(text);
     setSaveStatus(ok ? "已复制全部页，到游戏里全部粘贴" : "复制被浏览器拦住，请手动全选复制");
     if (ok) {
@@ -301,7 +309,7 @@
   }
 
   function applyPage(page) {
-    currentPage().set(page);
+    Mosaic.insert(currentPage(), state.layout, state.tile, page);
     markDirty();
     drawBoard();
     renderPages();
@@ -335,6 +343,9 @@
   function onHighlightReady() {
     highlightReady = highlight.naturalWidth >= SHEET_COLS * CELL && highlight.naturalHeight >= SHEET_ROWS * CELL;
     if (!highlightReady) return;
+    if (window.BoardImage?.paletteFromSprite) {
+      importPalette = window.BoardImage.paletteFromSprite(rasterizeImage(highlight), state.palette.length, CELL, SHEET_COLS);
+    }
     fillPalette();
     drawBoard();
     renderPages();
@@ -352,6 +363,11 @@
   }
 
   function markDirty() {
+    state.pages.forEach(page => Mosaic.clean(page, state.layout));
+    if (pendingHistory) {
+      pendingHistory.after = historySnapshot();
+      pendingHistory = null;
+    }
     state.dirty = true;
     setSaveStatus("未保存");
   }
@@ -360,10 +376,55 @@
     return state.pages.map((page) => Array.from(page));
   }
 
-  function commitHistory() {
-    state.history.push(pageSnapshot());
-    if (state.history.length > 80) state.history.shift();
+  function historySnapshot() {
+    return {
+      pages: pageSnapshot(),
+      page: state.page,
+      interval: state.interval,
+      designId: state.designId,
+      designName: state.designName,
+      layout: Mosaic.normalize(state.layout),
+      tile: state.tile,
+    };
+  }
+
+  function syncHistoryButtons() {
+    document.getElementById("btnUndo")?.toggleAttribute("disabled", !state.history.length);
+    document.getElementById("btnRedo")?.toggleAttribute("disabled", !state.redo.length);
+  }
+
+  function commitHistory(before = historySnapshot()) {
+    stopPlay();
+    pendingHistory = { before, after: null };
+    state.history.push(pendingHistory);
+    const limit = Math.max(2, Math.min(80, Math.floor(4000000 / (gridCols * gridRows * state.pages.length * 2))));
+    while (state.history.length > limit) state.history.shift();
     state.redo = [];
+    syncHistoryButtons();
+  }
+
+  function restoreHistory(entry, direction) {
+    const snapshot = entry[direction];
+    const resized = state.layout.cols !== snapshot.layout.cols || state.layout.rows !== snapshot.layout.rows;
+    stopPlay();
+    installLayout(snapshot.layout, snapshot.tile);
+    state.page = snapshot.page;
+    state.interval = snapshot.interval;
+    // Only a new-design operation changes identity. Undoing a stroke after saving
+    // must keep the saved work's ID and name.
+    if (entry.before.designId !== entry.after.designId || entry.before.designName !== entry.after.designName) {
+      state.designId = snapshot.designId;
+      state.designName = snapshot.designName;
+    }
+    restorePages(snapshot.pages);
+    const name = document.getElementById("boardSaveName");
+    if (name) name.value = state.designName;
+    const interval = document.getElementById("previewInterval");
+    if (interval) interval.value = String(state.interval);
+    renderDesigns();
+    markDirty();
+    syncHistoryButtons();
+    if (resized) fitCamera();
   }
 
   function restorePages(pages) {
@@ -374,7 +435,7 @@
         const value = Number(src[i]);
         next[i] = Number.isFinite(value) ? Math.max(0, Math.min(DARK, value | 0)) : DARK;
       }
-      return next;
+      return Mosaic.clean(next, state.layout);
     });
     if (!state.pages.length) state.pages = [blankPage()];
     if (state.pages.length > MAX_PAGES) state.pages = state.pages.slice(0, MAX_PAGES);
@@ -384,23 +445,25 @@
   }
 
   function undo() {
+    finishStroke();
     if (!state.history.length) return;
-    state.redo.push(pageSnapshot());
-    restorePages(state.history.pop());
-    markDirty();
+    const entry = state.history.pop();
+    state.redo.push(entry);
+    restoreHistory(entry, "before");
   }
 
   function redo() {
+    finishStroke();
     if (!state.redo.length) return;
-    state.history.push(pageSnapshot());
-    restorePages(state.redo.pop());
-    markDirty();
+    const entry = state.redo.pop();
+    state.history.push(entry);
+    restoreHistory(entry, "after");
   }
 
   function fitCamera() {
     if (!board) return;
     const rect = board.getBoundingClientRect();
-    const zoom = Math.max(0.2, Math.min(rect.width / canvas.width, rect.height / canvas.height) * 0.92);
+    const zoom = Math.max(0.02, Math.min(rect.width / canvas.width, rect.height / canvas.height) * 0.92);
     state.zoom = zoom;
     state.panX = (rect.width - canvas.width * zoom) / 2;
     state.panY = (rect.height - canvas.height * zoom) / 2;
@@ -412,6 +475,8 @@
     view.style.width = `${canvas.width}px`;
     view.style.height = `${canvas.height}px`;
     view.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+    const label = document.getElementById("boardZoomLabel");
+    if (label) label.textContent = `${Math.round(state.zoom * 100)}%`;
   }
 
   function boardPoint(event) {
@@ -423,61 +488,66 @@
   }
 
   function cellFromPoint(point) {
-    const x = Math.floor(point.x / CELL);
-    const y = Math.floor(point.y / CELL);
-    if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return null;
+    const x = Math.floor(point.x / cellPx);
+    const y = Math.floor(point.y / cellPx);
+    if (!Mosaic.hasCell(state.layout, x, y)) return null;
     return { x, y };
   }
 
-  function drawBulb(target, x, y, frame, masked) {
+  function drawBulb(target, x, y, frame, masked, px = cellPx) {
     if (frame < 0) return;
-    const dx = x * CELL;
-    const dy = y * CELL;
+    const dx = x * px;
+    const dy = y * px;
     if (highlightReady) {
       const { sx, sy } = spriteOrigin(frame);
-      target.drawImage(highlight, sx, sy, CELL, CELL, dx, dy, CELL, CELL);
+      target.drawImage(highlight, sx, sy, CELL, CELL, dx, dy, px, px);
     } else {
       const [r, g, b] = colorOf(frame);
       target.fillStyle = `rgb(${r},${g},${b})`;
-      target.fillRect(dx + 2, dy + 2, CELL - 4, CELL - 4);
+      target.fillRect(dx, dy, px, px);
     }
     if (masked) {
       target.fillStyle = "rgba(226, 72, 128, 0.45)";
-      target.fillRect(dx, dy, CELL, CELL);
+      target.fillRect(dx, dy, px, px);
     }
   }
 
-  function drawGrid(target, page, mask) {
+  function drawGrid(target, page, mask, layout = state.layout, px = cellPx) {
+    const cols = layout.cols * COLS, rows = layout.rows * ROWS;
     target.imageSmoothingEnabled = false;
-    target.fillStyle = "#000000";
-    target.fillRect(0, 0, COLS * CELL, ROWS * CELL);
-    for (let y = 0; y < ROWS; y += 1) {
-      for (let x = 0; x < COLS; x += 1) {
-        const index = cellIndex(x, y);
-        drawBulb(target, x, y, page[index], mask && mask[index]);
+    target.clearRect(0, 0, target.canvas.width, target.canvas.height);
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
+        if (!Mosaic.hasCell(layout, x, y)) continue;
+        const index = y * cols + x;
+        target.fillStyle = "#000000";
+        target.fillRect(x * px, y * px, px, px);
+        drawBulb(target, x, y, page[index], mask && mask[index], px);
       }
     }
   }
 
   function drawBoard() {
-    canvas.width = COLS * CELL;
-    canvas.height = ROWS * CELL;
+    canvas.width = gridCols * cellPx;
+    canvas.height = gridRows * cellPx;
     drawGrid(ctx, currentPage(), state.mask);
     const label = document.getElementById("canvasSizeLabel");
-    if (label) label.textContent = `${COLS}×${ROWS}`;
+    if (label) label.textContent = `${gridCols}×${gridRows}`;
     const pageLabel = document.getElementById("designerLabel");
     if (pageLabel && state.tool !== "patch") {
       pageLabel.textContent = `第 ${state.page + 1}/${state.pages.length} 页`;
     }
+    mosaicUi?.drawGuide();
   }
 
-  function snapshotJpg(page) {
+  function snapshotJpg(page, maxEdge = 648) {
     const scratch = document.createElement("canvas");
-    scratch.width = COLS * CELL;
-    scratch.height = ROWS * CELL;
+    const px = Math.max(1, Math.min(CELL, Math.floor(maxEdge / Math.max(gridCols, gridRows))));
+    scratch.width = gridCols * px;
+    scratch.height = gridRows * px;
     const sctx = scratch.getContext("2d", { alpha: false });
     sctx.imageSmoothingEnabled = false;
-    drawGrid(sctx, page || currentPage(), null);
+    drawGrid(sctx, page || currentPage(), null, state.layout, px);
     return scratch.toDataURL("image/jpeg", 0.86);
   }
 
@@ -511,17 +581,6 @@
     paintSwatch(off, DARK);
     off.addEventListener("click", () => setColor(DARK));
     grid.append(off);
-  }
-
-  function setBrushSize(size) {
-    state.size = Math.max(1, Math.min(SIZE_MAX, Math.round(Number(size) || 1)));
-    const input = document.getElementById("brushSize");
-    if (input) input.value = String(state.size);
-    const label = document.getElementById("brushSizeLabel");
-    if (label) label.textContent = String(state.size);
-    document.querySelectorAll("#sizePresets [data-size]").forEach((button) => {
-      button.classList.toggle("on", Number(button.dataset.size) === state.size);
-    });
   }
 
   function setTool(id) {
@@ -573,44 +632,27 @@
     const ink = maskHasInk();
     const clear = document.getElementById("btnClearMask");
     if (clear) clear.hidden = !ink;
-    const patch = document.getElementById("boardAiPatch");
-    if (patch && ink && document.getElementById("dlgBoardAi") && !document.getElementById("dlgBoardAi").hidden) {
-      patch.checked = true;
-    }
     const label = document.getElementById("designerLabel");
     if (label) {
       if (state.tool === "patch") label.textContent = ink ? "涂要改的灯珠 · Shift 擦掉" : "涂要改的灯珠";
       else label.textContent = `第 ${state.page + 1}/${state.pages.length} 页`;
     }
-    const generate = document.getElementById("btnBoardAiGenerate");
-    if (generate && !generateBusy && generate.getAttribute("aria-busy") !== "true") {
-      generate.textContent = patch?.checked && ink ? "只改圈选" : "生成到灯牌";
-    }
+
   }
 
   function stampCell(x, y, frame, maskOnly, eraseMask) {
-    const radius = state.tool === "pencil" ? 0 : Math.max(0, state.size - 1);
-    const page = currentPage();
-    for (let dy = -radius; dy <= radius; dy += 1) {
-      for (let dx = -radius; dx <= radius; dx += 1) {
-        if (dx * dx + dy * dy > radius * radius + 0.2) continue;
-        const cx = x + dx;
-        const cy = y + dy;
-        if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) continue;
-        const index = cellIndex(cx, cy);
-        if (maskOnly) state.mask[index] = eraseMask ? 0 : 1;
-        else page[index] = frame;
-      }
-    }
+    if (!Mosaic.hasCell(state.layout, x, y)) return;
+    const index = cellIndex(x, y);
+    if (maskOnly) state.mask[index] = eraseMask ? 0 : 1;
+    else currentPage()[index] = frame;
   }
 
   function sprayCell(x, y, frame) {
     const page = currentPage();
-    const dots = Math.max(4, state.size * 6);
-    for (let i = 0; i < dots; i += 1) {
-      const cx = x + Math.round((Math.random() * 2 - 1) * state.size);
-      const cy = y + Math.round((Math.random() * 2 - 1) * state.size);
-      if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) continue;
+    for (let i = 0; i < 6; i += 1) {
+      const cx = x + Math.round(Math.random() * 2 - 1);
+      const cy = y + Math.round(Math.random() * 2 - 1);
+      if (!Mosaic.hasCell(state.layout, cx, cy)) continue;
       page[cellIndex(cx, cy)] = frame;
     }
   }
@@ -621,18 +663,18 @@
     const target = page[start];
     if (target === frame) return;
     const stack = [x, y];
-    const seen = new Uint8Array(COLS * ROWS);
+    const seen = new Uint8Array(gridCols * gridRows);
     while (stack.length) {
       const cy = stack.pop();
       const cx = stack.pop();
       const id = cellIndex(cx, cy);
-      if (seen[id] || page[id] !== target) continue;
+      if (!Mosaic.hasCell(state.layout, cx, cy) || seen[id] || page[id] !== target) continue;
       seen[id] = 1;
       page[id] = frame;
       if (cx > 0) stack.push(cx - 1, cy);
-      if (cx + 1 < COLS) stack.push(cx + 1, cy);
+      if (cx + 1 < gridCols) stack.push(cx + 1, cy);
       if (cy > 0) stack.push(cx, cy - 1);
-      if (cy + 1 < ROWS) stack.push(cx, cy + 1);
+      if (cy + 1 < gridRows) stack.push(cx, cy + 1);
     }
   }
 
@@ -685,24 +727,27 @@
     const cell = cellFromPoint(boardPoint(event));
     if (state.tool === "pan") return;
     if (!cell) return;
+    if (state.tool === "eyedrop") {
+      painting = true;
+      paintAt(cell, event);
+      return;
+    }
+    stopPlay();
+    strokeBefore = historySnapshot();
     if (state.tool === "fill") {
       paintAt(cell, event);
-      commitHistory();
-      markDirty();
+      finishStroke();
       drawBoard();
       return;
     }
     if (state.tool === "line") {
       lineStart = cell;
       painting = true;
-      strokeDirty = true;
       return;
     }
     painting = true;
     lastCell = cell;
-    strokeDirty = true;
     paintAt(cell, event);
-    markDirty();
     drawBoard();
   }
 
@@ -718,24 +763,30 @@
     if (lastCell) drawLineCells(lastCell, cell, state.tool === "eraser" || event.buttons === 2 ? DARK : state.color, state.tool === "patch", event.shiftKey);
     else paintAt(cell, event);
     lastCell = cell;
-    markDirty();
     drawBoard();
   }
 
-  function endPaint(event) {
-    if (state.tool === "line" && painting && lineStart) {
-      const cell = cellFromPoint(boardPoint(event));
-      if (cell) {
-        drawLineCells(lineStart, cell, state.tool === "eraser" || event.button === 2 ? DARK : state.color, false, false);
-        markDirty();
-        drawBoard();
-      }
-    }
-    if (strokeDirty) commitHistory();
-    strokeDirty = false;
+  function finishStroke() {
+    const before = strokeBefore;
+    strokeBefore = null;
     painting = false;
     lastCell = null;
     lineStart = null;
+    if (!before || !before.pages.some((page, p) => page.some((value, i) => value !== state.pages[p]?.[i]))) return;
+    commitHistory(before);
+    markDirty();
+    renderPages();
+  }
+
+  function endPaint(event) {
+    if (event.type !== "pointercancel" && state.tool === "line" && painting && lineStart) {
+      const cell = cellFromPoint(boardPoint(event));
+      if (cell) {
+        drawLineCells(lineStart, cell, state.tool === "eraser" || event.button === 2 ? DARK : state.color, false, false);
+        drawBoard();
+      }
+    }
+    finishStroke();
     if (state.tool === "patch") syncMaskChrome();
   }
 
@@ -745,9 +796,10 @@
 
   function beginGesture() {
     const pts = [...pointers.values()];
-    if (strokeDirty) commitHistory();
-    strokeDirty = false;
-    painting = false;
+    // A second finger starts camera control, so discard the tentative touch stroke.
+    if (strokeBefore) restorePages(strokeBefore.pages);
+    strokeBefore = null;
+    finishStroke();
     const dx = pts[1].x - pts[0].x;
     const dy = pts[1].y - pts[0].y;
     gesture = {
@@ -767,7 +819,7 @@
     const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) || 1;
     const midX = (pts[0].x + pts[1].x) / 2;
     const midY = (pts[0].y + pts[1].y) / 2;
-    const nextZoom = Math.min(12, Math.max(0.2, gesture.zoom * (dist / gesture.dist)));
+    const nextZoom = Math.min(12, Math.max(0.02, gesture.zoom * (dist / gesture.dist)));
     const rect = board.getBoundingClientRect();
     const cx = midX - rect.left;
     const cy = midY - rect.top;
@@ -780,15 +832,24 @@
   }
 
   function onPointerDown(event) {
-    if (event.button === 2) event.preventDefault();
+    if (event.button === 1 || event.button === 2) event.preventDefault();
     board.setPointerCapture?.(event.pointerId);
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointerCount() >= 2) {
       beginGesture();
       return;
     }
-    if (state.tool === "pan") {
+    if (event.button === 1 || state.tool === "pan") {
       gesture = { pan: true, x: event.clientX, y: event.clientY, panX: state.panX, panY: state.panY };
+      return;
+    }
+    if (event.altKey) {
+      const cell = cellFromPoint(boardPoint(event));
+      if (cell) {
+        state.tile = Math.floor(cell.y / ROWS) * state.layout.cols + Math.floor(cell.x / COLS);
+        mosaicUi?.sync();
+        drawBoard();
+      }
       return;
     }
     beginPaint(event);
@@ -839,11 +900,7 @@
 
   function deletePage() {
     if (state.pages.length <= 1) {
-      commitHistory();
-      state.pages[0] = blankPage();
-      markDirty();
-      drawBoard();
-      renderPages();
+      clearPage();
       return;
     }
     commitHistory();
@@ -862,11 +919,7 @@
       return;
     }
     commitHistory();
-    state.pages = pages.slice(0, MAX_PAGES).map((page) => {
-      const next = blankPage();
-      next.set(page);
-      return next;
-    });
+    importTilePages(pages);
     if (!state.pages.length) state.pages = [blankPage()];
     state.page = 0;
     markDirty();
@@ -874,7 +927,17 @@
     renderPages();
   }
 
+  function importTilePages(pages) {
+    const incoming = Math.max(1, Math.min(MAX_PAGES, pages.length));
+    const count = Mosaic.tiles(state.layout).length === 1 ? incoming : Math.max(state.pages.length, incoming);
+    const next = Array.from({ length: count }, (_, i) => state.pages[i] ? clonePage(state.pages[i]) : blankPage());
+    next.forEach((page, i) => Mosaic.insert(page, state.layout, state.tile, pages[i] || blankPage(COLS, ROWS)));
+    state.pages = next;
+    state.page = Math.min(state.page, count - 1);
+  }
+
   function fillPage() {
+    if (currentPage().every((value) => value === state.color)) return;
     commitHistory();
     currentPage().fill(state.color);
     markDirty();
@@ -883,6 +946,7 @@
   }
 
   function clearPage() {
+    if (currentPage().every((value) => value === DARK)) return;
     commitHistory();
     currentPage().fill(DARK);
     markDirty();
@@ -988,10 +1052,13 @@
     return { width: imageData.width, height: imageData.height, data: imageData.data };
   }
 
-  function analyzeImage(image) {
+  function analyzeImage(image, options = {}) {
     const source = rasterizeImage(image, 1800);
     if (window.BoardImage?.analyze) {
-      return window.BoardImage.analyze(source, state.palette, { cols: COLS, rows: ROWS, dark: DARK });
+      const layout = options.layout || state.layout;
+      const result = window.BoardImage.analyze(source, importPalette || state.palette, { ...options, cols: layout.cols * COLS, rows: layout.rows * ROWS, dark: DARK });
+      result.page = Mosaic.clean(result.page, layout);
+      return result;
     }
     return { page: Array.from(quantizeImage(image)), mode: "photo", message: "已按灯珠取样。" };
   }
@@ -999,11 +1066,13 @@
   function drawSmartPreview(page) {
     const canvas = document.getElementById("smartPreview");
     if (!canvas || !page) return;
-    canvas.width = COLS * CELL;
-    canvas.height = ROWS * CELL;
+    const px = Math.min(CELL, Math.max(1, Math.floor(1400 / Math.max(smartLayout.cols * COLS, smartLayout.rows * ROWS))));
+    canvas.width = smartLayout.cols * COLS * px;
+    canvas.height = smartLayout.rows * ROWS * px;
     const context = canvas.getContext("2d", { alpha: false });
     context.imageSmoothingEnabled = false;
-    drawGrid(context, page, null);
+    drawGrid(context, page, null, smartLayout, px);
+    mosaicUi?.drawTileLines(context, smartLayout, px);
     canvas.hidden = false;
   }
 
@@ -1012,11 +1081,61 @@
     if (node) node.textContent = text || "";
   }
 
+  function stopSmartPreview() {
+    clearInterval(smartPreviewTimer);
+    smartPreviewTimer = 0;
+    const button = document.getElementById("btnSmartFramePlay");
+    button.textContent = "播放";
+    button.setAttribute("aria-pressed", "false");
+  }
+
+  function showSmartFrame(index) {
+    if (!smartPages?.length) return;
+    smartFrame = (index + smartPages.length) % smartPages.length;
+    smartPage = smartPages[smartFrame];
+    drawSmartPreview(smartPage);
+    document.getElementById("smartFrameLabel").textContent = `${smartFrame + 1} / ${smartPages.length} 帧`;
+  }
+
+  function setSmartAnimation(animation) {
+    stopSmartPreview();
+    const mode = document.getElementById("smartMode"), crop = document.getElementById("smartCrop"), background = document.getElementById("smartBackground");
+    if (animation) {
+      if (!smartStaticOptions) smartStaticOptions = { mode: mode.value, crop: crop.checked, background: background.checked };
+      mode.value = "photo"; crop.checked = false; background.checked = true;
+    } else if (smartStaticOptions) {
+      mode.value = smartStaticOptions.mode; crop.checked = smartStaticOptions.crop; background.checked = smartStaticOptions.background;
+      smartStaticOptions = null;
+    }
+    for (const field of [mode, crop, background]) field.disabled = !!animation;
+    smartAnimation = animation;
+    smartPages = null;
+    smartFrame = 0;
+    document.getElementById("boardSmartFrames").hidden = true;
+  }
+
+  async function loadGifFile(file) {
+    const response = await fetch("/api/board/import-ani", {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: await fileToBase64(file), name: file.name, sourceFrames: true }),
+    });
+    const result = await response.json();
+    if (!response.ok || !Array.isArray(result.frames) || !result.frames.length) throw new Error(result.error || "GIF 帧读取失败");
+    const frames = await Promise.all(result.frames.slice(0, MAX_PAGES).map(frame => new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("GIF 帧打不开"));
+      image.src = frame.png;
+    })));
+    return { frames, frameCount: result.frameCount, interval: Math.max(50, Math.min(99999, Number(result.interval) || 100)) };
+  }
+
   function openSmartDialog() {
     closeBoardSheets();
-    setModalVisible("dlgBoardAi", false);
+    smartLayout = Mosaic.normalize(state.layout);
+    mosaicUi?.setDraft(smartLayout);
     setModalVisible("dlgBoardSmart", true);
-    if (!smartPage) setSmartStatus("还没选图");
+    refreshSmartResult();
   }
 
   function applySmartResult(result, options = {}) {
@@ -1034,25 +1153,98 @@
   function commitSmartPage(message) {
     if (!smartPage) return;
     commitHistory();
-    currentPage().set(smartPage);
+    const pages = smartPages ? smartPages.map(page => new Uint8Array(page))
+      : state.pages.map(page => Mosaic.remap(page, state.layout, smartLayout));
+    installLayout(smartLayout);
+    state.pages = pages;
+    if (smartPages) {
+      state.page = 0;
+      state.interval = smartAnimation.interval;
+      for (const id of ["pageInterval", "previewInterval"]) document.getElementById(id).value = String(state.interval);
+    } else currentPage().set(smartPage);
     markDirty();
     drawBoard();
     renderPages();
+    fitCamera();
     setSaveStatus(message || "已生成");
     setModalVisible("dlgBoardSmart", false);
   }
 
   async function analyzeSmartFile(file) {
     if (!file) return;
+    const request = ++smartRequest;
+    smartImage = null;
+    setSmartAnimation(null);
+    smartFileState = "loading";
+    resetSmartResult();
     const name = String(file.name || "").toLowerCase();
-    if (!/\.(png|jpe?g)$/.test(name) && !/^image\/(png|jpeg)$/.test(file.type || "")) {
-      setSmartStatus("只接受 PNG 或 JPG。");
+    const gif = name.endsWith(".gif") || file.type === "image/gif";
+    if (!/\.(png|jpe?g|webp|gif)$/.test(name) && !/^image\/(png|jpeg|webp|gif)$/.test(file.type || "")) {
+      smartFileState = "error";
+      setSmartStatus("请选择 PNG、JPG、WebP 或 GIF。");
       return;
     }
-    setSmartStatus("正在认格子和色系…");
+    setSmartStatus(gif ? "正在读取 GIF 动画帧…" : "正在认格子和色系…");
     try {
-      const image = await loadImageFile(file);
-      applySmartResult(analyzeImage(image));
+      const source = gif ? await loadGifFile(file) : await loadImageFile(file);
+      if (request !== smartRequest) return;
+      if (gif) setSmartAnimation(source);
+      else smartImage = source;
+      smartFileState = "idle";
+      await refreshSmartResult();
+    } catch (error) {
+      if (request === smartRequest) {
+        smartFileState = "error";
+        setSmartStatus(String(error.message || error));
+      }
+    }
+  }
+
+  function resetSmartResult() {
+    stopSmartPreview();
+    smartPage = null;
+    smartPages = null;
+    document.getElementById("boardSmartFrames").hidden = true;
+    document.getElementById("btnBoardSmartApply").disabled = true;
+    document.getElementById("smartPreview").hidden = true;
+  }
+
+  async function refreshSmartResult() {
+    if (!smartImage && !smartAnimation) {
+      if (smartFileState !== "idle") return;
+      applySmartResult({ page: Mosaic.remap(currentPage(), state.layout, smartLayout), message: `布局 ${smartLayout.cols}×${smartLayout.rows}，共 ${Mosaic.tiles(smartLayout).length} 块。可选图导入，也可直接应用布局。` });
+      return;
+    }
+    const request = ++smartRequest;
+    resetSmartResult();
+    setSmartStatus("正在识别…");
+    await nextPaint();
+    if (request !== smartRequest) return;
+    try {
+      const options = {
+        layout: smartLayout,
+        mode: document.getElementById("smartMode").value,
+        sampling: document.getElementById("smartSampling").value,
+        background: document.getElementById("smartBackground").checked ? "keep" : "auto",
+        crop: document.getElementById("smartCrop").checked,
+      };
+      if (smartAnimation) {
+        const animation = smartAnimation, pages = [];
+        for (const [index, frame] of animation.frames.entries()) {
+          setSmartStatus(`正在生成 GIF 拼接动画 ${index + 1}/${animation.frames.length}…`);
+          await nextPaint();
+          if (request !== smartRequest) return;
+          // Use the same full-frame bounds and background for every frame.
+          pages.push(analyzeImage(frame, { ...options, mode: "photo", crop: false, background: "keep" }).page);
+        }
+        const count = Mosaic.tiles(smartLayout).length;
+        const source = animation.frameCount > MAX_PAGES ? `原 GIF ${animation.frameCount} 帧，取前 ${pages.length} 帧` : `GIF ${pages.length} 帧`;
+        applySmartResult({ page: pages[0], message: `${source} · ${count} 块 · 每帧 ${smartLayout.cols * COLS}×${smartLayout.rows * ROWS} 灯珠。保留完整画面和背景，避免抖动；按 ${animation.interval} 毫秒等间隔播放。` });
+        smartPages = pages;
+        document.getElementById("boardSmartFrames").hidden = false;
+        document.getElementById("btnSmartFramePlay").disabled = pages.length < 2;
+        showSmartFrame(0);
+      } else applySmartResult(analyzeImage(smartImage, options));
     } catch (error) {
       setSmartStatus(String(error.message || error));
     }
@@ -1074,23 +1266,14 @@
     });
   }
 
-  function loadDataUrl(url) {
-    return new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("图片打不开"));
-      image.src = url;
-    });
-  }
-
   async function importImageFile(file) {
     const name = String(file?.name || "").toLowerCase();
-    if (name.endsWith(".ale") || name.endsWith(".json") || name.endsWith(".gif")) {
+    if (name.endsWith(".ale") || name.endsWith(".json")) {
       await importGameFile(file);
       return;
     }
-    const image = await loadImageFile(file);
-    applySmartResult(analyzeImage(image), { commit: true });
+    openSmartDialog();
+    await analyzeSmartFile(file);
   }
 
   function fileToBase64(file) {
@@ -1112,12 +1295,15 @@
       const payload = JSON.parse(text);
       const pages = payload?.pages;
       if (!Array.isArray(pages) || !pages.length) throw new Error("不是灯牌图纸");
+      const layout = Mosaic.normalize(payload.layout || {});
       commitHistory();
+      installLayout(layout, payload.tile);
       restorePages(pages);
       if (Number(payload.interval)) state.interval = Math.max(50, Math.min(60000, Number(payload.interval)));
       const interval = document.getElementById("pageInterval");
       if (interval) interval.value = String(state.interval);
       markDirty();
+      fitCamera();
       return;
     }
     const data = await fileToBase64(file);
@@ -1132,18 +1318,24 @@
     const pages = payload.pages;
     if (!Array.isArray(pages) || !pages.length) throw new Error("ALE 里没有灯珠页");
     commitHistory();
-    restorePages(pages);
+    importTilePages(pages);
     markDirty();
+    drawBoard();
+    renderPages();
   }
 
   function exportJpg(name) {
     const a = document.createElement("a");
-    a.href = snapshotJpg();
+    a.href = snapshotJpg(currentPage(), 2304);
     a.download = (name || state.designName || "广告") + ".jpg";
     a.click();
   }
 
   async function exportFinalize() {
+    if (Mosaic.tiles(state.layout).length > 1) {
+      await mosaicUi.exportBundle();
+      return;
+    }
     const button = document.getElementById("btnFinalize");
     if (button?.dataset.busy === "1") return;
     if (button) {
@@ -1159,7 +1351,7 @@
         body: JSON.stringify({
           name: state.designName || "高清电子广告牌",
           interval: state.interval,
-          pages: pageSnapshot(),
+          pages: state.pages.map(page => Array.from(selectedTile(page))),
         }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -1189,11 +1381,12 @@
     if (!modal) return;
     if (visible) window.MobileWorkspace?.openLayer(modal, document.activeElement);
     else window.MobileWorkspace?.closeLayer(modal);
-    if (id === "dlgBoardAi" || id === "dlgBoardPreview" || id === "dlgBoardSmart" || id === "dlgBoardClip") {
+    if (id === "dlgBoardPreview" || id === "dlgBoardSmart" || id === "dlgBoardClip") {
       document.querySelector(".board-workspace")?.toggleAttribute("inert", !!visible);
       document.querySelector(".board-app .topbar")?.toggleAttribute("inert", !!visible);
     }
     if (id === "dlgBoardPreview" && !visible) stopPreview();
+    if (id === "dlgBoardSmart" && !visible) stopSmartPreview();
   }
 
   function stopPreview() {
@@ -1210,10 +1403,11 @@
   function previewTick() {
     if (!previewCtx) return;
     if (previewCanvas) {
-      previewCanvas.width = COLS * CELL;
-      previewCanvas.height = ROWS * CELL;
+      previewCanvas.width = gridCols * cellPx;
+      previewCanvas.height = gridRows * cellPx;
     }
     drawGrid(previewCtx, state.pages[previewPage] || currentPage(), null);
+    mosaicUi?.drawGamePreview(state.pages[previewPage] || currentPage());
     const cur = document.getElementById("previewCur");
     const max = document.getElementById("previewMax");
     if (cur) cur.textContent = String(previewPage + 1);
@@ -1272,593 +1466,6 @@
     }, previewIntervalMs());
   }
 
-  function sanitizeAiPrompt(text) {
-    return String(text || "")
-      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-      .replace(/\[[^\]]*\]\([^)]*\)/g, "")
-      .replace(/https?:\/\/\S+/gi, "")
-      .replace(/20\d{12,}[A-Za-z0-9_-]*(?:\.(?:jpe?g|png|webp|gif))?[)\]\}]*/gi, "")
-      .replace(/\b[A-Za-z0-9_-]{16,}\.(?:jpe?g|png|webp|gif)[)\]\}]*/gi, "")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .replace(/[)\]\}]+$/g, "")
-      .trim();
-  }
-
-  function readAiPrompt() {
-    const textarea = document.getElementById("boardAiPrompt");
-    const cleaned = sanitizeAiPrompt(textarea?.value || "");
-    if (textarea && textarea.value !== cleaned) textarea.value = cleaned;
-    return cleaned;
-  }
-
-  function setAiPrompt(text) {
-    const textarea = document.getElementById("boardAiPrompt");
-    if (textarea) textarea.value = sanitizeAiPrompt(text);
-  }
-
-  function setGenerateBusy(busy) {
-    generateBusy = Boolean(busy);
-    const button = document.getElementById("btnBoardAiGenerate");
-    if (!button) return;
-    button.disabled = generateBusy;
-    button.setAttribute("aria-busy", generateBusy ? "true" : "false");
-    button.classList.toggle("is-generating", generateBusy);
-    if (generateBusy) button.textContent = "生成中";
-    else syncMaskChrome();
-  }
-
-  function friendlyAiStatus(text) {
-    const cleaned = sanitizeAiPrompt(String(text || ""));
-    if (!cleaned) return "";
-    if (/quota|not enough/i.test(cleaned)) return "额度不足，换 Key 或稍后再试。";
-    if (/timeout|timed?\s*out|ECONN|network/i.test(cleaned)) return "网络超时，稍后再试。";
-    if (/api\s*key|unauthorized|401|invalid.+key/i.test(cleaned)) return "API Key 无效，去设置里检查。";
-    return cleaned.length > 160 ? cleaned.slice(0, 157) + "…" : cleaned;
-  }
-
-  function setAiStatus(text) {
-    document.querySelectorAll("[data-ai-status]").forEach((node) => {
-      node.textContent = friendlyAiStatus(text);
-    });
-  }
-
-  function setAiTab(tab) {
-    document.querySelectorAll("[data-ai-tab]").forEach((button) => {
-      const on = button.dataset.aiTab === tab;
-      button.classList.toggle("on", on);
-      button.setAttribute("aria-selected", String(on));
-    });
-    document.querySelectorAll("[data-ai-pane]").forEach((pane) => {
-      pane.hidden = pane.dataset.aiPane !== tab;
-    });
-  }
-
-  function selectedPrompt() {
-    return kindPrompts().find((row) => row.id === state.aiPromptId) || kindPrompts()[0] || null;
-  }
-
-  function kindPrompts() {
-    const deleted = new Set(state.promptDeletedIds || []);
-    const byId = new Map();
-    (state.promptDefaults || []).forEach((row) => {
-      if (row.kind !== KIND || deleted.has(row.id)) return;
-      byId.set(row.id, { ...row, builtin: true });
-    });
-    (state.prompts || []).forEach((row) => {
-      if (!row || row.kind !== KIND) return;
-      if (row.deleted || deleted.has(row.id)) {
-        byId.delete(row.id);
-        return;
-      }
-      byId.set(row.id, { ...row, builtin: false });
-    });
-    return [...byId.values()];
-  }
-
-  function fillAiPromptPick() {
-    const pick = document.getElementById("boardAiPromptPick");
-    if (!pick) return;
-    const rows = kindPrompts();
-    pick.replaceChildren();
-    rows.forEach((row) => {
-      const option = document.createElement("option");
-      option.value = row.id;
-      option.textContent = row.name;
-      pick.append(option);
-    });
-    if (!rows.some((row) => row.id === state.aiPromptId)) state.aiPromptId = rows[0]?.id || "";
-    pick.value = state.aiPromptId;
-    const current = selectedPrompt();
-    if (current && !readAiPrompt()) setAiPrompt(current.prompt);
-  }
-
-  function fillAiModels() {
-    const select = document.getElementById("boardAiModel");
-    if (!select) return;
-    const models = state.aiModels.length ? state.aiModels : (state.aiModel ? [state.aiModel] : []);
-    select.replaceChildren();
-    models.forEach((id) => {
-      const option = document.createElement("option");
-      option.value = id;
-      option.textContent = id;
-      select.append(option);
-    });
-    if (state.aiModel) select.value = state.aiModel;
-  }
-
-  function currentAiRef() {
-    return (state.aiRefs || []).find((row) => row.id === state.aiRefId) || state.aiRefs[0] || null;
-  }
-
-  function fillAiRefGrid() {
-    const grid = document.getElementById("boardAiRefGrid");
-    if (!grid) return;
-    grid.replaceChildren();
-    const selected = currentAiRef();
-    if (selected) state.aiRefId = selected.id;
-    (state.aiRefs || []).forEach((row) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "board-ai-ref-card" + (row.id === state.aiRefId ? " on" : "");
-      button.setAttribute("role", "option");
-      button.setAttribute("aria-selected", String(row.id === state.aiRefId));
-      const img = document.createElement("img");
-      img.alt = row.name;
-      img.src = row.url;
-      const label = document.createElement("span");
-      label.textContent = row.name;
-      button.append(img, label);
-      button.addEventListener("click", () => {
-        state.aiRefId = row.id;
-        if (row.promptId && !readAiPrompt()) {
-          const prompt = kindPrompts().find((item) => item.id === row.promptId);
-          if (prompt) {
-            state.aiPromptId = prompt.id;
-            setAiPrompt(prompt.prompt);
-            fillAiPromptPick();
-          }
-        }
-        fillAiRefGrid();
-        saveAiSettings();
-      });
-      grid.append(button);
-    });
-  }
-
-  function syncAiRefChrome() {
-    const mode = state.aiRefMode === "template" || state.aiRefMode === "upload" ? state.aiRefMode : "none";
-    state.aiRefMode = mode;
-    document.querySelectorAll("[data-ai-ref]").forEach((button) => {
-      const on = button.dataset.aiRef === mode;
-      button.classList.toggle("on", on);
-      button.setAttribute("aria-pressed", String(on));
-    });
-    const grid = document.getElementById("boardAiRefGrid");
-    const upload = document.getElementById("boardAiRefUpload");
-    if (grid) grid.hidden = mode !== "template";
-    if (upload) upload.hidden = mode !== "upload";
-    const preview = document.getElementById("boardAiRefPreview");
-    const name = document.getElementById("boardAiRefUploadName");
-    const clear = document.getElementById("btnBoardAiRefClear");
-    if (name) name.textContent = aiRefUploadPng ? (state.aiRefUploadName || "已选参考图") : "还没选图";
-    if (preview) {
-      preview.hidden = !aiRefUploadPng;
-      if (aiRefUploadPng) preview.src = aiRefUploadPng;
-    }
-    if (clear) clear.hidden = !aiRefUploadPng;
-    fillAiRefGrid();
-  }
-
-  function setAiRefMode(mode) {
-    state.aiRefMode = mode === "template" || mode === "upload" ? mode : "none";
-    syncAiRefChrome();
-    saveAiSettings();
-  }
-
-  function imageToAiPng(image) {
-    const scratch = document.createElement("canvas");
-    scratch.width = AI_SIZE[0];
-    scratch.height = AI_SIZE[1];
-    const sctx = scratch.getContext("2d", { alpha: false });
-    sctx.fillStyle = "#0c0f14";
-    sctx.fillRect(0, 0, scratch.width, scratch.height);
-    const scale = Math.min(scratch.width / image.width, scratch.height / image.height);
-    const dw = Math.max(1, Math.round(image.width * scale));
-    const dh = Math.max(1, Math.round(image.height * scale));
-    sctx.imageSmoothingEnabled = false;
-    sctx.drawImage(image, Math.round((scratch.width - dw) / 2), Math.round((scratch.height - dh) / 2), dw, dh);
-    return scratch.toDataURL("image/png");
-  }
-
-  async function urlToAiPng(url) {
-    const image = await loadDataUrl(url);
-    return imageToAiPng(image);
-  }
-
-  async function setAiRefUpload(file) {
-    if (!file) return;
-    const name = String(file.name || "").toLowerCase();
-    if (!/\.(png|jpe?g)$/.test(name) && !/^image\/(png|jpeg)$/.test(file.type || "")) {
-      setAiStatus("只接受 PNG 或 JPG。");
-      return;
-    }
-    if (file.size > 8 * 1024 * 1024) {
-      setAiStatus("图片超过 8MB，换一张小一点的。");
-      return;
-    }
-    const image = await loadImageFile(file);
-    aiRefUploadImage = image;
-    aiRefUploadPng = imageToAiPng(image);
-    state.aiRefUploadName = String(file.name || "参考图");
-    state.aiRefMode = "upload";
-    syncAiRefChrome();
-    const bead = localBeadFromUpload();
-    if (bead) {
-      adoptBeadPromptIfIdle();
-      setAiStatus((bead.message || "认出拼豆色号表。") + " 色号表不走 AI 生图，点生成会按格子收灯。");
-      return;
-    }
-    setAiStatus("已选「" + state.aiRefUploadName + "」，生成时会带上。");
-  }
-
-  function localBeadFromUpload() {
-    if (state.aiRefMode !== "upload" || !aiRefUploadImage) return null;
-    const result = analyzeImage(aiRefUploadImage);
-    if (result.mode !== "grid" || (result.sourceLit || 0) < 24) return null;
-    return result;
-  }
-
-  function adoptBeadPromptIfIdle() {
-    const beads = kindPrompts().find((row) => row.id === "builtin:billboard-hd:beads");
-    if (!beads) return;
-    const current = selectedPrompt();
-    const text = readAiPrompt();
-    const idle = !text
-      || (current?.builtin && (current.id === "builtin:billboard-hd:default" || /太阳小山|小山/.test(text)));
-    if (!idle) return;
-    state.aiPromptId = beads.id;
-    setAiPrompt(beads.prompt);
-    fillAiPromptPick();
-  }
-
-  function pageFromGeneratedImage(image) {
-    const result = analyzeImage(image);
-    if (result.mode === "grid" && (result.sourceLit || 0) >= 24) return result.page;
-    return quantizeImage(image);
-  }
-
-  function clearAiRefUpload() {
-    aiRefUploadPng = null;
-    aiRefUploadImage = null;
-    state.aiRefUploadName = "";
-    const input = document.getElementById("fileBoardAiRef");
-    if (input) input.value = "";
-    syncAiRefChrome();
-    saveAiSettings();
-  }
-
-  async function aiReferencePng() {
-    if (state.aiRefMode === "upload") return aiRefUploadPng || null;
-    if (state.aiRefMode === "template") {
-      const row = currentAiRef();
-      if (!row?.url) return null;
-      return urlToAiPng(row.url);
-    }
-    return null;
-  }
-
-  function syncAiDialog() {
-    const key = document.getElementById("boardAiKey");
-    if (key) key.value = state.aiKey || "";
-    const custom = document.getElementById("boardAiModelCustom");
-    if (custom && !state.aiModels.includes(state.aiModel)) custom.value = state.aiModel || "";
-    fillAiModels();
-    fillAiPromptPick();
-    syncAiRefChrome();
-    syncMaskChrome();
-  }
-
-  function openAiDialog() {
-    closeBoardSheets();
-    setModalVisible("dlgBoardSmart", false);
-    setAiTab("prompt");
-    syncAiDialog();
-    readAiPrompt();
-    setAiStatus("");
-    setModalVisible("dlgBoardAi", true);
-  }
-
-  async function refreshAiModels() {
-    const key = String(document.getElementById("boardAiKey")?.value || "").trim();
-    if (!key) {
-      setAiTab("settings");
-      setAiStatus("先填 API Key，再刷新模型。");
-      return;
-    }
-    state.aiKey = key;
-    saveAiSettings();
-    setAiStatus("正在拉取图片模型…");
-    try {
-      const res = await fetch("/api/board-ai/models", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: key, baseUrl: OPENROUTEX }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload.error || ("HTTP " + res.status));
-      state.aiModels = payload.models || [];
-      if (state.aiModel && state.aiModels.includes(state.aiModel)) {
-        /* keep */
-      } else if (state.aiModels.includes("gpt-image-2")) {
-        state.aiModel = "gpt-image-2";
-      } else {
-        state.aiModel = state.aiModels[0] || "";
-      }
-      fillAiModels();
-      saveAiSettings();
-      setAiStatus(state.aiModels.length ? "已列出 " + state.aiModels.length + " 个图片模型。" : "没有图片模型，可手填。");
-    } catch (error) {
-      setAiStatus(String(error.message || error));
-    }
-  }
-
-  async function saveCurrentPrompt() {
-    const text = readAiPrompt();
-    if (!text) {
-      setAiStatus("编辑框是空的，没法保存。");
-      return;
-    }
-    const current = selectedPrompt();
-    let name = current?.name || "广告模板";
-    if (!current || current.builtin) {
-      const typed = typeof appPrompt === "function"
-        ? await appPrompt("会保存到广告提示词列表。选中只填进编辑框。", {
-          title: current ? "另存提示词模板" : "新建提示词模板",
-          fieldLabel: "模板名称",
-          value: name,
-          okLabel: "保存",
-        })
-        : window.prompt("模板名称", name);
-      if (typed == null) return;
-      name = String(typed).trim() || name;
-    }
-    const item = {
-      id: current && !current.builtin ? current.id : `p${Date.now().toString(36)}`,
-      kind: KIND,
-      name,
-      prompt: text,
-      savedAt: Date.now(),
-    };
-    state.prompts = [...(state.prompts || []).filter((row) => row.id !== item.id), item];
-    state.aiPromptId = item.id;
-    savePrompts();
-    fillAiPromptPick();
-    setAiStatus("已保存「" + name + "」。");
-  }
-
-  async function createPromptTemplate() {
-    const typed = typeof appPrompt === "function"
-      ? await appPrompt("新建后出现在下拉框里。选中只填入编辑框。", {
-        title: "新建提示词模板",
-        fieldLabel: "模板名称",
-        value: "广告模板",
-        okLabel: "新建",
-      })
-      : window.prompt("模板名称", "广告模板");
-    if (typed == null) return;
-    state.aiPromptId = "";
-    setAiPrompt("");
-    const item = {
-      id: `p${Date.now().toString(36)}`,
-      kind: KIND,
-      name: String(typed).trim() || "广告模板",
-      prompt: "",
-      savedAt: Date.now(),
-    };
-    state.prompts = [...(state.prompts || []), item];
-    state.aiPromptId = item.id;
-    savePrompts();
-    fillAiPromptPick();
-    setAiStatus("已新建「" + item.name + "」。");
-  }
-
-  async function deletePromptTemplate() {
-    const current = selectedPrompt();
-    if (!current) return;
-    const ok = typeof appConfirm === "function"
-      ? await appConfirm(current.builtin ? "会从列表里藏起这份默认模板。" : "删除这份提示词模板？", { title: "删除模板", okLabel: "删除" })
-      : window.confirm("删除模板？");
-    if (!ok) return;
-    if (current.builtin) {
-      state.promptDeletedIds = [...new Set([...(state.promptDeletedIds || []), current.id])];
-    } else {
-      state.prompts = (state.prompts || []).filter((row) => row.id !== current.id);
-    }
-    state.aiPromptId = "";
-    savePrompts();
-    fillAiPromptPick();
-    const next = selectedPrompt();
-    setAiPrompt(next?.prompt || "");
-    setAiStatus("已删除。");
-  }
-
-  function resetKindPrompts() {
-    state.promptDeletedIds = (state.promptDeletedIds || []).filter((id) => !String(id).includes("billboard-hd"));
-    state.prompts = (state.prompts || []).filter((row) => row.kind !== KIND);
-    state.aiPromptId = "";
-    savePrompts();
-    fillAiPromptPick();
-    const next = selectedPrompt();
-    setAiPrompt(next?.prompt || "");
-    setAiStatus("已恢复默认模板。");
-  }
-
-  function exportMaskPng() {
-    if (!maskHasInk()) return null;
-    const scratch = document.createElement("canvas");
-    scratch.width = AI_SIZE[0];
-    scratch.height = AI_SIZE[1];
-    const sctx = scratch.getContext("2d");
-    const cellW = AI_SIZE[0] / COLS;
-    const cellH = AI_SIZE[1] / ROWS;
-    sctx.fillStyle = "#000";
-    sctx.fillRect(0, 0, scratch.width, scratch.height);
-    sctx.fillStyle = "#fff";
-    for (let y = 0; y < ROWS; y += 1) {
-      for (let x = 0; x < COLS; x += 1) {
-        if (!state.mask[cellIndex(x, y)]) continue;
-        sctx.fillRect(x * cellW, y * cellH, cellW, cellH);
-      }
-    }
-    return scratch.toDataURL("image/png");
-  }
-
-  function referencePng() {
-    const scratch = document.createElement("canvas");
-    scratch.width = AI_SIZE[0];
-    scratch.height = AI_SIZE[1];
-    const sctx = scratch.getContext("2d", { alpha: false });
-    sctx.imageSmoothingEnabled = false;
-    const led = document.createElement("canvas");
-    led.width = COLS * CELL;
-    led.height = ROWS * CELL;
-    drawGrid(led.getContext("2d", { alpha: false }), currentPage(), null);
-    sctx.drawImage(led, 0, 0, AI_SIZE[0], AI_SIZE[1]);
-    return scratch.toDataURL("image/png");
-  }
-
-  async function generateAiDesign() {
-    if (generateBusy) return;
-    setGenerateBusy(true);
-    setAiStatus("生成中…");
-    readAiPrompt();
-    await nextPaint();
-    try {
-      const patchOn = Boolean(document.getElementById("boardAiPatch")?.checked);
-      const maskPng = patchOn ? exportMaskPng() : null;
-      if (patchOn && !maskPng) {
-        setAiStatus("先用笔触里的「圈选」涂要改的灯珠，再勾「只改圈选灯珠」。");
-        return;
-      }
-      if (!maskPng) {
-        const bead = localBeadFromUpload();
-        if (bead) {
-          if (state.dirty) {
-            const ok = typeof appConfirm === "function"
-              ? await appConfirm("生成结果会压到当前页灯珠上。未保存的笔触会被盖住。", { title: "生成到灯牌", okLabel: "生成" })
-              : window.confirm("生成会盖住当前页，继续？");
-            if (!ok) {
-              setAiStatus("");
-              return;
-            }
-          }
-          commitHistory();
-          currentPage().set(bead.page);
-          markDirty();
-          drawBoard();
-          renderPages();
-          setAiStatus((bead.message || "已按色号格收灯。") + " 色号表不走 AI 生图。");
-          setSaveStatus(bead.message || "已按色号格收灯。");
-          setModalVisible("dlgBoardAi", false);
-          return;
-        }
-      }
-      const key = String(document.getElementById("boardAiKey")?.value || "").trim();
-      const custom = String(document.getElementById("boardAiModelCustom")?.value || "").trim();
-      const model = custom || String(document.getElementById("boardAiModel")?.value || "").trim();
-      const prompt = readAiPrompt();
-      if (!key) {
-        setAiTab("settings");
-        setAiStatus("先填 API Key。");
-        return;
-      }
-      if (!model) {
-        setAiTab("settings");
-        setAiStatus("先选或手填一个图片模型。");
-        return;
-      }
-      if (!prompt) {
-        setAiStatus("提示词是空的。可以先选一份模板再改。");
-        return;
-      }
-      if (state.dirty && !maskPng) {
-        const ok = typeof appConfirm === "function"
-          ? await appConfirm("生成结果会压到当前页灯珠上。未保存的笔触会被盖住。", { title: "生成到灯牌", okLabel: "生成" })
-          : window.confirm("生成会盖住当前页，继续？");
-        if (!ok) {
-          setAiStatus("");
-          return;
-        }
-        setGenerateBusy(true);
-        setAiStatus("生成中…");
-        await nextPaint();
-      }
-      state.aiKey = key;
-      state.aiModel = model;
-      saveAiSettings();
-      setGenerateBusy(true);
-      setAiStatus("正在生成，可能要等一会儿…");
-      let refPng = null;
-      if (maskPng) {
-        refPng = referencePng();
-      } else {
-        try {
-          refPng = await aiReferencePng();
-        } catch (error) {
-          console.warn(error);
-        }
-        if (state.aiRefMode === "upload" && !refPng) {
-          setAiStatus("先选一张 PNG 或 JPG。");
-          return;
-        }
-        if (state.aiRefMode === "template" && !refPng) {
-          setAiStatus("参考模板没加载到。");
-          return;
-        }
-      }
-      const res = await fetch("/api/board-ai/generate", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          apiKey: key,
-          model,
-          prompt,
-          kind: KIND,
-          width: AI_SIZE[0],
-          height: AI_SIZE[1],
-          referencePng: refPng,
-          maskPng,
-          baseUrl: OPENROUTEX,
-        }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload.error || ("HTTP " + res.status));
-      if (!payload.png) throw new Error("没有返回图片");
-      const image = await loadDataUrl(payload.png);
-      const quantized = pageFromGeneratedImage(image);
-      commitHistory();
-      if (maskPng) {
-        const page = currentPage();
-        for (let i = 0; i < page.length; i += 1) {
-          if (state.mask[i]) page[i] = quantized[i];
-        }
-      } else {
-        currentPage().set(quantized);
-      }
-      markDirty();
-      drawBoard();
-      renderPages();
-      setAiStatus(maskPng ? "圈选已改，圈外灯珠锁在原页上。" : (refPng ? "已按参考图压成 36×24 灯珠。" : "已压成 36×24 灯珠，可继续改提示词再生成。"));
-    } catch (error) {
-      setAiStatus(String(error.message || error));
-    } finally {
-      setGenerateBusy(false);
-    }
-  }
-
   function putBoardSaves(payload) {
     return fetch("/api/saves/board", {
       method: "PUT",
@@ -1890,9 +1497,10 @@
     return {
       v: 1,
       kind: KIND,
+      layout: Mosaic.normalize(state.layout),
+      tile: state.tile,
       tool: state.tool,
       color: state.color,
-      size: state.size,
       page: state.page,
       interval: state.interval,
       designId: state.designId,
@@ -1920,6 +1528,7 @@
           name: row.name,
           kind: row.kind,
           pageCount: row.pageCount,
+          layout: row.layout,
           savedAt: row.savedAt,
           png: row.png,
         })),
@@ -1928,42 +1537,6 @@
     } catch (error) {
       console.warn(error);
     }
-  }
-
-  function persistAiLocal(bundle) {
-    try {
-      deskSet(AI_KEY, JSON.stringify(bundle));
-    } catch (error) {
-      console.warn(error);
-    }
-  }
-
-  function persistPromptsLocal(bundle) {
-    try {
-      deskSet(PROMPTS_KEY, JSON.stringify(bundle));
-    } catch (error) {
-      console.warn(error);
-    }
-  }
-
-  function aiSettingsBundle() {
-    return { v: 1, savedAt: Date.now(), apiKey: state.aiKey || "", model: state.aiModel || "", aiRefMode: state.aiRefMode || "none", aiRefId: state.aiRefId || "" };
-  }
-
-  function promptsBundle() {
-    return { v: 1, savedAt: Date.now(), items: state.prompts || [], deletedIds: state.promptDeletedIds || [] };
-  }
-
-  function saveAiSettings() {
-    const bundle = aiSettingsBundle();
-    persistAiLocal(bundle);
-    putBoardSaves({ ai: bundle }).catch((error) => console.warn(error));
-  }
-
-  function savePrompts() {
-    const bundle = promptsBundle();
-    persistPromptsLocal(bundle);
-    putBoardSaves({ prompts: bundle }).catch((error) => console.warn(error));
   }
 
   function saveSession() {
@@ -1995,6 +1568,7 @@
       pageCount: state.pages.length,
       interval: state.interval,
       pages: pageSnapshot(),
+      layout: Mosaic.normalize(state.layout),
       png: snapshotJpg(),
       savedAt: now,
     };
@@ -2082,7 +1656,7 @@
       label.textContent = item.name || "未命名";
       const kind = document.createElement("span");
       kind.className = "design-card-kind";
-      kind.textContent = `${item.pageCount || (item.pages || []).length || 1} 页`;
+      kind.textContent = `${item.layout ? item.layout.mask.filter(Boolean).length + " 块 · " : ""}${item.pageCount || (item.pages || []).length || 1} 页`;
       meta.append(label, kind);
       card.append(img, meta);
       card.addEventListener("click", () => openDesign(item));
@@ -2111,10 +1685,19 @@
 
   function openDesign(item) {
     if (!item) return;
+    stopPlay();
+    strokeBefore = null;
+    finishStroke();
+    state.history = [];
+    state.redo = [];
+    pendingHistory = null;
+    syncHistoryButtons();
     state.designId = item.id || "";
     state.designName = item.name || "";
     state.interval = Math.max(50, Number(item.interval) || state.interval);
+    installLayout(item.layout || Mosaic.normalize());
     restorePages(item.pages || []);
+    fitCamera();
     const input = document.getElementById("boardSaveName");
     if (input) input.value = item.name || "";
     state.dirty = false;
@@ -2158,6 +1741,7 @@
     }
     stopPlay();
     commitHistory();
+    installLayout(Mosaic.normalize());
     state.pages = [blankPage()];
     state.page = 0;
     state.designId = "";
@@ -2169,6 +1753,7 @@
     drawBoard();
     renderPages();
     renderDesigns();
+    fitCamera();
     setSaveStatus("未保存");
   }
 
@@ -2188,69 +1773,57 @@
     window.MobileWorkspace?.closeSheet("board-tools");
   }
 
-  function setBoardToolSheetMode(mode) {
-    const sheet = document.getElementById("boardToolSheet");
+  function setBoardPageSheetMode(mode) {
+    const sheet = document.getElementById("boardPageSheet");
     if (sheet) sheet.setAttribute("data-sheet-mode", mode);
-    const toolsBtn = document.getElementById("btnBoardMobileTools");
+    const pagesBtn = document.getElementById("btnBoardMobilePages");
     const filesBtn = document.getElementById("btnBoardMobileFiles");
     const open = sheet?.classList.contains("open");
     const works = mode === "works";
-    toolsBtn?.classList.toggle("on", Boolean(open && !works));
+    pagesBtn?.classList.toggle("on", Boolean(open && !works));
     filesBtn?.classList.toggle("on", Boolean(open && works));
-    toolsBtn?.setAttribute("aria-expanded", String(Boolean(open && !works)));
+    pagesBtn?.setAttribute("aria-expanded", String(Boolean(open && !works)));
     filesBtn?.setAttribute("aria-expanded", String(Boolean(open && works)));
   }
 
   function bindSheets() {
-    window.MobileWorkspace?.registerSheet({
+    const pageSheet = window.MobileWorkspace?.registerSheet({
       id: "board-pages",
       root: "#boardPageSheet",
-      trigger: "#btnBoardMobilePages",
-      backdrop: "#boardSheetBackdrop",
-      inert: [".board-stage", ".board-app .topbar"],
-      mutex: "board-workspace",
-    });
-    window.MobileWorkspace?.registerSheet({
-      id: "board-tools",
-      root: "#boardToolSheet",
       backdrop: "#boardSheetBackdrop",
       inert: [".board-stage", ".board-app .topbar"],
       mutex: "board-workspace",
       onOpen() {
-        setBoardToolSheetMode(document.getElementById("boardToolSheet")?.getAttribute("data-sheet-mode") || "draw");
+        setBoardPageSheetMode(document.getElementById("boardPageSheet")?.getAttribute("data-sheet-mode") || "pages");
       },
       onClose() {
-        ["btnBoardMobileTools", "btnBoardMobileFiles"].forEach((id) => {
-          const button = document.getElementById(id);
-          button?.classList.remove("on");
-          button?.setAttribute("aria-expanded", "false");
-        });
+        setBoardPageSheetMode(document.getElementById("boardPageSheet")?.getAttribute("data-sheet-mode") || "pages");
       },
     });
-    document.getElementById("btnBoardMobilePages")?.addEventListener("click", () => {
-      window.MobileWorkspace?.toggleSheet("board-pages");
+    window.MobileWorkspace?.registerSheet({
+      id: "board-tools",
+      root: "#boardToolSheet",
+      trigger: "#btnBoardMobileTools",
+      backdrop: "#boardSheetBackdrop",
+      inert: [".board-stage", ".board-app .topbar"],
+      mutex: "board-workspace",
+    });
+    [["btnBoardMobilePages", "pages"], ["btnBoardMobileFiles", "works"]].forEach(([id, mode]) => {
+      document.getElementById(id)?.addEventListener("click", (event) => {
+        const sheet = document.getElementById("boardPageSheet");
+        const open = sheet?.classList.contains("open");
+        if (open && sheet.getAttribute("data-sheet-mode") === mode) {
+          window.MobileWorkspace?.closeSheet("board-pages", { trigger: event.currentTarget });
+          return;
+        }
+        setBoardPageSheetMode(mode);
+        if (pageSheet) pageSheet.trigger = event.currentTarget;
+        if (!open) window.MobileWorkspace?.openSheet("board-pages", { trigger: event.currentTarget });
+        else sheet.querySelector(".board-rail-scroll").scrollTop = 0;
+      });
     });
     document.getElementById("btnBoardMobileTools")?.addEventListener("click", () => {
-      const sheet = document.getElementById("boardToolSheet");
-      const open = sheet?.classList.contains("open");
-      const works = sheet?.getAttribute("data-sheet-mode") === "works";
-      if (open && !works) {
-        window.MobileWorkspace?.closeSheet("board-tools");
-        return;
-      }
-      setBoardToolSheetMode("draw");
-      if (!open) window.MobileWorkspace?.openSheet("board-tools");
-    });
-    document.getElementById("btnBoardMobileFiles")?.addEventListener("click", () => {
-      const sheet = document.getElementById("boardToolSheet");
-      const open = sheet?.classList.contains("open");
-      const works = sheet?.getAttribute("data-sheet-mode") === "works";
-      if (open && works) {
-        window.MobileWorkspace?.closeSheet("board-tools");
-        return;
-      }
-      setBoardToolSheetMode("works");
-      if (!open) window.MobileWorkspace?.openSheet("board-tools");
+      window.MobileWorkspace?.toggleSheet("board-tools");
     });
     document.getElementById("boardSheetBackdrop")?.addEventListener("click", () => closeBoardSheets());
   }
@@ -2258,11 +1831,8 @@
   function bindUi() {
     document.getElementById("btnUndo")?.addEventListener("click", () => undo());
     document.getElementById("btnRedo")?.addEventListener("click", () => redo());
-    document.getElementById("btnBoardMobileUndo")?.addEventListener("click", () => undo());
-    document.getElementById("btnBoardMobileRedo")?.addEventListener("click", () => redo());
     document.getElementById("btnBoardMobilePan")?.addEventListener("click", () => setTool(state.tool === "pan" ? "round" : "pan"));
     document.getElementById("btnNewDesign")?.addEventListener("click", () => startNewDesign());
-    document.getElementById("btnBoardMobileNew")?.addEventListener("click", () => startNewDesign());
     document.getElementById("btnSaveDesign")?.addEventListener("click", () => {
       const input = document.getElementById("boardSaveName");
       if (input && !input.value) input.value = state.designName || "";
@@ -2274,9 +1844,6 @@
     document.getElementById("btnExportPng")?.addEventListener("click", () => exportJpg());
     document.getElementById("btnPreview")?.addEventListener("click", () => showPreview());
     document.getElementById("btnBoardCopy")?.addEventListener("click", () => copyPage());
-    document.getElementById("btnBoardCopyHud")?.addEventListener("click", () => copyPage());
-    document.getElementById("btnBoardCopyRail")?.addEventListener("click", () => copyPage());
-    document.getElementById("btnBoardMobileCopy")?.addEventListener("click", () => copyPage());
     document.getElementById("btnBoardClipSelect")?.addEventListener("click", () => {
       const field = document.getElementById("boardClipText");
       if (!field) return;
@@ -2290,7 +1857,12 @@
     document.getElementById("btnPreviewNext")?.addEventListener("click", () => previewNext());
     document.getElementById("btnPreviewPlay")?.addEventListener("click", () => togglePreviewPlay());
     document.getElementById("previewInterval")?.addEventListener("change", (event) => {
-      state.interval = Math.max(50, Number(event.target.value) || state.interval);
+      const next = Math.max(50, Math.min(99999, Number(event.target.value) || state.interval));
+      if (next !== state.interval) {
+        commitHistory();
+        state.interval = next;
+        markDirty();
+      }
       const pageInterval = document.getElementById("pageInterval");
       if (pageInterval) pageInterval.value = String(state.interval);
       if (previewPlaying) {
@@ -2299,25 +1871,19 @@
       }
     });
     document.getElementById("btnFinalize")?.addEventListener("click", () => exportFinalize());
-    document.getElementById("btnBoardAi")?.addEventListener("click", () => openAiDialog());
-    document.getElementById("btnBoardAiHud")?.addEventListener("click", () => openAiDialog());
-    document.getElementById("btnBoardAiRail")?.addEventListener("click", () => openAiDialog());
-    document.getElementById("btnBoardMobileAi")?.addEventListener("click", () => openAiDialog());
     document.getElementById("btnBoardSmart")?.addEventListener("click", () => openSmartDialog());
-    document.getElementById("btnBoardSmartHud")?.addEventListener("click", () => openSmartDialog());
-    document.getElementById("btnBoardSmartRail")?.addEventListener("click", () => openSmartDialog());
-    document.getElementById("btnBoardMobileSmart")?.addEventListener("click", () => openSmartDialog());
     document.getElementById("btnBoardSmartPick")?.addEventListener("click", () => document.getElementById("fileBoardSmart")?.click());
     document.getElementById("btnBoardSmartApply")?.addEventListener("click", async () => {
       if (!smartPage) {
-        setSmartStatus("先选一张 PNG 或 JPG。");
+        setSmartStatus("先选择图片或 GIF。");
         return;
       }
-      const blank = currentPage().every((value) => value === DARK);
+      const blank = (smartPages ? state.pages : [currentPage()]).every(page => page.every(value => value === DARK));
       if (!blank) {
+        const message = smartPages ? "会用这段 GIF 替换整个拼接作品的动画页，可以撤销恢复。" : "会盖住当前页灯珠。未保存的笔触会被盖住。";
         const ok = typeof appConfirm === "function"
-          ? await appConfirm("会盖住当前页灯珠。未保存的笔触会被盖住。", { title: "生成到灯牌", okLabel: "生成" })
-          : window.confirm("会盖住当前页，继续？");
+          ? await appConfirm(message, { title: "生成到灯牌", okLabel: "生成" })
+          : window.confirm(message);
         if (!ok) return;
       }
       commitSmartPage(document.getElementById("boardSmartStatus")?.textContent || "已生成");
@@ -2327,37 +1893,34 @@
       event.target.value = "";
       if (file) await analyzeSmartFile(file);
     });
-    document.getElementById("btnBoardAiModels")?.addEventListener("click", () => refreshAiModels());
-    document.getElementById("btnBoardAiPromptNew")?.addEventListener("click", () => createPromptTemplate());
-    document.getElementById("btnBoardAiPromptSave")?.addEventListener("click", () => saveCurrentPrompt());
-    document.getElementById("btnBoardAiPromptDel")?.addEventListener("click", () => deletePromptTemplate());
-    document.getElementById("btnBoardAiPromptReset")?.addEventListener("click", () => resetKindPrompts());
-    document.getElementById("btnBoardAiGenerate")?.addEventListener("click", () => generateAiDesign());
-    document.querySelectorAll("[data-ai-ref]").forEach((button) => {
-      button.addEventListener("click", () => setAiRefMode(button.dataset.aiRef));
+    ["smartMode", "smartSampling", "smartBackground", "smartCrop"].forEach(id => {
+      document.getElementById(id)?.addEventListener("change", () => refreshSmartResult());
     });
-    document.getElementById("btnBoardAiRefPick")?.addEventListener("click", () => document.getElementById("fileBoardAiRef")?.click());
-    document.getElementById("btnBoardAiRefClear")?.addEventListener("click", () => clearAiRefUpload());
-    document.getElementById("fileBoardAiRef")?.addEventListener("change", async (event) => {
-      const file = event.target.files?.[0];
-      event.target.value = "";
-      if (!file) return;
-      try {
-        await setAiRefUpload(file);
-      } catch (error) {
-        setAiStatus(String(error.message || error));
-      }
+    document.getElementById("btnSmartFramePrev").addEventListener("click", () => { stopSmartPreview(); showSmartFrame(smartFrame - 1); });
+    document.getElementById("btnSmartFrameNext").addEventListener("click", () => { stopSmartPreview(); showSmartFrame(smartFrame + 1); });
+    document.getElementById("btnSmartFramePlay").addEventListener("click", event => {
+      if (smartPreviewTimer) { stopSmartPreview(); return; }
+      if (!smartPages || smartPages.length < 2) return;
+      event.currentTarget.textContent = "暂停";
+      event.currentTarget.setAttribute("aria-pressed", "true");
+      smartPreviewTimer = setInterval(() => {
+        if (document.getElementById("dlgBoardSmart").hidden) { stopSmartPreview(); return; }
+        showSmartFrame(smartFrame + 1);
+      }, smartAnimation.interval);
     });
-    document.getElementById("btnClearMask")?.addEventListener("click", () => clearMask());
     document.getElementById("btnDesignEdit")?.addEventListener("click", () => setDesignEditOn(!designEditOn));
     document.getElementById("btnPlayPages")?.addEventListener("click", () => togglePlay());
     document.getElementById("btnPrevPage")?.addEventListener("click", () => goToPage(state.page - 1));
     document.getElementById("btnNextPage")?.addEventListener("click", () => goToPage(state.page + 1));
     document.getElementById("pageInterval")?.addEventListener("change", (event) => {
-      state.interval = Math.max(50, Math.min(99999, Number(event.target.value) || 1000));
+      const next = Math.max(50, Math.min(99999, Number(event.target.value) || 1000));
+      if (next === state.interval) return;
+      const wasPlaying = playing;
+      commitHistory();
+      state.interval = next;
+      event.target.value = String(next);
       markDirty();
-      if (playing) {
-        stopPlay();
+      if (wasPlaying) {
         togglePlay();
       }
     });
@@ -2365,7 +1928,7 @@
       button.addEventListener("click", () => {
         const action = button.dataset.boardPage;
         if (action === "add") addPage();
-        if (action === "copy") copyPage();
+        if (action === "copy") copyPage({ teach: false });
         if (action === "paste") pastePage();
         if (action === "copy-all") copyAllPages();
         if (action === "paste-all") pasteAllPages();
@@ -2374,35 +1937,10 @@
         if (action === "clear") clearPage();
       });
     });
-    document.querySelectorAll("[data-board-io]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const action = button.dataset.boardIo;
-        if (action === "copy") copyPage();
-        if (action === "copy-all") copyAllPages();
-        if (action === "new") startNewDesign();
-        if (action === "finalize") exportFinalize();
-        if (action === "import") document.getElementById("fileBoardImage")?.click();
-        if (action === "export") exportJpg();
-        if (action === "preview") showPreview();
-        if (action === "finalize") exportFinalize();
-      });
-    });
     document.querySelectorAll("[data-close-modal]").forEach((button) => {
       button.addEventListener("click", () => setModalVisible(button.dataset.closeModal, false));
     });
-    document.querySelectorAll("[data-ai-tab]").forEach((button) => {
-      button.addEventListener("click", () => setAiTab(button.dataset.aiTab));
-    });
-    document.getElementById("boardAiPromptPick")?.addEventListener("change", (event) => {
-      state.aiPromptId = event.target.value;
-      const current = selectedPrompt();
-      if (current) setAiPrompt(current.prompt);
-    });
     document.getElementById("designSearch")?.addEventListener("input", () => renderDesigns());
-    document.getElementById("brushSize")?.addEventListener("input", (event) => setBrushSize(event.target.value));
-    document.querySelectorAll("#sizePresets [data-size]").forEach((button) => {
-      button.addEventListener("click", () => setBrushSize(button.dataset.size));
-    });
     document.getElementById("fileBoardImage")?.addEventListener("change", async (event) => {
       const file = event.target.files?.[0];
       event.target.value = "";
@@ -2449,6 +1987,7 @@
     board.addEventListener("pointerup", onPointerUp);
     board.addEventListener("pointercancel", onPointerUp);
     board.addEventListener("contextmenu", (event) => event.preventDefault());
+    board.addEventListener("auxclick", (event) => { if (event.button === 1) event.preventDefault(); });
     board.addEventListener("lostpointercapture", onPointerUp);
     window.addEventListener("resize", () => fitCamera());
     document.querySelectorAll(".desk-switch-inline a[href]").forEach((link) => {
@@ -2469,24 +2008,25 @@
   async function boot() {
     window.MobileWorkspace?.init();
     window.MobileWorkspace?.enhanceModals?.();
+    mosaicUi = window.BoardMosaicUI({
+      state, canvas, board, view, currentPage, drawGrid, drawBoard, renderPages, fitCamera, applyCamera, closeBoardSheets,
+      openSmartDialog, encodePageClip, encodeAllClip, setSaveStatus, setModalVisible, sessionSnapshot,
+      setDraftLayout(layout) { smartLayout = Mosaic.normalize(layout); return refreshSmartResult(); },
+      editLayout() { smartRequest++; smartFileState = "idle"; smartImage = null; setSmartAnimation(null); openSmartDialog(); },
+    });
     bindSheets();
     bindUi();
     fillTools();
     fillPalette();
-    setBrushSize(1);
+    syncHistoryButtons();
     setTool("round");
-    const [spec, remote, promptDoc, refDoc] = await Promise.all([
+    const [spec, remote] = await Promise.all([
       fetch("/data/board_native.json", { credentials: "same-origin", cache: "no-store" }).then((res) => res.ok ? res.json() : null).catch(() => null),
       fetchBoardSaves(),
-      fetch("/data/board_ai_prompts.json", { credentials: "same-origin", cache: "no-store" }).then((res) => res.ok ? res.json() : { templates: [] }).catch(() => ({ templates: [] })),
-      fetch("/data/board_ai_refs.json", { credentials: "same-origin", cache: "no-store" }).then((res) => res.ok ? res.json() : { templates: [] }).catch(() => ({ templates: [] })),
     ]);
-    nativeSpec = spec;
     if (Array.isArray(spec?.palette) && spec.palette.length) state.palette = spec.palette;
     if (Number(spec?.defaultIntervalMs)) state.interval = Number(spec.defaultIntervalMs);
     fillPalette();
-    state.promptDefaults = Array.isArray(promptDoc?.templates) ? promptDoc.templates : [];
-    state.aiRefs = Array.isArray(refDoc?.templates) ? refDoc.templates : [];
     let localDesigns = { items: [] };
     try {
       localDesigns = JSON.parse(deskGet(DESIGNS_KEY) || "null") || { items: [] };
@@ -2496,26 +2036,6 @@
     const merged = mergeDesigns(localDesigns, remote?.designs);
     state.designs = merged.items || [];
     persistDesignsLocal({ v: 1, savedAt: merged.savedAt || Date.now(), items: state.designs });
-    let localAi = {};
-    try {
-      localAi = JSON.parse(deskGet(AI_KEY) || "null") || {};
-    } catch {
-      localAi = {};
-    }
-    const ai = ((Number(localAi.savedAt) || 0) >= (Number(remote?.ai?.savedAt) || 0) ? localAi : remote?.ai) || {};
-    state.aiKey = String(ai.apiKey || "");
-    state.aiModel = String(ai.model || "");
-    state.aiRefMode = ai.aiRefMode === "template" || ai.aiRefMode === "upload" ? ai.aiRefMode : "none";
-    state.aiRefId = String(ai.aiRefId || "");
-    let localPrompts = { items: [], deletedIds: [] };
-    try {
-      localPrompts = JSON.parse(deskGet(PROMPTS_KEY) || "null") || localPrompts;
-    } catch {
-      localPrompts = { items: [], deletedIds: [] };
-    }
-    const promptState = (Number(localPrompts.savedAt) || 0) >= (Number(remote?.prompts?.savedAt) || 0) ? localPrompts : (remote?.prompts || localPrompts);
-    state.prompts = Array.isArray(promptState.items) ? promptState.items : [];
-    state.promptDeletedIds = Array.isArray(promptState.deletedIds) ? promptState.deletedIds : [];
     let localSession = null;
     try {
       localSession = JSON.parse(deskGet(SESSION_KEY) || "null");
@@ -2526,15 +2046,14 @@
     if (session && Array.isArray(session.pages) && session.pages.length) {
       state.tool = TOOLS.some((tool) => tool.id === session.tool) ? session.tool : state.tool;
       state.color = Number.isFinite(session.color) ? session.color : state.color;
-      state.size = Math.max(1, Number(session.size) || state.size);
       state.interval = Math.max(50, Number(session.interval) || state.interval);
       state.designId = session.designId || "";
       state.designName = session.designName || "";
       state.page = Number(session.page) || 0;
+      installLayout(session.layout || Mosaic.normalize(), session.tile);
       restorePages(session.pages);
       setTool(state.tool);
       setColor(state.color);
-      setBrushSize(state.size);
       const nameInput = document.getElementById("boardSaveName");
       if (nameInput) nameInput.value = state.designName || "";
       state.dirty = false;
@@ -2544,16 +2063,11 @@
       renderPages();
     }
     renderDesigns();
-    fillAiPromptPick();
     fitCamera();
     const push = {};
     const remoteIds = new Set((remote?.designs?.items || []).map((row) => row?.id).filter(Boolean));
     const extra = (merged.items || []).filter((row) => row?.id && (row.pages || row.png) && !remoteIds.has(row.id));
     if (extra.length) push.designs = { v: 1, savedAt: merged.savedAt || Date.now(), items: extra };
-    if ((state.prompts.length || (state.promptDeletedIds || []).length) && (!remote?.prompts?.items || !remote.prompts.items.length)) {
-      push.prompts = promptsBundle();
-    }
-    if (state.aiKey && !remote?.ai?.apiKey) push.ai = aiSettingsBundle();
     if (Object.keys(push).length) putBoardSaves(push).catch((error) => console.warn(error));
     window.MobileWorkspace?.onModeChange(() => fitCamera());
     document.documentElement.classList.remove("boot-pending");

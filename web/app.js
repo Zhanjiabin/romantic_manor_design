@@ -94,6 +94,10 @@ const state = {
   shapeMode: "fill",
   shapeDrag: null,
   shapeShift: false,
+  imageTerrainRegion: null,
+  imageTerrainRegionTool: null,
+  imageTerrainRegionDraft: null,
+  imageTerrainRegionDrag: null,
   grassKeep: new Set(),
   brushSize: 1,
   brush: null,
@@ -159,6 +163,10 @@ let ctx = view.getContext("2d", { alpha: false });
 const IMAGE_TERRAIN_CORE = globalThis.ImageTerrainCore;
 if (!IMAGE_TERRAIN_CORE) throw new Error("image-terrain-core.js 未加载");
 let imageTerrainDraft = null;
+let imageTerrainPreviewFrame = 0;
+const immutableTerrainSprites = new WeakSet();
+const terrainSpritePixels = new WeakMap();
+const terrainAtlasPixels = new WeakMap();
 let planOverlayDraft = null;
 
 async function boot() {
@@ -645,6 +653,7 @@ function preload(src) {
       return;
     }
     state.terrainRev = (state.terrainRev || 0) + 1;
+    if (imageTerrainDraft?.previewMode === "terrain") queueImageTerrainPreview();
     draw();
   };
   state.images.set(src, im);
@@ -1446,6 +1455,7 @@ function paintFrame() {
   }
   drawSceneObjects();
   drawShapePreview();
+  drawImageTerrainRegionOverlay();
   const chromeBusy = terrainInteractionBusy();
   if (!chromeBusy) {
     const now = performance.now();
@@ -1721,6 +1731,36 @@ function drawTerrainStampJobs(predicate) {
   }
   if (!jobs.length) return;
   ctx.imageSmoothingEnabled = false;
+  if (k < 1) {
+    // Assemble native pixels before minifying. Scaling separate transparent
+    // diamonds leaves grass pinholes, even inside a completely solid plot.
+    // Bounded chunks keep the temporary canvas small on large maps.
+    const chunkW = 1024;
+    const chunkH = 512;
+    const chunks = new Map();
+    for (const job of jobs) {
+      const c0 = Math.floor(job.x / chunkW);
+      const c1 = Math.floor((job.x + TILE_DW - 1) / chunkW);
+      const r0 = Math.floor(job.y / chunkH);
+      const r1 = Math.floor((job.y + TILE_DH - 1) / chunkH);
+      for (let row = r0; row <= r1; row++) for (let col = c0; col <= c1; col++) {
+        const key = col + "," + row;
+        if (!chunks.has(key)) chunks.set(key, { x: col * chunkW, y: row * chunkH, jobs: [] });
+        chunks.get(key).jobs.push(job);
+      }
+    }
+    for (const chunk of chunks.values()) {
+      const layer = acquireTerrainLayer(chunkW, chunkH);
+      const g = layer.getContext("2d");
+      for (const job of chunk.jobs) g.drawImage(job.sprite, job.x - chunk.x, job.y - chunk.y);
+      const x = Math.round(state.cam.x + chunk.x * k);
+      const y = Math.round(state.cam.y + chunk.y * k);
+      const width = Math.round(state.cam.x + (chunk.x + chunkW) * k) - x;
+      const height = Math.round(state.cam.y + (chunk.y + chunkH) * k) - y;
+      ctx.drawImage(layer, x, y, width, height);
+    }
+    return;
+  }
   const tw = TILE_DW * k;
   const th = TILE_DH * k;
   for (const job of jobs) {
@@ -2023,10 +2063,13 @@ function cropAtlasDiamond(image, slot, keepAlpha) {
   const canvas = document.createElement("canvas");
   canvas.width = TILE_DW;
   canvas.height = TILE_DH;
-  const g = canvas.getContext("2d");
+  const g = canvas.getContext("2d", { willReadFrequently: true });
   const out = g.createImageData(TILE_DW, TILE_DH);
-  const ag = atlas.getContext("2d", { willReadFrequently: true });
-  const src = ag.getImageData(0, 0, atlas.width, atlas.height).data;
+  let src = terrainAtlasPixels.get(atlas);
+  if (!src) {
+    src = atlas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, atlas.width, atlas.height).data;
+    terrainAtlasPixels.set(atlas, src);
+  }
   const w = atlas.width;
   const h = atlas.height;
   const ox0 = sx + pad;
@@ -2049,6 +2092,7 @@ function cropAtlasDiamond(image, slot, keepAlpha) {
   }
   g.putImageData(out, 0, 0);
   cache.set(key, canvas);
+  immutableTerrainSprites.add(canvas);
   return canvas;
 }
 
@@ -2063,7 +2107,7 @@ function atlasMaskWeights(src, slot) {
   const image = state.images.get(src);
   if (!image?.complete || !image.naturalWidth) return null;
   const tile = cropAtlasDiamond(image, slot, false);
-  const data = tile.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data;
+  const data = readSpriteRGBA(tile);
   const weights = new Uint8Array(TILE_DW * TILE_DH);
   for (let i = 0, p = 0; i < data.length; i += 4, p++) {
     // Native converts mask bytes then >>= 3 → 0..31. JPEG is near-grayscale.
@@ -2083,7 +2127,12 @@ function waterMaskWeights(slot) {
 
 function readSpriteRGBA(sprite) {
   if (!sprite) return null;
-  return sprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data;
+  const cached = terrainSpritePixels.get(sprite);
+  if (cached) return cached;
+  const data = sprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data;
+  // Compositing layers are mutable and must always be read again after painting.
+  if (immutableTerrainSprites.has(sprite)) terrainSpritePixels.set(sprite, data);
+  return data;
 }
 
 function blendRgb565Style(aSprite, bSprite, weights) {
@@ -2188,7 +2237,7 @@ function paintLinkFarmland(dest, fromSprite, toSprite, aleSprite, cornerFrom, pa
   const from = readSpriteRGBA(fromSprite);
   const to = readSpriteRGBA(toSprite);
   const keep = keepSprite ? readSpriteRGBA(keepSprite) : null;
-  const ale = aleSprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data;
+  const ale = readSpriteRGBA(aleSprite);
   const out = g.createImageData(TILE_DW, TILE_DH);
   if (!from || !to) {
     if (fromSprite) g.drawImage(fromSprite, 0, 0);
@@ -2272,7 +2321,7 @@ function paintDesertJpegOccupancy(dest, fillSprite, keepSprite, aleSprite, tile,
   const g = dest.getContext("2d");
   const fill = readSpriteRGBA(fillSprite);
   const grass = readSpriteRGBA(keepSprite);
-  const ale = aleSprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data;
+  const ale = readSpriteRGBA(aleSprite);
   const out = g.createImageData(TILE_DW, TILE_DH);
   if (!fill || !grass) {
     if (fillSprite) g.drawImage(fillSprite, 0, 0);
@@ -2334,7 +2383,7 @@ function paintLinkSnow(dest, fromSprite, toSprite, aleSprite, keepSprite) {
   const g = dest.getContext("2d");
   const from = readSpriteRGBA(fromSprite);
   const to = readSpriteRGBA(keepSprite || toSprite);
-  const ale = aleSprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data;
+  const ale = readSpriteRGBA(aleSprite);
   const out = g.createImageData(TILE_DW, TILE_DH);
   if (!from || !to) {
     if (fromSprite) g.drawImage(fromSprite, 0, 0);
@@ -2385,9 +2434,7 @@ function paintLinkWaterOnSand(dest, fromSprite, toSprite, aleSprite, weights) {
   const g = dest.getContext("2d");
   const water = readSpriteRGBA(fromSprite);
   const sand = readSpriteRGBA(toSprite);
-  const ale = aleSprite
-    ? aleSprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data
-    : null;
+  const ale = readSpriteRGBA(aleSprite);
   const out = g.createImageData(TILE_DW, TILE_DH);
   if (!water || !sand) {
     if (fromSprite) g.drawImage(fromSprite, 0, 0);
@@ -2433,9 +2480,7 @@ function paintLinkWater(dest, fromSprite, toSprite, aleSprite, weights, keepSpri
   const g = dest.getContext("2d");
   const from = readSpriteRGBA(fromSprite);
   const outside = readSpriteRGBA(keepSprite || toSprite);
-  const ale = aleSprite
-    ? aleSprite.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, TILE_DW, TILE_DH).data
-    : null;
+  const ale = readSpriteRGBA(aleSprite);
   const out = g.createImageData(TILE_DW, TILE_DH);
   if (!from || !outside) {
     if (fromSprite) g.drawImage(fromSprite, 0, 0);
@@ -2507,7 +2552,9 @@ function copySprite(sprite) {
   const canvas = document.createElement("canvas");
   canvas.width = TILE_DW;
   canvas.height = TILE_DH;
-  canvas.getContext("2d").drawImage(sprite, 0, 0);
+  // Layer compositing immediately reads these pixels back for terrain masks.
+  // Choose a CPU-backed surface on creation to avoid a GPU readback per tile.
+  canvas.getContext("2d", { willReadFrequently: true }).drawImage(sprite, 0, 0);
   return canvas;
 }
 
@@ -2932,8 +2979,6 @@ function clipSolidFillAgainstShores(tile, sprite, fillKind) {
   ) {
     return sprite;
   }
-  const src = readSpriteRGBA(sprite);
-  if (!src) return sprite;
   const pos = nativeTilePosition(tile);
   const others = [];
   for (const { du, dv } of NEIGHBOR_EDGE_BITS) {
@@ -2946,6 +2991,8 @@ function clipSolidFillAgainstShores(tile, sprite, fillKind) {
     );
   }
   if (!others.length) return sprite;
+  const src = readSpriteRGBA(sprite);
+  if (!src) return sprite;
   const canvas = document.createElement("canvas");
   canvas.width = TILE_DW;
   canvas.height = TILE_DH;
@@ -3256,7 +3303,7 @@ function isoTileSprite(im, sx = 0, sy = 0) {
   const c = document.createElement("canvas");
   c.width = TILE_DW;
   c.height = TILE_DH;
-  const g = c.getContext("2d");
+  const g = c.getContext("2d", { willReadFrequently: true });
   const out = g.createImageData(TILE_DW, TILE_DH);
   const src = pix.data;
   const dst = out.data;
@@ -3280,6 +3327,7 @@ function isoTileSprite(im, sx = 0, sy = 0) {
   }
   g.putImageData(out, 0, 0);
   state.tileSprites.set(key, c);
+  immutableTerrainSprites.add(c);
   return c;
 }
 
@@ -6333,6 +6381,33 @@ function bind() {
   document.getElementById("imageTerrainAlgorithm").onchange = renderImageTerrainMapping;
   document.getElementById("imageTerrainCleanup").onchange = renderImageTerrainMapping;
   document.getElementById("imageTerrainDetail")?.addEventListener("change", renderImageTerrainMapping);
+  document.getElementById("imageTerrainMappingMode").onchange = () => {
+    suggestImageTerrainMaterials();
+    paintImageTerrainPreviewFromMapping();
+  };
+  document.getElementById("imageTerrainReplace").onchange = paintImageTerrainPreviewFromMapping;
+  wireClick("btnImageTerrainCropApply", () => applyImageTerrainCrop(imageTerrainDraft?.cropPending));
+  wireClick("btnImageTerrainCropReset", () => applyImageTerrainCrop(null));
+  document.getElementById("imageTerrainCropPreset").onchange = setImageTerrainCropPreset;
+  document.getElementById("imageTerrainCropAspect").onchange = resizeImageTerrainCropAspect;
+  document.getElementById("imageTerrainScope")?.addEventListener("change", () => {
+    syncImageTerrainRegionUi();
+    renderImageTerrainMapping();
+  });
+  wireClick("btnImageTerrainPickRegion", beginImageTerrainRegionSelection);
+  wireClick("btnImageTerrainClearRegion", clearImageTerrainRegion);
+  wireClick("btnImageRegionFinish", finishImageTerrainRegion);
+  wireClick("btnImageRegionCancel", cancelImageTerrainRegion);
+  document.getElementById("imageRegionShape").onchange = changeImageTerrainRegionShape;
+  document.getElementById("imageRegionGhost").onchange = draw;
+  for (const axis of ["Width", "Height"]) {
+    document.getElementById(`imageRegion${axis}`).onchange = () => resizeImageTerrainRegion(axis);
+  }
+  wireClick("btnImageRegionUndo", () => {
+    state.imageTerrainRegionDraft?.points.pop();
+    syncImageTerrainRegionUi();
+    draw();
+  });
   document.querySelectorAll("[data-image-edit-tool]").forEach((button) => {
     button.onclick = () => setImageTerrainEditTool(button.dataset.imageEditTool);
   });
@@ -6500,6 +6575,12 @@ function bind() {
   const mapHost = document.getElementById("mapHost");
   if (mapHost) mapHost.addEventListener("contextmenu", (e) => e.preventDefault());
   view.addEventListener("pointerdown", onTerrainPointerDown);
+  view.addEventListener("dblclick", (event) => {
+    if (state.imageTerrainRegionTool === "polygon") {
+      event.preventDefault();
+      finishImageTerrainRegion();
+    }
+  });
   window.addEventListener("pointermove", onTerrainPointerMove, { passive: false });
   window.addEventListener("pointerup", (event) => onTerrainPointerUp(event, false), { passive: false });
   window.addEventListener("pointercancel", (event) => onTerrainPointerUp(event, true), { passive: false });
@@ -6589,6 +6670,8 @@ function terrainPointerEvent(event) {
   return {
     clientX: event.clientX,
     clientY: event.clientY,
+    pointerId: event.pointerId,
+    pointerType: event.pointerType,
     button: event.button ?? 0,
     shiftKey: !!event.shiftKey,
     ctrlKey: !!event.ctrlKey,
@@ -6610,6 +6693,7 @@ function beginTerrainPinch() {
   const points = [...state.activePointers.values()];
   if (points.length < 2) return;
   const pending = state.pointerPending;
+  if (state.imageTerrainRegionTool) cancelImageTerrainRegionDrag();
   if (pending?.started) {
     const shouldUndo =
       !!state.strokeSaved ||
@@ -6708,6 +6792,11 @@ function onTerrainPointerMove(event) {
 }
 
 function onTerrainPointerUp(event, cancelled = false) {
+  if (cancelled && state.imageTerrainRegionTool) {
+    cancelImageTerrainRegionDrag();
+    state.dragging = false;
+    draw();
+  }
   if (event.pointerType !== "touch") {
     onUp(event);
     return;
@@ -6739,6 +6828,17 @@ function onDown(e) {
   if (e instanceof MouseEvent && state.touching) return;
   const { x, y } = localXY(e);
   const w = screenToWorld(x, y);
+  if (state.imageTerrainRegionTool) {
+    if (e.button === 1 || e.button === 2) {
+      e.preventDefault();
+      state.panning = true;
+      state.panFrom = { x: e.clientX, y: e.clientY, cx: state.cam.x, cy: state.cam.y };
+      return;
+    }
+    if (e.button !== 0) return;
+    beginImageTerrainRegionDrag(e);
+    return;
+  }
   if (e.button === 2) {
     e.preventDefault();
     if (state.portal.held) {
@@ -6832,6 +6932,15 @@ function onMove(e) {
   if (e instanceof MouseEvent && state.touching) return;
   const { x, y } = localXY(e);
   const w = screenToWorld(x, y);
+  if (state.imageTerrainRegionTool) {
+    if (state.panning) {
+      state.cam.x = state.panFrom.cx + (e.clientX - state.panFrom.x) * (view.width / view.clientWidth);
+      state.cam.y = state.panFrom.cy + (e.clientY - state.panFrom.y) * (view.height / view.clientHeight);
+      draw(); return;
+    }
+    moveImageTerrainRegionDrag(e);
+    return;
+  }
   const coord = document.getElementById("coord");
   if (coord) coord.textContent = Math.round(w.x) + ", " + Math.round(w.y);
   if (!state.previewInteraction && !state.dragging && !state.panning && !state.buildingDrag && !state.portal.held) {
@@ -6919,6 +7028,16 @@ function onMove(e) {
 }
 
 function onUp(e) {
+  if (state.imageTerrainRegionTool) {
+    if (state.imageTerrainRegionDrag) {
+      moveImageTerrainRegionDrag(e);
+      state.imageTerrainRegionDrag = null;
+    }
+    state.dragging = false;
+    state.panning = false;
+    syncImageTerrainRegionUi();
+    return;
+  }
   if (state.buildingDrag?.saved) markDirty();
   state.buildingDrag = null;
   if (state.previewInteraction?.changed) {
@@ -6967,6 +7086,28 @@ function onWheel(e) {
 
 function onKey(e) {
   if (typeof isAppDialogOpen === "function" && isAppDialogOpen()) return;
+  if (state.imageTerrainRegionTool) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelImageTerrainRegion();
+      return;
+    }
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target?.tagName)) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finishImageTerrainRegion();
+      return;
+    }
+    const steps = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    const rect = state.imageTerrainRegionDraft?.rect;
+    if (steps[e.key] && rect) {
+      e.preventDefault();
+      const [dx, dy] = steps[e.key], step = e.shiftKey ? 64 : 16;
+      state.imageTerrainRegionDraft.rect = IMAGE_TERRAIN_CORE.moveSelection(rect, dx * step, dy * step, { w: worldExtent(), h: worldExtent() });
+      syncImageTerrainRegionUi(); draw();
+    }
+    return;
+  }
   const typing = e.target && ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName);
   if ((e.key === "s" || e.key === "S") && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
@@ -8722,13 +8863,73 @@ function imageTerrainUvBounds(cells) {
   return { minU, maxU, minV, maxV };
 }
 
-function imageTerrainFitRect(imageW, imageH, fit) {
+function imageTerrainScopeValue() {
+  const value = document.getElementById("imageTerrainScope")?.value;
+  return value === "rectangle" || value === "polygon" ? value : "full";
+}
+
+function imageTerrainRegionContains(region, u, v) {
+  if (!region || region.mode === "full") return true;
+  const { cx: x, cy: y } = logicalToNative(u, v);
+  const points = Array.isArray(region.points) ? region.points : [];
+  if (region.mode === "rectangle") {
+    if (points.length < 2) return false;
+    return x >= Math.min(points[0].x, points[1].x) && x <= Math.max(points[0].x, points[1].x) &&
+      y >= Math.min(points[0].y, points[1].y) && y <= Math.max(points[0].y, points[1].y);
+  }
+  if (points.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const a = points[i];
+    const b = points[j];
+    const onEdge = Math.abs((b.y - a.y) * (x - a.x) - (y - a.y) * (b.x - a.x)) < 1e-6 &&
+      x >= Math.min(a.x, b.x) && x <= Math.max(a.x, b.x) &&
+      y >= Math.min(a.y, b.y) && y <= Math.max(a.y, b.y);
+    if (onEdge) return true;
+    const crosses = (a.y > y) !== (b.y > y) &&
+      x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function imageTerrainRegionNativeBounds(cells) {
+  const bounds = { minCx: Infinity, maxCx: -Infinity, minCy: Infinity, maxCy: -Infinity };
+  for (const cell of cells) {
+    bounds.minCx = Math.min(bounds.minCx, cell.cx);
+    bounds.maxCx = Math.max(bounds.maxCx, cell.cx);
+    bounds.minCy = Math.min(bounds.minCy, cell.cy);
+    bounds.maxCy = Math.max(bounds.maxCy, cell.cy);
+  }
+  return bounds;
+}
+
+function imageTerrainTargetCells() {
+  const all = listImageTerrainCells();
+  const scope = imageTerrainScopeValue();
+  const region = scope === "full" ? null : state.imageTerrainRegion;
+  if (scope !== "full" && (!region || region.mode !== scope || region.points?.length < (scope === "rectangle" ? 2 : 3))) {
+    return { cells: [], region, scope, ready: false };
+  }
+  const cells = region ? all.filter((cell) => imageTerrainRegionContains(region, cell.u, cell.v)) : all;
+  return {
+    cells,
+    region,
+    scope,
+    ready: cells.length > 0,
+    nativeBounds: region
+      ? imageTerrainRegionNativeBounds(region.points.map((point) => ({ cx: point.x, cy: point.y })))
+      : { minCx: 0, maxCx: worldExtent(), minCy: 0, maxCy: worldExtent() },
+  };
+}
+
+function imageTerrainFitRect(imageW, imageH, fit, targetAspect = 1) {
   if (fit !== "cover" && fit !== "contain") return { x: 0, y: 0, w: 1, h: 1 };
   const scale =
     fit === "cover"
-      ? Math.max(1 / Math.max(1, imageW), 1 / Math.max(1, imageH))
-      : Math.min(1 / Math.max(1, imageW), 1 / Math.max(1, imageH));
-  const w = imageW * scale;
+      ? Math.max(targetAspect / Math.max(1, imageW), 1 / Math.max(1, imageH))
+      : Math.min(targetAspect / Math.max(1, imageW), 1 / Math.max(1, imageH));
+  const w = imageW * scale / targetAspect;
   const h = imageH * scale;
   return { x: (1 - w) / 2, y: (1 - h) / 2, w, h };
 }
@@ -8748,24 +8949,32 @@ function imageTerrainSourcePixels(image) {
 }
 
 function sampleImagePixel(src, x, y, alphaThreshold) {
-  if (!src?.pixels) return null;
-  const px = Math.max(0, Math.min(src.width - 1, Math.round(x)));
-  const py = Math.max(0, Math.min(src.height - 1, Math.round(y)));
-  const offset = (py * src.width + px) * 4;
-  if (src.pixels[offset + 3] < alphaThreshold) return null;
-  return [src.pixels[offset], src.pixels[offset + 1], src.pixels[offset + 2]];
+  return IMAGE_TERRAIN_CORE.pixelRgb(src, x, y, alphaThreshold);
 }
 
-function cellToImageXY(cell, projection, fit, src, mapN, uvBounds) {
+function imageTerrainSampleFrame(source = imageTerrainDraft?.source, grid = imageTerrainDraft?.grid) {
+  if (grid) {
+    return { x: grid.x0, y: grid.y0, width: grid.cols * grid.stepX, height: grid.rows * grid.stepY };
+  }
+  return { x: 0, y: 0, width: source.width, height: source.height };
+}
+
+function cellToImageXY(cell, projection, fit, src, mapN, uvBounds, nativeBounds) {
+  const bounds = nativeBounds || { minCx: 0, maxCx: mapN, minCy: 0, maxCy: mapN };
+  const width = Math.max(1, bounds.maxCx - bounds.minCx);
+  const height = Math.max(1, bounds.maxCy - bounds.minCy);
   const nx =
     projection === "iso"
       ? (cell.u - uvBounds.minU) / Math.max(1, uvBounds.maxU - uvBounds.minU)
-      : cell.cx / Math.max(1, mapN);
+      : (cell.cx - bounds.minCx) / width;
   const ny =
     projection === "iso"
       ? (cell.v - uvBounds.minV) / Math.max(1, uvBounds.maxV - uvBounds.minV)
-      : cell.cy / Math.max(1, mapN);
-  const rect = imageTerrainFitRect(src.width, src.height, fit);
+      : (cell.cy - bounds.minCy) / height;
+  const aspect = projection === "iso"
+    ? Math.max(1, uvBounds.maxU - uvBounds.minU) / Math.max(1, uvBounds.maxV - uvBounds.minV)
+    : width / height;
+  const rect = imageTerrainFitRect(src.width, src.height, fit, aspect);
   const lx = (nx - rect.x) / Math.max(1e-6, rect.w);
   const ly = (ny - rect.y) / Math.max(1e-6, rect.h);
   if (lx < 0 || ly < 0 || lx > 1 || ly > 1) return null;
@@ -8854,50 +9063,15 @@ function imageTerrainBackgroundRgb(pixels, width, height, alphaThreshold) {
   return mean;
 }
 
-function suggestedPixelBrushIndex(rgb, brushes, backgroundRgb = null) {
-  if (backgroundRgb && rgbDistance(rgb, backgroundRgb) <= 28 * 28) return -1;
-  const [r, g, b] = rgb;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const sat = max - min;
-  let type = null;
-  if (sat < 28 && max > 222) type = "雪地";
-  else if (b > r * 1.18 && b > g * 1.1 && b > 90) type = "水面";
-  else if (sat < 28 && max > 70 && max < 210) type = "砖地";
-  else if (r > b + 24 && g > b + 8 && r >= g * 0.82 && r <= g * 1.5 && sat > 22) type = "土地";
-  else {
-    const lab = rgbToLab(r, g, b);
-    let best = Infinity;
-    KIND_ORDER.forEach((name) => {
-      const canon = TERRAIN_TYPE_RGB[name];
-      if (!canon) return;
-      const distance = labDistance(lab, rgbToLab(...canon));
-      if (distance < best) {
-        best = distance;
-        type = name;
-      }
-    });
-  }
-  const candidates = brushes
-    .map((brush, index) => ({ brush, index }))
-    .filter(({ brush }) => brushPaletteType(brush) === (type || "土地"));
-  if (!candidates.length) return brushes.length ? 0 : -1;
-  const sourceLab = rgbToLab(r, g, b);
-  return candidates.reduce((best, candidate) => {
-    const preview = brushPreviewRgb(candidate.brush);
-    const distance = preview ? labDistance(sourceLab, rgbToLab(...preview)) : Infinity;
-    return distance < best.distance ? { index: candidate.index, distance } : best;
-  }, { index: candidates[0].index, distance: Infinity }).index;
-}
-
 function collectImageTerrainCells() {
   if (!imageTerrainDraft?.image) return null;
   if (!imageTerrainDraft.source) {
     imageTerrainDraft.source = imageTerrainSourcePixels(imageTerrainDraft.image);
   }
   const src = imageTerrainDraft.source;
-  const cells = listImageTerrainCells();
-  if (!cells.length) return null;
+  const target = imageTerrainTargetCells();
+  const cells = target.cells;
+  if (!target.ready) return { cells: [], src, scope: target.scope, region: target.region, ready: false };
   const mapN = worldExtent();
   const projection = document.getElementById("imageTerrainProjection")?.value || "front";
   const fit = document.getElementById("imageTerrainFit")?.value || "stretch";
@@ -8911,35 +9085,57 @@ function collectImageTerrainCells() {
   let grid = null;
   let algorithm = requestedAlgorithm;
   let fallback = false;
-  if (algorithm === "grid") {
-    grid = IMAGE_TERRAIN_CORE.detectGrid(src);
-    if (!grid) {
+  if (algorithm === "grid" || algorithm === "enhanced") {
+    if (imageTerrainDraft.detectedGrid === undefined) {
+      imageTerrainDraft.detectedGrid = IMAGE_TERRAIN_CORE.detectGrid(src);
+    }
+    const detected = imageTerrainDraft.detectedGrid;
+    grid = detected && (algorithm === "grid" || detected.autoSuitable) ? detected : null;
+    if (grid) {
+      algorithm = "grid";
+    } else if (requestedAlgorithm === "grid") {
       algorithm = "enhanced";
       fallback = true;
     }
   }
-  const radiusX = Math.max(1.5, Math.min(detail.radiusCap, (src.width * 64 / Math.max(1, mapN)) * detail.radiusScale));
-  const radiusY = Math.max(1.5, Math.min(detail.radiusCap, (src.height * 16 / Math.max(1, mapN)) * detail.radiusScale));
+  let gridSamples = null;
+  if (grid) {
+    if (!imageTerrainDraft.gridSamples || imageTerrainDraft.gridSampleAlpha !== alphaThreshold) {
+      imageTerrainDraft.gridSamples = IMAGE_TERRAIN_CORE.sampleGrid(src, grid, alphaThreshold);
+      imageTerrainDraft.gridSampleAlpha = alphaThreshold;
+    }
+    gridSamples = imageTerrainDraft.gridSamples;
+  }
+  const sampleSpace = imageTerrainSampleFrame(src, grid);
+  const targetWidth = Math.max(1, target.nativeBounds.maxCx - target.nativeBounds.minCx);
+  const targetHeight = Math.max(1, target.nativeBounds.maxCy - target.nativeBounds.minCy);
+  const radiusX = Math.max(1.5, Math.min(detail.radiusCap, (src.width * 64 / targetWidth) * detail.radiusScale));
+  const radiusY = Math.max(1.5, Math.min(detail.radiusCap, (src.height * 16 / targetHeight) * detail.radiusScale));
   const sampled = [];
   cells.forEach((cell) => {
-    const point = cellToImageXY(cell, projection, fit, src, mapN, uvBounds);
+    const point = cellToImageXY(cell, projection, fit, sampleSpace, mapN, uvBounds, target.nativeBounds);
     if (!point) {
       sampled.push({ ...cell, rgb: null, confidence: 0 });
       return;
     }
+    point.x += sampleSpace.x;
+    point.y += sampleSpace.y;
+    const inGrid = grid && point.x >= grid.x0 && point.x < grid.x0 + grid.cols * grid.stepX
+      && point.y >= grid.y0 && point.y < grid.y0 + grid.rows * grid.stepY;
     let result = null;
     if (algorithm === "point") {
       result = {
         rgb: sampleImagePixel(src, point.x, point.y, alphaThreshold),
         confidence: 1,
       };
-    } else if (algorithm === "grid") {
+    } else if (algorithm === "grid" && inGrid) {
       result = IMAGE_TERRAIN_CORE.gridSample(
         src,
         grid,
-        point.x / Math.max(1, src.width - 1),
-        point.y / Math.max(1, src.height - 1),
-        alphaThreshold
+        (point.x - grid.x0) / (grid.cols * grid.stepX),
+        (point.y - grid.y0) / (grid.rows * grid.stepY),
+        alphaThreshold,
+        gridSamples
       );
     } else {
       result = IMAGE_TERRAIN_CORE.enhancedSample(
@@ -8956,6 +9152,7 @@ function collectImageTerrainCells() {
       ...cell,
       rgb: result?.rgb || null,
       confidence: Number(result?.confidence) || 0,
+      gridCell: algorithm === "grid" && inGrid,
     });
   });
   return {
@@ -8971,6 +9168,10 @@ function collectImageTerrainCells() {
     grid,
     fallback,
     detail,
+    scope: target.scope,
+    region: target.region,
+    nativeBounds: target.nativeBounds,
+    ready: true,
   };
 }
 
@@ -8980,11 +9181,29 @@ function renderImageTerrainMapping() {
   const mapping = document.getElementById("imageColorMap");
   const status = document.getElementById("imageTerrainStatus");
   if (!collected || !preview || !mapping) return;
+  if (!collected.ready) {
+    mapping.replaceChildren();
+    imageTerrainDraft.sampled = null;
+    imageTerrainDraft.palette = [];
+    imageTerrainDraft.baseStatusText = "";
+    imageTerrainDraft.editHistory = [];
+    preview.getContext("2d").clearRect(0, 0, preview.width, preview.height);
+    if (status) {
+      status.textContent = collected.scope === "full"
+        ? "当前地图没有可用格子。"
+        : `请先在地图上划定${collected.scope === "rectangle" ? "矩形" : "多边形"}选区。`;
+    }
+    syncImageTerrainRegionUi();
+    syncImageTerrainEditor();
+    return;
+  }
   const colorCount = Math.max(
     2,
     Math.min(20, Number(document.getElementById("imageTerrainColors")?.value) || 10)
   );
-  const skipBg = document.getElementById("imageTerrainSkipBg")?.checked === true;
+  const skipBgControl = document.getElementById("imageTerrainSkipBg");
+  const skipBg = skipBgControl?.checked === true;
+  if (skipBgControl) skipBgControl.disabled = collected.algorithm === "grid";
   const detail = collected.detail || IMAGE_TERRAIN_CORE.detailPreset(document.getElementById("imageTerrainDetail")?.value || "split");
   const buckets = new Map();
   collected.cells.forEach((cell) => {
@@ -9000,7 +9219,7 @@ function renderImageTerrainMapping() {
   });
   const palette = IMAGE_TERRAIN_CORE.clusterPalette([...buckets.values()], colorCount, detail);
   const src = collected.src;
-  const backgroundRgb = skipBg
+  const backgroundRgb = skipBg && collected.algorithm !== "grid"
     ? imageTerrainBackgroundRgb(src.pixels, src.width, src.height, collected.alphaThreshold)
     : null;
   let indices = collected.cells.map((cell) => {
@@ -9029,6 +9248,7 @@ function renderImageTerrainMapping() {
   });
   imageTerrainDraft.sampled = {
     cells: collected.cells,
+    nativeBounds: collected.nativeBounds,
     indices,
     baseIndices: indices.slice(),
     brushOverrides: new Int16Array(indices.length).fill(-2),
@@ -9065,9 +9285,9 @@ function renderImageTerrainMapping() {
       option.textContent = `${brushPaletteType(brush)} · ${brushDisplayName(brush)}`;
       select.appendChild(option);
     });
-    select.value = String(suggestedPixelBrushIndex(entry.rgb, brushes, backgroundRgb));
     select.onchange = () => {
       syncImageTerrainEditor();
+      syncImageTerrainMappingStatus();
       paintImageTerrainPreviewFromMapping();
     };
     const count = document.createElement("small");
@@ -9075,23 +9295,26 @@ function renderImageTerrainMapping() {
     row.append(swatch, select, count);
     mapping.appendChild(row);
   });
+  suggestImageTerrainMaterials();
   syncImageTerrainEditor();
   paintImageTerrainPreviewFromMapping();
   if (status) {
     const algorithmLabel = collected.algorithm === "grid"
-      ? `网格图增强 ${collected.grid?.cols || "?"}×${collected.grid?.rows || "?"}`
+      ? `${collected.requestedAlgorithm === "enhanced" ? "自动识别 · " : ""}网格图增强 ${collected.grid?.cols || "?"}×${collected.grid?.rows || "?"}`
       : collected.algorithm === "point"
         ? "原始单点采样"
-        : "智能增强";
+        : `${collected.requestedAlgorithm === "enhanced" ? "自动识别 · " : ""}区域增强`;
     const fallback = collected.fallback ? "（未可靠识别网格，已自动回退）" : "";
     const cleanedLabel = cleaned.changed ? ` · 已清理 ${cleaned.changed} 格` : "";
     const lowConfidence = collected.cells.filter((cell) => cell.rgb && cell.confidence < 0.45).length;
     const confidenceLabel = lowConfidence ? ` · ${lowConfidence} 个低置信格` : "";
+    const scopeLabel = collected.scope === "full" ? `当前地图 ${collected.mapN}×${collected.mapN}` : `${imageTerrainRegionLabel(collected.scope)}选区`;
     status.textContent = writable
-      ? `${algorithmLabel}${fallback} · 当前地图 ${collected.mapN}×${collected.mapN} · ${writable} / ${collected.cells.length} 格${cleanedLabel}${confidenceLabel}`
+      ? `${algorithmLabel}${fallback} · ${scopeLabel} · ${writable} / ${collected.cells.length} 格${cleanedLabel}${confidenceLabel}`
       : "当前设置下没有可写入的格子，试试关掉跳过背景，或改用拉伸铺满。";
     imageTerrainDraft.baseStatusText = status.textContent;
   }
+  syncImageTerrainRegionUi();
 }
 
 function imageTerrainPaletteLabel(paletteIndex, entry) {
@@ -9111,15 +9334,551 @@ function setImageTerrainEditTool(tool) {
   });
 }
 
-function setImageTerrainPreviewMode(mode) {
-  const next = mode === "terrain" ? "terrain" : "source";
+function setImageTerrainPreviewMode(mode, paint = true) {
+  const next = ["original", "source", "terrain"].includes(mode) ? mode : "terrain";
   if (imageTerrainDraft) imageTerrainDraft.previewMode = next;
   document.querySelectorAll("[data-image-preview-mode]").forEach((button) => {
     const on = button.dataset.imagePreviewMode === next;
     button.classList.toggle("on", on);
     button.setAttribute("aria-pressed", on ? "true" : "false");
   });
-  paintImageTerrainPreviewFromMapping();
+  document.getElementById("imageTerrainCropTools").hidden = next !== "original";
+  document.getElementById("imageTerrainEditor").hidden = next === "original";
+  document.getElementById("imageTerrainPreview").style.cursor = "crosshair";
+  if (paint) paintImageTerrainPreviewFromMapping();
+}
+
+function suggestImageTerrainMaterials() {
+  const draft = imageTerrainDraft;
+  if (!draft?.palette) return;
+  const brushes = pixelTerrainBrushes();
+  const materials = brushes.map(brush => ({ rgb: brushPreviewRgb(brush) }));
+  const assignments = IMAGE_TERRAIN_CORE.mapPaletteToMaterials(draft.palette, materials,
+    document.getElementById("imageTerrainMappingMode").value);
+  document.querySelectorAll("#imageColorMap select").forEach(select => {
+    select.value = String(assignments[Number(select.dataset.paletteIndex)] ?? -1);
+  });
+  syncImageTerrainMappingStatus();
+}
+
+function syncImageTerrainMappingStatus() {
+  const draft = imageTerrainDraft;
+  if (!draft?.palette) return;
+  const selections = [...document.querySelectorAll("#imageColorMap select")];
+  const used = new Set(selections.filter(s => Number(s.value) >= 0).map(s => s.value));
+  const brushes = pixelTerrainBrushes();
+  const approximate = selections.filter(select => {
+    const entry = draft.palette[Number(select.dataset.paletteIndex)];
+    const brush = brushes[Number(select.value)];
+    return entry && brush && labDistance(rgbToLab(...entry.rgb), rgbToLab(...brushPreviewRgb(brush))) > 28 * 28;
+  }).length;
+  document.getElementById("imageTerrainMappingStatus").textContent =
+    `${selections.length} 个色块 → ${used.size} 种地形` +
+    (approximate ? `；${approximate} 个颜色使用近似材质，可在下方调整。` : "");
+}
+
+async function applyImageTerrainCrop(crop) {
+  const draft = imageTerrainDraft;
+  if (!draft || draft.cropping || (crop && (crop.w * draft.image.naturalWidth < 2 || crop.h * draft.image.naturalHeight < 2))) return;
+  draft.cropping = true;
+  document.getElementById("btnImageTerrainCropApply").disabled = true;
+  document.getElementById("btnApplyImageTerrain").disabled = true;
+  try {
+    let image = draft.originalImage;
+    if (crop) {
+      const w = draft.image.naturalWidth, h = draft.image.naturalHeight;
+      const x = Math.max(0, Math.min(w - 1, Math.floor(crop.x * w + 1e-7)));
+      const y = Math.max(0, Math.min(h - 1, Math.floor(crop.y * h + 1e-7)));
+      const right = Math.max(x + 1, Math.min(w, Math.ceil((crop.x + crop.w) * w - 1e-7)));
+      const bottom = Math.max(y + 1, Math.min(h, Math.ceil((crop.y + crop.h) * h - 1e-7)));
+      const canvas = document.createElement("canvas");
+      canvas.width = right - x;
+      canvas.height = bottom - y;
+      // Materialize native pixels as a new PNG, exactly like an externally cropped upload.
+      canvas.getContext("2d").drawImage(draft.image, x, y, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("裁剪图片生成失败");
+      image = await loadImageTerrainImage(blob);
+    }
+    if (imageTerrainDraft !== draft) return;
+    imageTerrainDraft = createImageTerrainDraft(image, draft.name, draft.originalImage);
+    imageTerrainDraft.regionShape = draft.regionShape;
+    document.getElementById("imageTerrainCropPreset").value = "custom";
+    document.getElementById("imageTerrainCropAspect").value = "free";
+    setImageTerrainPreviewMode("terrain", false);
+    renderImageTerrainMapping();
+  } catch (error) {
+    await appAlert(error.message || String(error), { title: "图片裁剪失败" });
+  } finally {
+    draft.cropping = false;
+    if (imageTerrainDraft === draft) {
+      document.getElementById("btnImageTerrainCropApply").disabled = !draft.cropPending;
+      syncImageTerrainRegionUi();
+    }
+  }
+}
+
+function imageTerrainCropRect() {
+  const draft = imageTerrainDraft;
+  const crop = draft?.cropPending;
+  if (!crop) return null;
+  return { x: crop.x * draft.image.naturalWidth, y: crop.y * draft.image.naturalHeight,
+    w: crop.w * draft.image.naturalWidth, h: crop.h * draft.image.naturalHeight };
+}
+
+function setImageTerrainCropRect(rect, preset = "custom") {
+  const draft = imageTerrainDraft;
+  if (!draft) return;
+  const w = draft.image.naturalWidth, h = draft.image.naturalHeight;
+  draft.cropPending = { x: rect.x / w, y: rect.y / h, w: rect.w / w, h: rect.h / h };
+  document.getElementById("imageTerrainCropPreset").value = preset;
+  document.getElementById("btnImageTerrainCropApply").disabled = rect.w < 2 || rect.h < 2;
+  paintImageTerrainOriginal();
+}
+
+function imageTerrainCropRatio() {
+  const mode = document.getElementById("imageTerrainCropAspect").value;
+  return mode === "square" ? 1 : mode === "image" ? imageTerrainDraft.image.naturalWidth / imageTerrainDraft.image.naturalHeight : 0;
+}
+
+function setImageTerrainCropPreset() {
+  if (!imageTerrainDraft) return;
+  const preset = document.getElementById("imageTerrainCropPreset").value;
+  if (preset === "custom") return;
+  const w = imageTerrainDraft.image.naturalWidth, h = imageTerrainDraft.image.naturalHeight;
+  const rect = { x: 0, y: 0, w, h };
+  if (preset === "bottom" || preset === "top") rect.h = h / 2;
+  if (preset === "right" || preset === "left") rect.w = w / 2;
+  if (preset === "bottom") rect.y = h / 2;
+  if (preset === "right") rect.x = w / 2;
+  document.getElementById("imageTerrainCropAspect").value = "free";
+  setImageTerrainCropRect(rect, preset);
+}
+
+function resizeImageTerrainCropAspect() {
+  const draft = imageTerrainDraft;
+  if (!draft) return;
+  const bounds = { w: draft.image.naturalWidth, h: draft.image.naturalHeight };
+  const rect = imageTerrainCropRect() || { x: 0, y: 0, ...bounds };
+  const ratio = imageTerrainCropRatio();
+  const w = ratio ? Math.min(rect.w, rect.h * ratio) : rect.w;
+  setImageTerrainCropRect(IMAGE_TERRAIN_CORE.fitSelection(rect, w, ratio ? w / ratio : rect.h, bounds));
+}
+
+function drawImageSelectionGuides(g, rect, handleSize = 6) {
+  g.save();
+  g.strokeStyle = "#ffffffb3";
+  g.lineWidth = 1;
+  g.beginPath();
+  for (const fraction of [1 / 3, 2 / 3]) {
+    g.moveTo(rect.x + rect.w * fraction, rect.y); g.lineTo(rect.x + rect.w * fraction, rect.y + rect.h);
+    g.moveTo(rect.x, rect.y + rect.h * fraction); g.lineTo(rect.x + rect.w, rect.y + rect.h * fraction);
+  }
+  g.stroke();
+  g.strokeStyle = "#fff"; g.lineWidth = 2;
+  g.strokeRect(rect.x, rect.y, rect.w, rect.h);
+  for (const p of IMAGE_TERRAIN_CORE.selectionCorners(rect)) {
+    g.fillStyle = "#fff"; g.strokeStyle = "#247452";
+    g.fillRect(p.x - handleSize, p.y - handleSize, handleSize * 2, handleSize * 2);
+    g.strokeRect(p.x - handleSize, p.y - handleSize, handleSize * 2, handleSize * 2);
+  }
+  g.restore();
+}
+
+function paintImageTerrainOriginal() {
+  const draft = imageTerrainDraft;
+  const preview = document.getElementById("imageTerrainPreview");
+  if (!draft?.image) return;
+  const scale = 440 / Math.max(draft.image.naturalWidth, draft.image.naturalHeight);
+  preview.width = Math.max(1, Math.round(draft.image.naturalWidth * scale));
+  preview.height = Math.max(1, Math.round(draft.image.naturalHeight * scale));
+  const g = preview.getContext("2d");
+  g.drawImage(draft.image, 0, 0, preview.width, preview.height);
+  const crop = draft.cropPending;
+  document.getElementById("imageTerrainCropStatus").textContent = crop
+    ? `${Math.round(crop.w * draft.image.naturalWidth)} × ${Math.round(crop.h * draft.image.naturalHeight)} px`
+    : `${draft.image.naturalWidth} × ${draft.image.naturalHeight} px · 整图`;
+  if (!crop) return;
+  const x = crop.x * preview.width, y = crop.y * preview.height;
+  const w = crop.w * preview.width, h = crop.h * preview.height;
+  g.fillStyle = "#10291d88";
+  g.beginPath();
+  g.rect(0, 0, preview.width, preview.height);
+  g.rect(x, y, w, h);
+  g.fill("evenodd");
+  drawImageSelectionGuides(g, { x, y, w, h });
+}
+
+function imageTerrainPreviewPoint(event) {
+  const preview = document.getElementById("imageTerrainPreview");
+  const rect = preview.getBoundingClientRect();
+  const scale = Math.min(rect.width / preview.width, rect.height / preview.height);
+  const width = preview.width * scale, height = preview.height * scale;
+  return {
+    x: (event.clientX - rect.left - (rect.width - width) / 2) / width,
+    y: (event.clientY - rect.top - (rect.height - height) / 2) / height,
+  };
+}
+
+function imageTerrainCropPointer(event) {
+  const point = imageTerrainPreviewPoint(event), image = imageTerrainDraft.image;
+  return { x: Math.max(0, Math.min(1, point.x)) * image.naturalWidth,
+    y: Math.max(0, Math.min(1, point.y)) * image.naturalHeight };
+}
+
+function imageTerrainCropHit(event) {
+  const preview = document.getElementById("imageTerrainPreview"), box = preview.getBoundingClientRect();
+  const cssScale = Math.min(box.width / preview.width, box.height / preview.height);
+  const nativeScale = preview.width * cssScale / imageTerrainDraft.image.naturalWidth;
+  return IMAGE_TERRAIN_CORE.hitSelection(imageTerrainCropRect(), imageTerrainCropPointer(event),
+    (event.pointerType === "touch" ? 20 : 12) / nativeScale);
+}
+
+function moveImageTerrainCrop(event) {
+  const draft = imageTerrainDraft, drag = draft.cropDrag;
+  const point = imageTerrainCropPointer(event);
+  if (!drag) {
+    const hit = imageTerrainCropHit(event);
+    document.getElementById("imageTerrainPreview").style.cursor = hit === "move" ? "move" : hit === -1 ? "crosshair" : hit % 2 ? "nesw-resize" : "nwse-resize";
+    return;
+  }
+  const bounds = { w: draft.image.naturalWidth, h: draft.image.naturalHeight };
+  const rect = drag.handle === "move"
+    ? IMAGE_TERRAIN_CORE.moveSelection(drag.rect, point.x - drag.start.x, point.y - drag.start.y, bounds)
+    : IMAGE_TERRAIN_CORE.selectionFromDrag(drag.anchor, point, bounds, event.shiftKey ? 1 : imageTerrainCropRatio());
+  setImageTerrainCropRect(rect);
+}
+
+function imageTerrainRegionLabel(scope) {
+  return scope === "rectangle" ? "矩形" : scope === "polygon" ? "多边形" : "整张地图";
+}
+
+function syncImageTerrainRegionUi(forceDimensions = false) {
+  const scope = imageTerrainScopeValue();
+  const region = state.imageTerrainRegion;
+  const status = document.getElementById("imageTerrainRegionStatus");
+  const pick = document.getElementById("btnImageTerrainPickRegion");
+  const clear = document.getElementById("btnImageTerrainClearRegion");
+  const apply = document.getElementById("btnApplyImageTerrain");
+  const ready = scope === "full" || region?.mode === scope;
+  if (status) {
+    status.textContent = scope === "full"
+      ? "整张地图"
+      : ready
+        ? `${imageTerrainRegionLabel(scope)}选区已就绪`
+        : "尚未划定选区";
+  }
+  if (pick) {
+    pick.textContent = state.imageTerrainRegionTool ? "正在划定…" : ready && scope !== "full" ? "重新划定" : "在地图上划定";
+    pick.disabled = !imageTerrainDraft;
+  }
+  if (clear) clear.hidden = scope === "full" || !region;
+  if (apply) {
+    apply.textContent = scope === "full" ? "铺满当前地图" : ready ? "生成到选区" : "请先划定选区";
+    apply.disabled = !!imageTerrainDraft?.cropping || !ready || !imageTerrainDraft?.sampled?.cells?.length;
+  }
+  const replaceLabel = document.querySelector("#imageTerrainReplace + span");
+  if (replaceLabel) replaceLabel.textContent = scope === "full" ? "生成前清空现有地形笔触" : "生成前清空选区内的地形笔触";
+  const toolbar = document.getElementById("imageRegionToolbar");
+  const polygon = state.imageTerrainRegionTool === "polygon";
+  const count = state.imageTerrainRegionDraft?.points?.length || 0;
+  const rect = state.imageTerrainRegionDraft?.rect;
+  if (toolbar) toolbar.hidden = !state.imageTerrainRegionTool;
+  document.getElementById("imageRegionHelp").textContent = polygon
+    ? `多边形选区 · 已选 ${count} 点`
+    : rect ? `${Math.round(rect.w)} × ${Math.round(rect.h)} px` : "尚未划定选区";
+  document.getElementById("imageRegionShape").value = polygon ? "polygon" : imageTerrainDraft?.regionShape || "image";
+  document.getElementById("imageRegionDimensions").hidden = polygon;
+  for (const [axis, dimension] of [["Width", "w"], ["Height", "h"]]) {
+    const input = document.getElementById(`imageRegion${axis}`);
+    input.max = worldExtent();
+    if (forceDimensions || document.activeElement !== input) input.value = rect ? Math.round(rect[dimension]) : "";
+  }
+  document.getElementById("imageRegionGhost").disabled = document.getElementById("imageTerrainProjection").value === "iso";
+  const finish = document.getElementById("btnImageRegionFinish");
+  finish.hidden = false;
+  finish.disabled = polygon ? count < 3 : !rect || rect.w < 16 || rect.h < 16;
+  const undoPoint = document.getElementById("btnImageRegionUndo");
+  undoPoint.hidden = !polygon;
+  undoPoint.disabled = !count;
+  view.style.cursor = state.imageTerrainRegionTool ? "crosshair" : "";
+}
+
+function imageTerrainPointerPoint(e) {
+  const { x, y } = localXY(e);
+  const world = screenToWorld(x, y);
+  const n = worldExtent();
+  return {
+    x: Math.max(0, Math.min(n, world.x)),
+    y: Math.max(0, Math.min(n, world.y)),
+  };
+}
+
+function imageTerrainSelectionPoints() {
+  const tool = state.imageTerrainRegionTool;
+  if (tool === "polygon") return state.imageTerrainRegionDraft?.points || [];
+  if (tool === "rectangle") {
+    const rect = state.imageTerrainRegionDraft?.rect;
+    return rect ? IMAGE_TERRAIN_CORE.selectionCorners(rect) : [];
+  }
+  const region = state.imageTerrainRegion;
+  if (region?.mode === "rectangle" && region.points?.length === 2) {
+    const [a, b] = region.points;
+    return [a, { x: b.x, y: a.y }, b, { x: a.x, y: b.y }];
+  }
+  return region?.points || [];
+}
+
+function imageTerrainRegionRatio() {
+  const mode = imageTerrainDraft?.regionShape || "image";
+  if (mode === "square") return 1;
+  if (mode === "free") return 0;
+  const draft = imageTerrainDraft;
+  if (draft?.source) {
+    const frame = imageTerrainSampleFrame();
+    return frame.width / frame.height;
+  }
+  return draft.image.naturalWidth / draft.image.naturalHeight;
+}
+
+function changeImageTerrainRegionShape() {
+  if (!imageTerrainDraft) return;
+  const shape = document.getElementById("imageRegionShape").value;
+  const points = imageTerrainSelectionPoints();
+  const bounds = points.length ? imageTerrainRegionNativeBounds(points.map(p => ({ cx: p.x, cy: p.y }))) : null;
+  const rect = bounds ? { x: bounds.minCx, y: bounds.minCy, w: bounds.maxCx - bounds.minCx, h: bounds.maxCy - bounds.minCy } : null;
+  imageTerrainDraft.regionShape = shape;
+  state.imageTerrainRegionTool = shape === "polygon" ? "polygon" : "rectangle";
+  document.getElementById("imageTerrainScope").value = state.imageTerrainRegionTool;
+  state.imageTerrainRegionDraft = shape === "polygon" ? { points: rect ? IMAGE_TERRAIN_CORE.selectionCorners(rect) : [] } : { rect };
+  state.imageTerrainRegionDrag = null;
+  if (rect && shape !== "polygon") {
+    const ratio = imageTerrainRegionRatio(), w = ratio ? Math.min(rect.w, rect.h * ratio) : rect.w;
+    state.imageTerrainRegionDraft.rect = IMAGE_TERRAIN_CORE.fitSelection(rect, w, ratio ? w / ratio : rect.h, { w: worldExtent(), h: worldExtent() });
+  }
+  syncImageTerrainRegionUi(true); draw();
+}
+
+function resizeImageTerrainRegion(axis) {
+  if (state.imageTerrainRegionTool !== "rectangle") return;
+  const value = Number(document.getElementById(`imageRegion${axis}`).value);
+  if (!Number.isFinite(value) || value < 16) { syncImageTerrainRegionUi(); return; }
+  const n = worldExtent(), rect = state.imageTerrainRegionDraft.rect || { x: n / 3, y: n / 3, w: n / 3, h: n / 3 };
+  const ratio = imageTerrainRegionRatio();
+  const w = axis === "Width" ? value : ratio ? value * ratio : rect.w;
+  const h = axis === "Height" ? value : ratio ? value / ratio : rect.h;
+  state.imageTerrainRegionDraft.rect = IMAGE_TERRAIN_CORE.fitSelection(rect, w, h, { w: n, h: n });
+  document.activeElement?.blur();
+  syncImageTerrainRegionUi(true); draw();
+}
+
+function beginImageTerrainRegionDrag(event) {
+  if (event.pointerId != null) {
+    try { view.setPointerCapture(event.pointerId); } catch { /* Synthetic pointer events may not be active. */ }
+  }
+  const point = imageTerrainPointerPoint(event), draft = state.imageTerrainRegionDraft;
+  const tolerance = (event.pointerType === "touch" ? 20 : 12) / state.cam.k;
+  if (state.imageTerrainRegionTool === "polygon") {
+    const points = draft.points;
+    const index = points.findIndex(p => Math.hypot(p.x - point.x, p.y - point.y) <= tolerance);
+    if (index >= 0) state.imageTerrainRegionDrag = { index, points: points.map(p => ({ ...p })) };
+    else points.push(point);
+  } else {
+    const rect = draft.rect;
+    const handle = IMAGE_TERRAIN_CORE.hitSelection(rect, point, tolerance);
+    state.imageTerrainRegionDrag = { start: point, rect, handle,
+      anchor: typeof handle === "number" && handle >= 0 ? IMAGE_TERRAIN_CORE.selectionCorners(rect)[(handle + 2) % 4] : point };
+    if (handle === -1) draft.rect = { x: point.x, y: point.y, w: 0, h: 0 };
+  }
+  state.dragging = !!state.imageTerrainRegionDrag;
+  syncImageTerrainRegionUi(); draw();
+}
+
+function cancelImageTerrainRegionDrag() {
+  const drag = state.imageTerrainRegionDrag;
+  if (drag && state.imageTerrainRegionDraft) {
+    if (drag.points) state.imageTerrainRegionDraft.points = drag.points;
+    else state.imageTerrainRegionDraft.rect = drag.rect;
+  }
+  state.imageTerrainRegionDrag = null;
+  state.dragging = false;
+  syncImageTerrainRegionUi();
+}
+
+function moveImageTerrainRegionDrag(event) {
+  const point = imageTerrainPointerPoint(event), drag = state.imageTerrainRegionDrag;
+  const draft = state.imageTerrainRegionDraft;
+  if (drag) {
+    if (state.imageTerrainRegionTool === "polygon") draft.points[drag.index] = point;
+    else {
+      const bounds = { w: worldExtent(), h: worldExtent() };
+      draft.rect = drag.handle === "move"
+        ? IMAGE_TERRAIN_CORE.moveSelection(drag.rect, point.x - drag.start.x, point.y - drag.start.y, bounds)
+        : IMAGE_TERRAIN_CORE.selectionFromDrag(drag.anchor, point, bounds, event.shiftKey ? 1 : imageTerrainRegionRatio());
+    }
+    syncImageTerrainRegionUi(); draw();
+  } else if (state.imageTerrainRegionTool === "rectangle") {
+    const hit = IMAGE_TERRAIN_CORE.hitSelection(draft?.rect, point, 12 / state.cam.k);
+    view.style.cursor = hit === "move" ? "move" : hit === -1 ? "crosshair" : hit % 2 ? "nesw-resize" : "nwse-resize";
+  }
+}
+
+function buildImageTerrainRegionGhost() {
+  const draft = imageTerrainDraft, canvas = document.createElement("canvas");
+  const frame = imageTerrainSampleFrame();
+  const scale = Math.min(1, 512 / Math.max(frame.width, frame.height));
+  canvas.width = Math.max(1, Math.round(frame.width * scale));
+  canvas.height = Math.max(1, Math.round(frame.height * scale));
+  const g = canvas.getContext("2d");
+  g.imageSmoothingEnabled = false;
+  if (!draft.grid) {
+    g.drawImage(draft.image, 0, 0, canvas.width, canvas.height);
+  }
+  if (draft.grid && draft.gridSamples) {
+    const grid = draft.grid, sx = canvas.width / frame.width, sy = canvas.height / frame.height;
+    draft.gridSamples.forEach((cell, i) => {
+      const x = grid.x0 + i % grid.cols * grid.stepX - frame.x;
+      const y = grid.y0 + Math.floor(i / grid.cols) * grid.stepY - frame.y;
+      const left = Math.round(x * sx), top = Math.round(y * sy);
+      const w = Math.round((x + grid.stepX) * sx) - left, h = Math.round((y + grid.stepY) * sy) - top;
+      if (cell.rgb) { g.fillStyle = `rgb(${cell.rgb.join(",")})`; g.fillRect(left, top, w, h); }
+      else g.clearRect(left, top, w, h);
+    });
+  }
+  draft.regionGhost = canvas;
+}
+
+function finishImageTerrainRegion() {
+  const tool = state.imageTerrainRegionTool;
+  const points = imageTerrainSelectionPoints();
+  if (!tool || points.length < 3) return;
+  const area = points.reduce((sum, point, i) => {
+    const next = points[(i + 1) % points.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0);
+  const region = { mode: tool, points: tool === "rectangle" ? [points[0], points[2]] : points.slice() };
+  if (Math.abs(area) < 1 || !listImageTerrainCells().some(cell => imageTerrainRegionContains(region, cell.u, cell.v))) {
+    document.getElementById("imageRegionHelp").textContent = "选区太小或没有包含地形格，请重新划定。";
+    state.imageTerrainRegionDrag = null;
+    draw();
+    return;
+  }
+  state.imageTerrainRegion = region;
+  state.dragging = false;
+  state.imageTerrainRegionTool = null;
+  state.imageTerrainRegionDraft = null;
+  state.imageTerrainRegionDrag = null;
+  if (imageTerrainDraft) {
+    imageTerrainDraft.regionSession = null;
+    renderImageTerrainMapping();
+    showDlg("dlgImageTerrain", true);
+    document.querySelector("#dlgImageTerrain .modal-card")?.scrollTo(0, 0);
+  }
+  syncImageTerrainRegionUi();
+  draw();
+}
+
+function cancelImageTerrainRegion() {
+  state.dragging = false;
+  state.panning = false;
+  state.imageTerrainRegionTool = null;
+  state.imageTerrainRegionDraft = null;
+  state.imageTerrainRegionDrag = null;
+  const previous = imageTerrainDraft?.regionSession;
+  if (previous) {
+    document.getElementById("imageTerrainScope").value = previous.scope;
+    imageTerrainDraft.regionShape = previous.shape;
+    imageTerrainDraft.regionSession = null;
+  }
+  syncImageTerrainRegionUi();
+  if (imageTerrainDraft) showDlg("dlgImageTerrain", true);
+  draw();
+}
+
+function beginImageTerrainRegionSelection() {
+  if (!imageTerrainDraft) return;
+  let scope = imageTerrainScopeValue();
+  imageTerrainDraft.regionSession = { scope, shape: imageTerrainDraft.regionShape };
+  if (scope === "full") {
+    scope = "rectangle";
+    document.getElementById("imageTerrainScope").value = scope;
+  }
+  state.imageTerrainRegionTool = scope;
+  state.imageTerrainRegionDrag = null;
+  const region = state.imageTerrainRegion?.mode === scope ? state.imageTerrainRegion : null;
+  state.imageTerrainRegionDraft = scope === "polygon" ? { points: region?.points.map(p => ({ ...p })) || [] }
+    : { rect: region ? IMAGE_TERRAIN_CORE.selectionFromDrag(region.points[0], region.points[1], { w: worldExtent(), h: worldExtent() }) : null };
+  if (scope !== "polygon" && imageTerrainDraft.regionShape === "polygon") imageTerrainDraft.regionShape = "image";
+  buildImageTerrainRegionGhost();
+  state.dragging = false;
+  state.panning = false;
+  state.shapeDrag = null;
+  showDlg("dlgImageTerrain", false);
+  syncImageTerrainRegionUi();
+  draw();
+}
+
+function clearImageTerrainRegion() {
+  state.imageTerrainRegion = null;
+  state.imageTerrainRegionTool = null;
+  state.imageTerrainRegionDraft = null;
+  state.imageTerrainRegionDrag = null;
+  syncImageTerrainRegionUi();
+  if (imageTerrainDraft) renderImageTerrainMapping();
+  draw();
+}
+
+function drawImageTerrainRegionOverlay() {
+  if (!state.imageTerrainRegionTool) return;
+  const points = imageTerrainSelectionPoints();
+  if (!points.length) return;
+  ctx.save();
+  clipMap();
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const screen = worldToScreen(point.x, point.y);
+    if (index) ctx.lineTo(screen.x, screen.y);
+    else ctx.moveTo(screen.x, screen.y);
+  });
+  if (points.length > 2) ctx.closePath();
+  if (points.length > 2 && document.getElementById("imageRegionGhost").checked && !document.getElementById("imageRegionGhost").disabled) {
+    const ghost = imageTerrainDraft?.regionGhost;
+    if (ghost) {
+      ctx.save(); ctx.clip(); ctx.globalAlpha = 0.65; ctx.imageSmoothingEnabled = false;
+      const bounds = imageTerrainRegionNativeBounds(points.map(p => ({ cx: p.x, cy: p.y })));
+      const w = bounds.maxCx - bounds.minCx, h = bounds.maxCy - bounds.minCy;
+      const fit = imageTerrainFitRect(ghost.width, ghost.height, document.getElementById("imageTerrainFit").value, w / Math.max(1, h));
+      const pos = worldToScreen(bounds.minCx + fit.x * w, bounds.minCy + fit.y * h);
+      ctx.drawImage(ghost, pos.x, pos.y, fit.w * w * state.cam.k, fit.h * h * state.cam.k);
+      ctx.restore();
+    }
+  }
+  ctx.fillStyle = "rgba(52, 132, 94, 0.16)";
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.strokeStyle = "#247452";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([7, 5]);
+  ctx.fill();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (state.imageTerrainRegionTool === "rectangle") {
+    const rect = state.imageTerrainRegionDraft?.rect;
+    const pos = worldToScreen(rect.x, rect.y);
+    drawImageSelectionGuides(ctx, { x: pos.x, y: pos.y, w: rect.w * state.cam.k, h: rect.h * state.cam.k });
+    ctx.restore();
+    return;
+  }
+  ctx.fillStyle = "#ffffff";
+  points.forEach((point) => {
+    const screen = worldToScreen(point.x, point.y);
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+  ctx.restore();
 }
 
 function imageTerrainEditColorValue() {
@@ -9203,11 +9962,11 @@ function imageTerrainPreviewCellIndex(event) {
   const preview = document.getElementById("imageTerrainPreview");
   const sampled = imageTerrainDraft?.sampled;
   if (!preview || !sampled?.nativeIndex) return -1;
-  const rect = preview.getBoundingClientRect();
-  if (!rect.width || !rect.height) return -1;
-  const mapN = Math.max(1, worldExtent());
-  const nativeX = ((event.clientX - rect.left) / rect.width) * mapN;
-  const nativeY = ((event.clientY - rect.top) / rect.height) * mapN;
+  const { x: nx, y: ny } = imageTerrainPreviewPoint(event);
+  if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return -1;
+  const bounds = sampled.nativeBounds;
+  const nativeX = bounds.minCx + nx * (bounds.maxCx - bounds.minCx);
+  const nativeY = bounds.minCy + ny * (bounds.maxCy - bounds.minCy);
   const row = Math.round(nativeY / 16);
   const x0 = row & 1 ? 32 : 0;
   const col = Math.round((nativeX - x0) / 64);
@@ -9256,7 +10015,7 @@ function editImageTerrainPreviewAt(index, touched) {
     }
   }
   draft.manualChanges = Number(draft.manualChanges || 0) + 1;
-  paintImageTerrainPreviewFromMapping();
+  queueImageTerrainPreview();
 }
 
 function wireImageTerrainPreviewEditor() {
@@ -9265,12 +10024,30 @@ function wireImageTerrainPreviewEditor() {
   preview.dataset.editorWired = "1";
   const finish = (event) => {
     if (!imageTerrainDraft || imageTerrainDraft.editPointer !== event.pointerId) return;
+    if (imageTerrainDraft.cropDrag && event.type === "pointercancel") {
+      imageTerrainDraft.cropPending = imageTerrainDraft.cropDrag.previous;
+      paintImageTerrainOriginal();
+      document.getElementById("btnImageTerrainCropApply").disabled = !imageTerrainDraft.cropPending;
+    }
     imageTerrainDraft.editPointer = null;
+    imageTerrainDraft.cropDrag = null;
     imageTerrainDraft.editTouched = null;
     if (preview.hasPointerCapture?.(event.pointerId)) preview.releasePointerCapture(event.pointerId);
     syncImageTerrainEditor();
   };
   preview.addEventListener("pointerdown", (event) => {
+    if (imageTerrainDraft?.cropping) return;
+    if (imageTerrainDraft?.previewMode === "original") {
+      const point = imageTerrainPreviewPoint(event);
+      if (point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) return;
+      event.preventDefault();
+      const rect = imageTerrainCropRect(), handle = imageTerrainCropHit(event), start = imageTerrainCropPointer(event);
+      imageTerrainDraft.cropDrag = { rect, handle, start, previous: imageTerrainDraft.cropPending,
+        anchor: typeof handle === "number" && handle >= 0 ? IMAGE_TERRAIN_CORE.selectionCorners(rect)[(handle + 2) % 4] : start };
+      imageTerrainDraft.editPointer = event.pointerId;
+      preview.setPointerCapture?.(event.pointerId);
+      return;
+    }
     const index = imageTerrainPreviewCellIndex(event);
     if (index < 0 || !imageTerrainDraft) return;
     event.preventDefault();
@@ -9283,7 +10060,11 @@ function wireImageTerrainPreviewEditor() {
     if (tool === "pick") finish(event);
   });
   preview.addEventListener("pointermove", (event) => {
+    if (imageTerrainDraft?.previewMode === "original" && imageTerrainDraft.editPointer == null) {
+      moveImageTerrainCrop(event); return;
+    }
     if (!imageTerrainDraft || imageTerrainDraft.editPointer !== event.pointerId) return;
+    if (imageTerrainDraft.previewMode === "original") { moveImageTerrainCrop(event); return; }
     const index = imageTerrainPreviewCellIndex(event);
     if (index >= 0) editImageTerrainPreviewAt(index, imageTerrainDraft.editTouched || new Set());
   });
@@ -9309,21 +10090,55 @@ function imageTerrainMappedRgb(paletteIndex, cellIndex = -1) {
   return palette[paletteIndex]?.rgb || null;
 }
 
+function queueImageTerrainPreview() {
+  if (!imageTerrainDraft || imageTerrainPreviewFrame || document.getElementById("dlgImageTerrain")?.hidden) return;
+  imageTerrainPreviewFrame = requestAnimationFrame(() => {
+    imageTerrainPreviewFrame = 0;
+    if (!document.getElementById("dlgImageTerrain")?.hidden) paintImageTerrainPreviewFromMapping();
+  });
+}
+
 function paintImageTerrainPreviewFromMapping() {
+  if (imageTerrainPreviewFrame) cancelAnimationFrame(imageTerrainPreviewFrame);
+  imageTerrainPreviewFrame = 0;
+  if (imageTerrainDraft?.previewMode === "original") { paintImageTerrainOriginal(); return; }
   const preview = document.getElementById("imageTerrainPreview");
   const sampled = imageTerrainDraft?.sampled;
   const palette = imageTerrainDraft?.palette;
   if (!preview || !sampled?.cells || !palette) return;
-  const size = 288;
-  preview.width = size;
-  preview.height = size;
+  const size = 440;
+  const bounds = sampled.nativeBounds;
+  const width = Math.max(1, bounds.maxCx - bounds.minCx);
+  const height = Math.max(1, bounds.maxCy - bounds.minCy);
+  const scale = size / Math.max(width, height);
+  preview.width = Math.max(1, Math.round(width * scale));
+  preview.height = Math.max(1, Math.round(height * scale));
+  if (imageTerrainDraft.previewMode === "terrain") {
+    const draft = imageTerrainDraft;
+    const choices = [...document.querySelectorAll("#imageColorMap select")].map(select => select.value);
+    // Include edits and scene dependencies so cached pixels cannot outlive their terrain.
+    const key = [state.terrainRev, state.mapflag, state.mapSize, state.fillDefault, state.terrainLight, state.waterFrame,
+      constrainedTerrain(),
+      imageTerrainScopeValue(), document.getElementById("imageTerrainReplace")?.checked,
+      choices.join(","), sampled.indices.join(","), sampled.brushOverrides.join(",")].join("|");
+    const cached = draft.previewCache;
+    if (cached?.sampled === sampled && cached.key === key) {
+      preview.getContext("2d").drawImage(cached.canvas, 0, 0);
+    } else {
+      const canvas = document.createElement("canvas");
+      canvas.width = preview.width; canvas.height = preview.height;
+      paintImageTerrainRealPreview(canvas, bounds, scale);
+      preview.getContext("2d").drawImage(canvas, 0, 0);
+      draft.previewCache = { key, sampled, canvas };
+    }
+    return;
+  }
   const g = preview.getContext("2d");
-  g.clearRect(0, 0, size, size);
+  g.clearRect(0, 0, preview.width, preview.height);
   g.fillStyle = "#edf3ea";
-  g.fillRect(0, 0, size, size);
-  const mapN = Math.max(1, worldExtent());
-  const hw = Math.max(1.2, (TILE_W / 2 / mapN) * size);
-  const hh = Math.max(0.7, (TILE_H / 2 / mapN) * size);
+  g.fillRect(0, 0, preview.width, preview.height);
+  const hw = Math.max(1.2, (TILE_W / 2 / width) * preview.width);
+  const hh = Math.max(0.7, (TILE_H / 2 / height) * preview.height);
   sampled.cells.forEach((cell, index) => {
     const paletteIndex = sampled.indices[index];
     if (paletteIndex < 0 || !palette[paletteIndex]) return;
@@ -9333,8 +10148,8 @@ function paintImageTerrainPreviewFromMapping() {
       ? palette[paletteIndex].rgb
       : imageTerrainMappedRgb(paletteIndex, index);
     if (!rgb) return;
-    const x = (cell.cx / mapN) * size;
-    const y = (cell.cy / mapN) * size;
+    const x = ((cell.cx - bounds.minCx) / width) * preview.width;
+    const y = ((cell.cy - bounds.minCy) / height) * preview.height;
     g.fillStyle = `rgb(${rgb.join(",")})`;
     g.beginPath();
     g.moveTo(x, y - hh);
@@ -9360,54 +10175,70 @@ function nearestImagePaletteIndex(r, g, b, palette) {
   return best;
 }
 
-async function openImageTerrain(file) {
+async function loadImageTerrainImage(file) {
   const url = URL.createObjectURL(file);
   try {
-    const image = await new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       const next = new Image();
       next.onload = () => resolve(next);
       next.onerror = () => reject(new Error("图片读取失败"));
       next.src = url;
     });
-    imageTerrainDraft = {
-      image,
-      name: file.name,
-      sampled: null,
-      palette: [],
-      backgroundRgb: null,
-      source: null,
-      previewMode: "source",
-    };
-    const fit = document.getElementById("imageTerrainFit");
-    if (fit) fit.value = "stretch";
-    const projection = document.getElementById("imageTerrainProjection");
-    if (projection) projection.value = "front";
-    const colors = document.getElementById("imageTerrainColors");
-    if (colors) colors.value = "10";
-    const algorithm = document.getElementById("imageTerrainAlgorithm");
-    if (algorithm) algorithm.value = "enhanced";
-    const detail = document.getElementById("imageTerrainDetail");
-    if (detail) detail.value = "split";
-    const cleanup = document.getElementById("imageTerrainCleanup");
-    if (cleanup) cleanup.value = "light";
-    const replace = document.getElementById("imageTerrainReplace");
-    if (replace) replace.checked = true;
-    const skipBg = document.getElementById("imageTerrainSkipBg");
-    if (skipBg) skipBg.checked = false;
-    const editSize = document.getElementById("imageTerrainEditSize");
-    if (editSize) editSize.value = "1";
-    imageTerrainDraft.editTool = "paint";
-    renderImageTerrainMapping();
-    setImageTerrainPreviewMode("source");
-    showDlg("dlgImageTerrain", true);
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
-function applyImageTerrain() {
+function createImageTerrainDraft(image, name, originalImage = image) {
+  return {
+    image, originalImage, name,
+    sampled: null, palette: [], backgroundRgb: null, source: null,
+    previewMode: "terrain", editTool: "paint", regionShape: "image",
+  };
+}
+
+async function openImageTerrain(file) {
+  const image = await loadImageTerrainImage(file);
+  imageTerrainDraft = createImageTerrainDraft(image, file.name);
+  state.imageTerrainRegion = null;
+  state.imageTerrainRegionTool = null;
+  state.imageTerrainRegionDraft = null;
+  state.imageTerrainRegionDrag = null;
+  const scope = document.getElementById("imageTerrainScope");
+  if (scope) scope.value = "full";
+  const fit = document.getElementById("imageTerrainFit");
+  if (fit) fit.value = "contain";
+  const projection = document.getElementById("imageTerrainProjection");
+  if (projection) projection.value = "front";
+  const colors = document.getElementById("imageTerrainColors");
+  if (colors) colors.value = "10";
+  const algorithm = document.getElementById("imageTerrainAlgorithm");
+  if (algorithm) algorithm.value = "enhanced";
+  const detail = document.getElementById("imageTerrainDetail");
+  if (detail) detail.value = "split";
+  const cleanup = document.getElementById("imageTerrainCleanup");
+  if (cleanup) cleanup.value = "light";
+  const replace = document.getElementById("imageTerrainReplace");
+  if (replace) replace.checked = true;
+  const skipBg = document.getElementById("imageTerrainSkipBg");
+  if (skipBg) skipBg.checked = false;
+  const editSize = document.getElementById("imageTerrainEditSize");
+  if (editSize) editSize.value = "1";
+  document.getElementById("imageTerrainCropPreset").value = "custom";
+  document.getElementById("imageTerrainCropAspect").value = "free";
+  document.getElementById("imageTerrainMappingMode").value = "distinct";
+  document.getElementById("btnImageTerrainCropApply").disabled = true;
+  await waitTerrainThumbImages(pixelTerrainBrushes().map(brush => terrainTexturePath(tileKindOfBrush(brush))).filter(Boolean));
+  syncImageTerrainRegionUi();
+  setImageTerrainPreviewMode("terrain", false);
+  renderImageTerrainMapping();
+  showDlg("dlgImageTerrain", true);
+  document.querySelector("#dlgImageTerrain .modal-card")?.scrollTo(0, 0);
+}
+
+function imageTerrainWriteCells() {
   const draft = imageTerrainDraft;
-  if (!draft?.sampled?.cells || !draft.palette.length) return;
+  if (!draft?.sampled?.cells || !draft.palette.length) return [];
   const brushes = pixelTerrainBrushes();
   const chosen = new Map([...document.querySelectorAll("#imageColorMap select")].map((select) => {
     const value = Number(select.value);
@@ -9421,38 +10252,91 @@ function applyImageTerrain() {
     const direct = draft.sampled.brushOverrides?.[index];
     const brush = direct >= 0 ? brushes[direct] : chosen.get(paletteIndex);
     if (!brush) return;
-    cells.push({ u: cell.u, v: cell.v, brush });
+    cells.push({ u: cell.u, v: cell.v, brush, paletteIndex });
   });
-  if (!cells.length) {
-    const status = document.getElementById("imageTerrainStatus");
-    if (status) status.textContent = "没有可写入的格子。检查颜色映射是否全是「跳过」，或关掉跳过背景。";
-    return;
+  // Native stamps overlap adjacent corners. Lay large connected areas first,
+  // then smaller features so eyes, outlines and narrow accents survive replay.
+  const positions = new Map(cells.map((cell, index) => [cellKey(cell.u, cell.v), index]));
+  const seen = new Set();
+  for (let i = 0; i < cells.length; i++) {
+    if (seen.has(i)) continue;
+    const group = [i];
+    seen.add(i);
+    for (let q = 0; q < group.length; q++) {
+      const cell = cells[group[q]];
+      for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const next = positions.get(cellKey(cell.u + du, cell.v + dv));
+        if (next == null || seen.has(next) || cells[next].brush !== cell.brush) continue;
+        seen.add(next); group.push(next);
+      }
+    }
+    for (const index of group) cells[index].area = group.length;
   }
-  pushHist();
-  if (document.getElementById("imageTerrainReplace")?.checked) {
-    state.stamps = [];
-    state.grassKeep = new Set();
-  }
-  const keys = new Set(cells.map((cell) => cellKey(cell.u, cell.v)));
-  state.stamps = state.stamps.filter((stamp) => {
+  cells.sort((a, b) => b.area - a.area);
+  return cells;
+}
+
+function imageTerrainPlannedScene(cells) {
+  const draft = imageTerrainDraft;
+  const scope = imageTerrainScopeValue();
+  const replace = document.getElementById("imageTerrainReplace")?.checked;
+  const keys = new Set((replace ? draft.sampled.cells : cells).map(cell => cellKey(cell.u, cell.v)));
+  const clearAll = replace && scope === "full";
+  const stamps = clearAll ? [] : state.stamps.filter(stamp => {
     const logical = nativePointToLogical(stamp.x, stamp.y);
     return !keys.has(cellKey(logical.u, logical.v));
   });
-  const baseCells = [];
-  const paintedCells = [];
+  const grassKeep = new Set(clearAll ? [] : [...state.grassKeep].filter(key => !keys.has(key)));
   cells.forEach((cell) => {
     if (brushPaintsBase(cell.brush)) {
-      baseCells.push(cell);
+      grassKeep.add(cellKey(cell.u, cell.v));
       return;
     }
     const pos = logicalToNative(cell.u, cell.v);
-    state.stamps.push({ kind: paperKindOfBrush(cell.brush), x: pos.cx, y: pos.cy });
-    paintedCells.push(cell);
+    stamps.push({ kind: paperKindOfBrush(cell.brush), x: pos.cx, y: pos.cy });
   });
-  markGrassKeep(baseCells, true);
-  markGrassKeep(paintedCells, false);
+  return { stamps, grassKeep };
+}
+
+function paintImageTerrainRealPreview(preview, bounds, scale) {
+  const scene = imageTerrainPlannedScene(imageTerrainWriteCells());
+  const fields = ["stamps", "grassKeep", "cornerTiles", "stampAt", "stampByCell", "drawTiles",
+    "paintPreview", "strokeNeedsRebuild", "terrainRev", "hasWaterTiles", "synthCache"];
+  const previous = Object.fromEntries(fields.map(key => [key, state[key]]));
+  try {
+    state.stamps = scene.stamps;
+    state.grassKeep = scene.grassKeep;
+    state.synthCache = new Map();
+    rebuildStampIndex();
+    withDrawTarget(preview, { x: -bounds.minCx * scale, y: -bounds.minCy * scale, k: scale }, () => {
+      ctx.fillStyle = planeBackdrop();
+      ctx.fillRect(0, 0, preview.width, preview.height);
+      ctx.save(); clipMap(); drawTerrainCells(); ctx.restore();
+    });
+  } finally {
+    for (const key of fields) state[key] = previous[key];
+  }
+}
+
+function applyImageTerrain() {
+  if (imageTerrainDraft?.cropping) return;
+  const scope = imageTerrainScopeValue();
+  if (scope !== "full" && state.imageTerrainRegion?.mode !== scope) return;
+  const cells = imageTerrainWriteCells();
+  if (!cells.length) {
+    document.getElementById("imageTerrainStatus").textContent = "没有可写入的格子。检查颜色映射或取图范围。";
+    return;
+  }
+  const scene = imageTerrainPlannedScene(cells);
+  pushHist();
+  state.stamps = scene.stamps;
+  state.grassKeep = scene.grassKeep;
   rebuildStampIndex();
   markDirty();
+  state.imageTerrainRegion = null;
+  state.imageTerrainRegionTool = null;
+  state.imageTerrainRegionDraft = null;
+  state.imageTerrainRegionDrag = null;
   showDlg("dlgImageTerrain", false);
   draw();
 }

@@ -14,7 +14,7 @@
     const px = clamp(Math.round(x), 0, source.width - 1);
     const py = clamp(Math.round(y), 0, source.height - 1);
     const offset = (py * source.width + px) * 4;
-    if (source.pixels[offset + 3] < alphaThreshold) return null;
+    if (!source.pixels[offset + 3] || source.pixels[offset + 3] < alphaThreshold) return null;
     return [source.pixels[offset], source.pixels[offset + 1], source.pixels[offset + 2]];
   }
 
@@ -187,6 +187,49 @@
     return best;
   }
 
+  function mapPaletteToMaterials(palette, materials, mode = "distinct") {
+    const source = palette.map(entry => entry.lab || rgbToLab(...entry.rgb));
+    const target = materials.map(entry => rgbToLab(...entry.rgb));
+    const assigned = new Array(palette.length).fill(-1);
+    // Anchor large regions first. Similar source shades may share a material;
+    // clearly different regions pay a penalty when their output contrast vanishes.
+    const order = palette.map((_, i) => i).sort((a, b) => palette[b].count - palette[a].count);
+    for (const i of order) {
+      if (!palette[i].count) continue;
+      let best = Infinity;
+      for (let m = 0; m < target.length; m++) {
+        let cost = labDistanceWeighted(source[i], target[m]);
+        if (mode === "distinct") {
+          for (let j = 0; j < assigned.length; j++) {
+            if (assigned[j] < 0) continue;
+            const contrast = Math.sqrt(labDistanceWeighted(source[i], source[j]));
+            if (contrast < 14) continue;
+            const output = Math.sqrt(labDistanceWeighted(target[m], target[assigned[j]]));
+            const desired = Math.min(30, contrast * 0.75);
+            cost += 6 * Math.pow(Math.max(0, desired - output), 2);
+          }
+        }
+        if (cost < best) { best = cost; assigned[i] = m; }
+      }
+    }
+    return assigned;
+  }
+
+  function cropSource(source, rect) {
+    if (!rect) return source;
+    const x = clamp(Math.floor(rect.x * source.width), 0, source.width - 1);
+    const y = clamp(Math.floor(rect.y * source.height), 0, source.height - 1);
+    const right = clamp(Math.ceil((rect.x + rect.w) * source.width), x + 1, source.width);
+    const bottom = clamp(Math.ceil((rect.y + rect.h) * source.height), y + 1, source.height);
+    const width = right - x, height = bottom - y;
+    const pixels = new Uint8ClampedArray(width * height * 4);
+    for (let row = 0; row < height; row++) {
+      const start = ((y + row) * source.width + x) * 4;
+      pixels.set(source.pixels.subarray(start, start + width * 4), row * width * 4);
+    }
+    return { width, height, pixels };
+  }
+
   function rgbDistanceSq(a, b) {
     if (!a || !b) return Infinity;
     const dr = a[0] - b[0];
@@ -195,181 +238,130 @@
     return dr * dr + dg * dg + db * db;
   }
 
-  function luminanceAt(source, x, y) {
-    const offset = (y * source.width + x) * 4;
-    const r = source.pixels[offset];
-    const g = source.pixels[offset + 1];
-    const b = source.pixels[offset + 2];
-    return r * 0.2126 + g * 0.7152 + b * 0.0722;
+  function luminance(rgb) {
+    return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
   }
 
   function lineProjection(source, axis) {
     const length = axis === "x" ? source.width : source.height;
     const cross = axis === "x" ? source.height : source.width;
-    const stride = Math.max(1, Math.floor(cross / 420));
+    const stride = Math.max(1, Math.floor(cross / 600));
     const result = new Array(length).fill(0);
-    for (let position = 2; position < length - 2; position++) {
+    const offset = (p, q) => (axis === "x" ? q * source.width + p : p * source.width + q) * 4;
+    for (let position = 1; position < length - 1; position++) {
+      const radius = Math.min(2, position, length - 1 - position);
       let sum = 0;
       let count = 0;
+      let support = 0;
       for (let other = 0; other < cross; other += stride) {
-        const center = axis === "x"
-          ? luminanceAt(source, position, other)
-          : luminanceAt(source, other, position);
-        const before = axis === "x"
-          ? luminanceAt(source, position - 2, other)
-          : luminanceAt(source, other, position - 2);
-        const after = axis === "x"
-          ? luminanceAt(source, position + 2, other)
-          : luminanceAt(source, other, position + 2);
-        sum += Math.max(0, (before + after) / 2 - center);
+        const at = offset(position, other);
+        const before = offset(position - radius, other);
+        const after = offset(position + radius, other);
+        // A thin line contrasts with both sides; a shape edge contrasts with only one.
+        let contrast = 0;
+        for (let channel = 0; channel < 3; channel++) {
+          const value = i => source.pixels[i + 3] < 24 ? 255 : source.pixels[i + channel];
+          const left = value(before) - value(at), right = value(after) - value(at);
+          contrast += (Math.max(0, Math.min(left, right) - 6, Math.min(-left, -right) - 6)
+            + Math.max(0, Math.abs(left - right) - 30) * 0.12) / 3;
+        }
+        sum += contrast;
+        if (contrast > 3) support++;
         count += 1;
       }
-      result[position] = count ? sum / count : 0;
+      result[position] = count ? sum / count * (support / count) ** 2 : 0;
     }
     return result;
   }
 
-  function percentile(values, ratio) {
-    if (!values.length) return 0;
-    const sorted = values.slice().sort((a, b) => a - b);
-    return sorted[clamp(Math.round((sorted.length - 1) * ratio), 0, sorted.length - 1)];
-  }
-
-  function interpolated(values, position) {
-    const left = clamp(Math.floor(position), 0, values.length - 1);
-    const right = clamp(left + 1, 0, values.length - 1);
-    const t = position - Math.floor(position);
-    return values[left] * (1 - t) + values[right] * t;
-  }
-
   function estimateGridAxis(scores, options = {}) {
-    if (!scores?.length) return null;
-    const minPeriod = Math.max(6, Number(options.minPeriod) || 8);
-    const maxPeriod = Math.min(scores.length / 4, Number(options.maxPeriod) || 64);
-    if (maxPeriod < minPeriod) return null;
-    const baseline = percentile(scores, 0.5);
-    let bestPeriod = 0;
-    let bestCorrelation = -Infinity;
-    for (let period = minPeriod; period <= maxPeriod; period += 0.25) {
-      let sum = 0;
-      let count = 0;
-      for (let x = period; x < scores.length; x += 1) {
-        const a = Math.max(0, scores[Math.round(x)] - baseline);
-        const b = Math.max(0, interpolated(scores, x - period) - baseline);
-        sum += Math.sqrt(a * b);
-        count += 1;
-      }
-      const correlation = count ? sum / count : 0;
-      if (correlation > bestCorrelation) {
-        bestCorrelation = correlation;
-        bestPeriod = period;
+    const minPeriod = Math.max(5, Number(options.minPeriod) || 5);
+    const maxPeriod = Math.min(scores.length / 5, Number(options.maxPeriod) || 180);
+    const mean = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    const peaks = [];
+    for (let p = 1; p < scores.length - 1; p++) {
+      if (scores[p] < Math.max(1.5, mean * 0.65) || scores[p] < scores[p - 1] || scores[p] <= scores[p + 1]) continue;
+      if (peaks.length && p - peaks[peaks.length - 1] <= 2) {
+        if (scores[p] > scores[peaks[peaks.length - 1]]) peaks[peaks.length - 1] = p;
+      } else peaks.push(p);
+    }
+    if (peaks.length < 6) return null;
+    const gaps = new Map();
+    for (let i = 0; i < peaks.length; i++) {
+      for (let j = i + 1; j < Math.min(peaks.length, i + 5); j++) {
+        const gap = peaks[j] - peaks[i];
+        if (gap >= minPeriod - 1 && gap <= maxPeriod + 1) gaps.set(gap, (gaps.get(gap) || 0) + 1);
       }
     }
-    if (!bestPeriod) return null;
-
-    let bestPhase = 0;
-    let bestPhaseScore = -Infinity;
-    for (let phase = 0; phase < bestPeriod; phase += 0.25) {
-      const values = [];
-      for (let position = phase; position < scores.length; position += bestPeriod) {
-        values.push(interpolated(scores, position));
-      }
-      values.sort((a, b) => b - a);
-      const keep = Math.max(4, Math.round(values.length * 0.75));
-      const score = values.slice(0, keep).reduce((sum, value) => sum + value, 0) / keep;
-      if (score > bestPhaseScore) {
-        bestPhaseScore = score;
-        bestPhase = phase;
-      }
-    }
-
-    const allLines = [];
-    for (let position = bestPhase; position < scores.length; position += bestPeriod) {
-      allLines.push({ position, score: interpolated(scores, position) });
-    }
-    const threshold = baseline + Math.max(0.3, (percentile(scores, 0.8) - baseline) * 0.16);
+    const periods = [...new Set([...gaps].sort((a, b) => b[1] - a[1]).slice(0, 12)
+      .flatMap(([gap]) => [-0.5, -0.25, 0, 0.25, 0.5].map(delta => gap + delta)))];
+    const origins = peaks.slice().sort((a, b) => scores[b] - scores[a]).slice(0, 10);
     let best = null;
-    for (let start = 0; start < allLines.length - 7; start++) {
-      let good = 0;
-      let totalScore = 0;
-      for (let end = start; end < allLines.length; end++) {
-        if (allLines[end].score >= threshold) good += 1;
-        totalScore += Math.max(0, allLines[end].score - baseline);
-        const count = end - start + 1;
-        if (count < 8 || good / count < 0.62) continue;
-        const candidate = { start, end, count, good, totalScore };
-        if (
-          !best ||
-          candidate.count > best.count ||
-          (candidate.count === best.count && candidate.totalScore > best.totalScore)
-        ) best = candidate;
+    for (const initial of periods) {
+      for (const origin of origins) {
+        let start = origin, step = initial, matches = [];
+        // Refit the fractional pitch from all lines so resizing cannot accumulate drift.
+        for (let pass = 0; pass < 6; pass++) {
+          matches = peaks.map(p => ({ p, n: Math.round((p - start) / step) }))
+            .filter(v => Math.abs(v.p - start - v.n * step) <= Math.min(2, step * 0.12));
+          const unique = new Map();
+          for (const match of matches) {
+            if (!unique.has(match.n) || scores[match.p] > scores[unique.get(match.n).p]) unique.set(match.n, match);
+          }
+          matches = [...unique.values()].sort((a, b) => a.n - b.n);
+          if (matches.length < 6) break;
+          const mn = matches.reduce((sum, v) => sum + v.n, 0) / matches.length;
+          const mp = matches.reduce((sum, v) => sum + v.p, 0) / matches.length;
+          const den = matches.reduce((sum, v) => sum + (v.n - mn) ** 2, 0);
+          if (!den) break;
+          step = matches.reduce((sum, v) => sum + (v.n - mn) * (v.p - mp), 0) / den;
+          start = mp - mn * step;
+        }
+        if (matches.length < 6 || step < minPeriod - 0.1 || step > maxPeriod + 0.1) continue;
+        const first = matches[0].n, last = matches[matches.length - 1].n;
+        const coverage = matches.length / (last - first + 1);
+        if (coverage < 0.75 || (last - first) * step < scores.length * 0.35) continue;
+        const score = matches.reduce((sum, v) => sum + scores[v.p], 0) * coverage / matches.length ** 0.75;
+        if (!best || score > best.score) best = { start, step, matches, score, coverage };
       }
     }
     if (!best) return null;
-    while (best.start < best.end && allLines[best.start].score < threshold) best.start += 1;
-    while (best.end > best.start && allLines[best.end].score < threshold) best.end -= 1;
-    const lines = allLines.slice(best.start, best.end + 1);
-    if (lines.length < 8) return null;
-    const peakMean = lines.reduce((sum, line) => sum + line.score, 0) / lines.length;
-    const confidence = clamp((peakMean - baseline) / Math.max(1, percentile(scores, 0.95) - baseline), 0, 1);
-    return {
-      start: lines[0].position,
-      end: lines[lines.length - 1].position,
-      period: bestPeriod,
-      lines: lines.map((line) => line.position),
-      intervals: Math.max(0, lines.length - 1),
-      confidence,
-    };
-  }
-
-  function trimAxisIntervals(axis, targetIntervals) {
-    if (!axis || axis.intervals <= targetIntervals) return axis;
-    const remove = axis.intervals - targetIntervals;
-    let left = 0;
-    let right = axis.lines.length - 1;
-    for (let i = 0; i < remove; i++) {
-      const leftGap = axis.lines[left + 1] - axis.lines[left];
-      const rightGap = axis.lines[right] - axis.lines[right - 1];
-      if (leftGap >= rightGap) left += 1;
-      else right -= 1;
-    }
-    const lines = axis.lines.slice(left, right + 1);
-    return {
-      ...axis,
-      start: lines[0],
-      end: lines[lines.length - 1],
-      lines,
-      intervals: lines.length - 1,
-    };
+    const strengths = best.matches.map(v => scores[v.p]).sort((a, b) => a - b);
+    const edgeThreshold = strengths[Math.floor(strengths.length / 2)] * 0.1;
+    while (best.matches.length > 6 && scores[best.matches[0].p] < edgeThreshold) best.matches.shift();
+    while (best.matches.length > 6 && scores[best.matches[best.matches.length - 1].p] < edgeThreshold) best.matches.pop();
+    let lo = best.matches[0].n, hi = best.matches[best.matches.length - 1].n;
+    const before = best.start + (lo - 1) * best.step;
+    if (before >= -1 && before <= 2 && Math.max(...scores.slice(0, 3)) > 3) lo--;
+    const endDistance = Math.abs(best.start + (hi + 1) * best.step - (scores.length - 1));
+    if (endDistance <= 1 || (endDistance <= 2 && Math.max(...scores.slice(-3)) > 3)) hi++;
+    return { start: best.start + lo * best.step, step: best.step, count: hi - lo, confidence: best.coverage };
   }
 
   function detectGrid(source, options = {}) {
     if (!source?.pixels || source.width < 64 || source.height < 64) return null;
-    let x = estimateGridAxis(lineProjection(source, "x"), options);
-    let y = estimateGridAxis(lineProjection(source, "y"), options);
+    const x = estimateGridAxis(lineProjection(source, "x"), options);
+    const y = estimateGridAxis(lineProjection(source, "y"), options);
     if (!x || !y) return null;
-    const periodRatio = Math.max(x.period, y.period) / Math.max(1, Math.min(x.period, y.period));
-    if (periodRatio > 1.28 || x.intervals < 8 || y.intervals < 8) return null;
-    if (Math.abs(x.intervals - y.intervals) <= 3) {
-      const intervals = Math.min(x.intervals, y.intervals);
-      x = trimAxisIntervals(x, intervals);
-      y = trimAxisIntervals(y, intervals);
-    }
-    const confidence = Math.min(x.confidence, y.confidence) * clamp(1.28 - periodRatio, 0, 0.28) / 0.28;
+    const periodRatio = Math.max(x.step, y.step) / Math.min(x.step, y.step);
+    if (periodRatio > 2 || x.count < 5 || y.count < 5) return null;
+    const confidence = Math.min(x.confidence, y.confidence);
     if (confidence < (Number(options.minConfidence) || 0.16)) return null;
     const grid = {
       x0: x.start,
-      x1: x.end,
       y0: y.start,
-      y1: y.end,
-      cols: x.intervals,
-      rows: y.intervals,
-      stepX: (x.end - x.start) / Math.max(1, x.intervals),
-      stepY: (y.end - y.start) / Math.max(1, y.intervals),
+      cols: x.count,
+      rows: y.count,
+      stepX: x.step,
+      stepY: y.step,
       confidence,
-      xLines: x.lines,
-      yLines: y.lines,
+      rulers: 0,
     };
+    trimGridRulers(source, grid);
+    grid.x1 = grid.x0 + grid.cols * grid.stepX;
+    grid.y1 = grid.y0 + grid.rows * grid.stepY;
+    grid.xLines = Array.from({ length: grid.cols + 1 }, (_, i) => grid.x0 + i * grid.stepX);
+    grid.yLines = Array.from({ length: grid.rows + 1 }, (_, i) => grid.y0 + i * grid.stepY);
     const cornerCells = [
       [0, 0],
       [Math.max(0, grid.cols - 1), 0],
@@ -394,50 +386,135 @@
         return !best || support > best.support ? { rgb, support } : best;
       }, null).rgb;
     }
+    // Auto mode requires repeated cell labels or a paired numbered border.
+    // Regular textures and windows can have periodic lines without being a chart.
+    let labeled = 0, checked = 0;
+    const stride = Math.max(1, Math.floor(grid.cols * grid.rows / 300));
+    for (let i = 0; i < grid.cols * grid.rows; i += stride) {
+      if (sampleGridCell(source, grid, i % grid.cols, Math.floor(i / grid.cols)).labeled) labeled++;
+      checked++;
+    }
+    grid.autoSuitable = grid.rulers > 0 || (labeled >= 6 && labeled / checked >= 0.04);
     return grid;
   }
 
-  function gridSample(source, grid, normalizedX, normalizedY, alphaThreshold = 0) {
-    if (!grid) return { rgb: null, confidence: 0, samples: 0 };
-    const col = clamp(Math.floor(clamp(normalizedX, 0, 0.999999) * grid.cols), 0, grid.cols - 1);
-    const row = clamp(Math.floor(clamp(normalizedY, 0, 0.999999) * grid.rows), 0, grid.rows - 1);
-    const x0 = grid.x0 + col * grid.stepX;
-    const y0 = grid.y0 + row * grid.stepY;
-    const bounds = {
-      x0: x0 + grid.stepX * 0.14,
-      x1: x0 + grid.stepX * 0.86,
-      y0: y0 + grid.stepY * 0.14,
-      y1: y0 + grid.stepY * 0.86,
-    };
-    const sampled = dominantSample(
-      source,
-      bounds,
-      { alphaThreshold, quantize: 12, sampleCols: 8, sampleRows: 8 }
-    );
-    if (!sampled.rgb || !grid.backgroundRgb || rgbDistanceSq(sampled.rgb, grid.backgroundRgb) > 24 * 24) {
-      return sampled;
+  function colorVote(colors, quantize = 16) {
+    const buckets = new Map();
+    for (const rgb of colors) {
+      const key = rgb.map(v => Math.round(v / quantize)).join(",");
+      const bucket = buckets.get(key) || { count: 0, sum: [0, 0, 0] };
+      bucket.count++;
+      for (let c = 0; c < 3; c++) bucket.sum[c] += rgb[c];
+      buckets.set(key, bucket);
     }
-    let ink = 0;
-    let opaque = 0;
-    const xStart = clamp(Math.ceil(bounds.x0), 0, source.width - 1);
-    const xEnd = clamp(Math.floor(bounds.x1), 0, source.width - 1);
-    const yStart = clamp(Math.ceil(bounds.y0), 0, source.height - 1);
-    const yEnd = clamp(Math.floor(bounds.y1), 0, source.height - 1);
-    const fillLuma = sampled.rgb[0] * 0.2126 + sampled.rgb[1] * 0.7152 + sampled.rgb[2] * 0.0722;
-    for (let y = yStart; y <= yEnd; y++) {
-      for (let x = xStart; x <= xEnd; x++) {
-        const rgb = pixelRgb(source, x, y, alphaThreshold);
-        if (!rgb) continue;
-        opaque += 1;
-        const luma = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
-        if (fillLuma - luma > 45 && rgbDistanceSq(rgb, sampled.rgb) > 45 * 45) ink += 1;
+    const best = [...buckets.values()].sort((a, b) => b.count - a.count)[0];
+    return best
+      ? { rgb: best.sum.map(v => Math.round(v / best.count)), confidence: best.count / colors.length, samples: colors.length }
+      : { rgb: null, confidence: 0, samples: 0 };
+  }
+
+  function sampleGridCell(source, grid, col, row, alphaThreshold = 0) {
+    const ring = [], center = [];
+    const steps = clamp(Math.ceil(Math.min(grid.stepX, grid.stepY)), 5, 17);
+    for (let y = 0; y < steps; y++) for (let x = 0; x < steps; x++) {
+      const fx = 0.16 + (x + 0.5) / steps * 0.68;
+      const fy = 0.16 + (y + 0.5) / steps * 0.68;
+      const rgb = pixelRgb(source, grid.x0 + (col + fx) * grid.stepX, grid.y0 + (row + fy) * grid.stepY, alphaThreshold);
+      if (!rgb) continue;
+      if (fy < 0.34 || fy > 0.66) ring.push(rgb);
+      else if (fx > 0.25 && fx < 0.75) center.push(rgb);
+    }
+    const sampled = colorVote(ring);
+    if (!sampled.rgb) return { ...sampled, labeled: false };
+    const fill = luminance(sampled.rgb);
+    const isInk = rgb => luminance(rgb) < Math.min(130, fill - 65) || luminance(rgb) > Math.max(150, fill + 65);
+    const ink = center.filter(isInk).length;
+    const inkRatio = ink / Math.max(1, center.length);
+    const ringRatio = ring.filter(isInk).length / ring.length;
+    return { ...sampled, labeled: ink >= Math.max(2, center.length * 0.045) && inkRatio > ringRatio * 1.7 };
+  }
+
+  function trimGridRulers(source, grid) {
+    const ruler = (axis, n) => {
+      const step = axis === "x" ? grid.stepX : grid.stepY;
+      const coordinate = (axis === "x" ? grid.x0 : grid.y0) + n * step;
+      if (coordinate < 0 || coordinate + step > (axis === "x" ? source.width : source.height) + 1) return null;
+      const samples = Array.from({ length: axis === "x" ? grid.rows : grid.cols }, (_, i) =>
+        sampleGridCell(source, grid, axis === "x" ? n : i, axis === "y" ? n : i));
+      const values = samples.map(cell => cell.rgb).filter(Boolean), rgb = colorVote(values).rgb;
+      return rgb && Math.max(...rgb) - Math.min(...rgb) > 24
+        && samples.filter(cell => cell.labeled).length > samples.length * 0.35
+        && values.filter(value => rgbDistanceSq(value, rgb) < 24 ** 2).length > samples.length * 0.88 ? rgb : null;
+    };
+    for (const axis of ["x", "y"]) {
+      const count = axis === "x" ? grid.cols : grid.rows;
+      const starts = [-3, -2, -1, 0, 1, 2, 3].map(i => ({ i, rgb: ruler(axis, i) })).filter(v => v.rgb);
+      const ends = [-3, -2, -1, 0, 1, 2, 3].map(d => ({ i: count + d, rgb: ruler(axis, count + d) })).filter(v => v.rgb);
+      const pairs = starts.flatMap(a => ends.filter(b => rgbDistanceSq(a.rgb, b.rgb) < 24 ** 2)
+        .map(b => ({ first: a.i + 1, count: b.i - a.i - 1, cost: Math.abs(a.i + 1) + Math.abs(b.i - count) })));
+      const pair = pairs.filter(p => p.count >= 5).sort((a, b) => a.cost - b.cost)[0];
+      if (!pair) continue;
+      if (axis === "x") { grid.x0 += pair.first * grid.stepX; grid.cols = pair.count; }
+      else { grid.y0 += pair.first * grid.stepY; grid.rows = pair.count; }
+      grid.rulers++;
+    }
+  }
+
+  function sampleGrid(source, grid, alphaThreshold = 0, options = {}) {
+    const samples = [];
+    for (let row = 0; row < grid.rows; row++) for (let col = 0; col < grid.cols; col++) {
+      samples.push(sampleGridCell(source, grid, col, row, alphaThreshold));
+    }
+    if (options.background === "keep") return samples;
+    const paper = rgb => rgb && luminance(rgb) >= 228 && Math.max(...rgb) - Math.min(...rgb) <= 24;
+    const neighbors = i => {
+      const x = i % grid.cols, y = Math.floor(i / grid.cols), out = [];
+      if (x > 0) out.push(i - 1);
+      if (x + 1 < grid.cols) out.push(i + 1);
+      if (y > 0) out.push(i - grid.cols);
+      if (y + 1 < grid.rows) out.push(i + grid.cols);
+      return out;
+    };
+    const seen = new Uint8Array(samples.length), queue = [];
+    const visit = i => {
+      const cell = samples[i];
+      if (seen[i] || (cell.rgb && (!paper(cell.rgb) || cell.labeled))) return;
+      seen[i] = 1;
+      queue.push(i);
+    };
+    for (let x = 0; x < grid.cols; x++) { visit(x); visit((grid.rows - 1) * grid.cols + x); }
+    for (let y = 0; y < grid.rows; y++) { visit(y * grid.cols); visit(y * grid.cols + grid.cols - 1); }
+    for (let q = 0; q < queue.length; q++) neighbors(queue[q]).forEach(visit);
+    const blank = i => { samples[i] = { ...samples[i], rgb: null, blank: true }; };
+    queue.forEach(blank);
+    // Enclosed white is artwork unless a labeled chart identifies an empty region.
+    const labeledPaper = samples.filter(cell => paper(cell.rgb) && cell.labeled).length;
+    if (labeledPaper >= 6) {
+      for (let i = 0; i < samples.length; i++) {
+        if (seen[i] || !paper(samples[i].rgb)) continue;
+        const region = [i];
+        seen[i] = 1;
+        let labels = 0;
+        for (let q = 0; q < region.length; q++) {
+          const at = region[q];
+          if (samples[at].labeled) labels++;
+          for (const next of neighbors(at)) {
+            if (seen[next] || !paper(samples[next].rgb)) continue;
+            seen[next] = 1;
+            region.push(next);
+          }
+        }
+        if (!labels) region.forEach(blank);
       }
     }
-    const inkRatio = opaque ? ink / opaque : 0;
-    if (inkRatio < 0.018) {
-      return { rgb: null, confidence: sampled.confidence, samples: sampled.samples, blank: true, inkRatio };
-    }
-    return { ...sampled, inkRatio, labeled: true };
+    return samples;
+  }
+
+  function gridSample(source, grid, normalizedX, normalizedY, alphaThreshold = 0, samples = null) {
+    if (!grid) return { rgb: null, confidence: 0, samples: 0 };
+    const col = clamp(Math.floor(normalizedX * grid.cols), 0, grid.cols - 1);
+    const row = clamp(Math.floor(normalizedY * grid.rows), 0, grid.rows - 1);
+    return (samples || sampleGrid(source, grid, alphaThreshold))[row * grid.cols + col];
   }
 
   function neighborKeys(cell) {
@@ -455,7 +532,7 @@
     ];
   }
 
-  function fillSmallIslands(cells, indices, positions, minSize) {
+  function fillSmallIslands(cells, indices, positions, minSize, protectDetails) {
     const seen = new Uint8Array(indices.length);
     for (let start = 0; start < cells.length; start++) {
       if (seen[start]) continue;
@@ -481,6 +558,7 @@
         });
       }
       if (value < 0 || component.length >= minSize || !border.size) continue;
+      if (protectDetails && component.some(index => cells[index].gridCell || Number(cells[index].confidence) >= 0.8)) continue;
       const [majority] = [...border.entries()].sort((a, b) => b[1] - a[1])[0];
       component.forEach((index) => {
         indices[index] = majority;
@@ -496,7 +574,7 @@
     const positions = new Map();
     cells.forEach((cell, index) => positions.set(`${cell.u},${cell.v}`, index));
     const strong = strength === "strong";
-    fillSmallIslands(cells, indices, positions, strong ? 4 : 3);
+    fillSmallIslands(cells, indices, positions, strong ? 4 : 3, !strong);
     const maxPasses = strong ? 3 : 1;
     for (let pass = 0; pass < maxPasses; pass++) {
       const before = indices.slice();
@@ -509,6 +587,7 @@
         const counts = new Map();
         neighbors.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
         const current = before[index];
+        if (current < 0 || (!strong && (cell.gridCell || Number(cell.confidence) >= 0.8))) return;
         const currentCount = counts.get(current) || 0;
         const [majority, majorityCount] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
         if (majority === current) return;
@@ -528,14 +607,61 @@
     return { indices, changed };
   }
 
+  function selectionCorners(rect) {
+    return [{ x: rect.x, y: rect.y }, { x: rect.x + rect.w, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y + rect.h }, { x: rect.x, y: rect.y + rect.h }];
+  }
+
+  function hitSelection(rect, point, tolerance) {
+    if (!rect) return -1;
+    const distances = selectionCorners(rect).map(p => Math.hypot(p.x - point.x, p.y - point.y));
+    const nearest = Math.min(...distances);
+    if (nearest <= tolerance) return distances.indexOf(nearest);
+    return point.x >= rect.x && point.x <= rect.x + rect.w && point.y >= rect.y && point.y <= rect.y + rect.h ? "move" : -1;
+  }
+
+  function selectionFromDrag(start, end, bounds, ratio = 0) {
+    const a = { x: clamp(start.x, 0, bounds.w), y: clamp(start.y, 0, bounds.h) };
+    const b = { x: clamp(end.x, 0, bounds.w), y: clamp(end.y, 0, bounds.h) };
+    const sx = b.x < a.x ? -1 : 1, sy = b.y < a.y ? -1 : 1;
+    let w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+    if (ratio > 0) {
+      w = Math.max(w, h * ratio); h = w / ratio;
+      const scale = Math.min(1, (sx > 0 ? bounds.w - a.x : a.x) / (w || 1),
+        (sy > 0 ? bounds.h - a.y : a.y) / (h || 1));
+      w *= scale; h *= scale;
+    }
+    return { x: sx > 0 ? a.x : a.x - w, y: sy > 0 ? a.y : a.y - h, w, h };
+  }
+
+  function moveSelection(rect, dx, dy, bounds) {
+    return { ...rect, x: clamp(rect.x + dx, 0, Math.max(0, bounds.w - rect.w)),
+      y: clamp(rect.y + dy, 0, Math.max(0, bounds.h - rect.h)) };
+  }
+
+  function fitSelection(rect, width, height, bounds) {
+    const scale = Math.min(1, bounds.w / Math.max(1, width), bounds.h / Math.max(1, height));
+    const w = Math.max(1, width * scale), h = Math.max(1, height * scale);
+    return { x: clamp(rect.x + (rect.w - w) / 2, 0, bounds.w - w),
+      y: clamp(rect.y + (rect.h - h) / 2, 0, bounds.h - h), w, h };
+  }
+
   return {
+    selectionCorners,
+    hitSelection,
+    selectionFromDrag,
+    moveSelection,
+    fitSelection,
     pixelRgb,
     dominantSample,
     enhancedSample,
     detailPreset,
     clusterPalette,
     nearestPaletteIndex,
+    mapPaletteToMaterials,
+    cropSource,
     detectGrid,
+    sampleGrid,
     gridSample,
     cleanTerrainIndices,
   };

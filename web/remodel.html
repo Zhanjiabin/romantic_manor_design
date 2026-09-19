@@ -19,7 +19,7 @@
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
   <link rel="stylesheet" href="/web/materials-dock.css?v=9" />
   <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
-  <link rel="stylesheet" href="/web/remodel.css?v=10" />
+  <link rel="stylesheet" href="/web/remodel.css?v=12" />
 </head>
 <body>
   <div class="app building-app remodel-app phase-select" id="buildingApp">
@@ -46,7 +46,7 @@
           <label class="check compact-check" title="网格吸附"><input type="checkbox" id="snapGrid" checked /><span>网格</span></label>
           <label class="check compact-check" title="对象边缘吸附"><input type="checkbox" id="snapEdges" checked /><span>边缘</span></label>
           <label class="check compact-check" title="对象中心吸附"><input type="checkbox" id="snapCenters" checked /><span>中心</span></label>
-          <select class="input snap-step snap-axis" id="snapAxis" title="吸附轴向：水平格子，或沿地块 2:1 斜边">
+          <select class="input snap-step snap-axis" id="snapAxis" aria-label="吸附轴向" title="吸附轴向：水平格子，或沿地块 2:1 斜边">
             <option value="ortho">水平</option>
             <option value="iso" selected>斜角</option>
             <option value="both">双轴</option>
@@ -68,7 +68,7 @@
               <span>幕布</span>
             </label>
             <label class="veil-opacity-wrap">
-              <input type="range" id="veilOpacity" min="0" max="90" value="42" step="1" />
+              <input type="range" id="veilOpacity" aria-label="幕布透明度" min="0" max="90" value="42" step="1" />
               <span id="veilOpacityLabel">42%</span>
             </label>
           </div>
@@ -352,21 +352,32 @@
           <div class="rail-head">
             <h2 class="rail-title">选择基座</h2>
           </div>
-          <div class="base-preview-box" id="basePreviewBox">
-            <img id="basePreviewImg" alt="" />
+          <div class="remodel-base-summary" aria-live="polite">
+            <div class="base-preview-box" id="basePreviewBox">
+              <img id="basePreviewImg" alt="" />
+            </div>
+            <div class="remodel-base-details">
+              <span class="remodel-base-kicker">当前选择</span>
+              <strong id="remodelBaseName">请选择基座</strong>
+              <span id="remodelBaseSize"></span>
+              <span class="remodel-kind-hint" id="remodelBaseFamily"></span>
+            </div>
           </div>
-          <div class="base-kind-tabs" id="baseKindTabs"></div>
-          <div class="base-icon-grid" id="baseIconGrid"></div>
-          <div class="rail-sub">材料需求</div>
-          <div class="base-mat-list" id="baseMatList"></div>
+          <div class="base-kind-tabs" id="baseKindTabs" role="group" aria-label="基座分类"></div>
+          <div class="base-icon-grid" id="baseIconGrid" role="group" aria-label="基座尺寸"></div>
+          <div class="remodel-base-materials">
+            <div class="rail-sub">制作材料</div>
+            <div class="base-mat-list" id="baseMatList"></div>
+          </div>
           <div class="rail-actions">
-            <p class="remodel-kind-hint">游戏按占地 <code>SetPut(putw,puth)</code> 从 46 个基座里选。装饰改造右侧是装饰素材包，家具 / 椅子 / 床右侧是家具素材包，两套图纸不能混用。</p>
             <label class="check remodel-showman" id="showManField" hidden>
               <input type="checkbox" id="showMan" />
               <span>显示人物</span>
             </label>
-            <button type="button" class="btn btn-primary btn-block" id="btnNextBase">开始设计</button>
-            <button type="button" class="btn btn-ghost btn-block" id="btnBackBase">返回</button>
+            <div class="remodel-base-buttons">
+              <button type="button" class="btn btn-ghost" id="btnBackBase">返回</button>
+              <button type="button" class="btn btn-primary" id="btnNextBase">开始设计</button>
+            </div>
           </div>
         </div>
 
@@ -860,6 +871,6 @@
   <script src="/web/building-preview.js?v=10"></script>
   <script src="/web/material-ledger.js?v=3"></script>
   <script src="/web/building-image-convert.js?v=5"></script>
-  <script src="/web/remodel.js?v=10"></script>
+  <script src="/web/remodel.js?v=11"></script>
 </body>
 </html>

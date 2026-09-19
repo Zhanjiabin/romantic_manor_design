@@ -399,6 +399,49 @@ html.is-mobile-workspace .desk-switch-rest { display: none; }
 html.is-mobile-workspace .desk-switch-inline a { padding-inline: 8px; font-size: 13px; }
 html.is-mobile-workspace .save-status { max-width: 22vw; font-size: 10px; }
 
+html.is-mobile-workspace:not(.is-tablet-workspace) #desk .topbar {
+  gap: 8px;
+  padding-left: max(8px, env(safe-area-inset-left));
+  padding-right: max(8px, env(safe-area-inset-right));
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) #desk .topbar-left {
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 0;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) #desk .topbar .brand,
+html.is-mobile-workspace:not(.is-tablet-workspace) #desk #saveStatus {
+  display: none;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) #desk .desk-switch-inline {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  width: 100%;
+  min-width: 0;
+  margin-left: 0;
+  padding: 2px;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) #desk .desk-switch-inline a {
+  justify-content: center;
+  min-width: 0;
+  height: 36px;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) #desk .top-actions {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+html.is-mobile-workspace:not(.is-tablet-workspace) #desk #btnSaveMobile {
+  flex: 0 0 48px;
+  width: 48px;
+  padding-inline: 6px;
+  white-space: nowrap;
+}
+
 html.is-mobile-workspace #desk .map-host,
 html.is-mobile-workspace #desk .map-stage { min-height: 0; }
 

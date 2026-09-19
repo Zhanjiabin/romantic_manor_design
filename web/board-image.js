@@ -5,905 +5,447 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function boardImageFactory() {
   "use strict";
 
-  const COLS = 36;
-  const ROWS = 24;
-  const DARK = 50;
+  const COLS = 36, ROWS = 24, DARK = 50;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const luma = c => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+  const chroma = c => Math.max(...c.slice(0, 3)) - Math.min(...c.slice(0, 3));
+  const distance = (a, b) => a.slice(0, 3).reduce((n, v, i) => n + (v - b[i]) ** 2, 0);
 
-  function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
+  function pixel(source, x, y) {
+    const offset = (clamp(Math.round(y), 0, source.height - 1) * source.width
+      + clamp(Math.round(x), 0, source.width - 1)) * 4;
+    return Array.from(source.data.slice(offset, offset + 4));
+  }
+
+  function isPaper(rgb) {
+    return Boolean(rgb && luma(rgb) >= 228 && chroma(rgb) <= 24);
+  }
+
+  function rgbToLab(rgb) {
+    const [r, g, b] = rgb.slice(0, 3).map(v => v / 255).map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    const f = v => v > 0.008856 ? Math.cbrt(v) : 7.787 * v + 16 / 116;
+    const x = f((r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047);
+    const y = f(r * 0.2126 + g * 0.7152 + b * 0.0722);
+    const z = f((r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883);
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
   }
 
   function hexToRgb(hex) {
-    const text = String(hex || "").replace("#", "");
-    if (text.length < 6) return [0, 0, 0];
-    return [parseInt(text.slice(0, 2), 16), parseInt(text.slice(2, 4), 16), parseInt(text.slice(4, 6), 16)];
+    return [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
   }
 
-  function pixel(source, x, y) {
-    const px = clamp(Math.round(x), 0, source.width - 1);
-    const py = clamp(Math.round(y), 0, source.height - 1);
-    const o = (py * source.width + px) * 4;
-    return [source.data[o], source.data[o + 1], source.data[o + 2], source.data[o + 3]];
-  }
-
-  function lumaRgb(r, g, b) {
-    return r * 0.2126 + g * 0.7152 + b * 0.0722;
-  }
-
-  function rgbDist(a, b) {
-    if (!a || !b) return 1e9;
-    const dr = a[0] - b[0];
-    const dg = a[1] - b[1];
-    const db = a[2] - b[2];
-    return dr * dr + dg * dg + db * db;
-  }
-
-  function sat(r, g, b) {
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    return max - min;
-  }
-
-  function isPaper(rgb, paper) {
-    if (!rgb) return true;
-    const [r, g, b] = rgb;
-    const luma = lumaRgb(r, g, b);
-    const chroma = sat(r, g, b);
-    if (paper && rgbDist(rgb, paper) <= 28 * 28 && chroma <= 36) return true;
-    if (luma >= 226 && chroma <= 28) return true;
-    if (luma >= 214 && chroma <= 14) return true;
-    if (luma >= 208 && chroma <= 12) return true;
-    return luma >= 180 && chroma <= 40 && b >= r + 6 && b >= g + 2;
-  }
-
-  function isInk(rgb) {
-    if (!rgb) return false;
-    const luma = lumaRgb(rgb[0], rgb[1], rgb[2]);
-    const chroma = sat(rgb[0], rgb[1], rgb[2]);
-    return luma <= 78 && chroma <= 22;
-  }
-
-  function rgbToLab(r, g, b) {
-    const linear = (value) => {
-      const n = value / 255;
-      return n <= 0.04045 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+  function colorMatcher(palette, dark) {
+    const colors = palette.map(c => Array.isArray(c) ? c : hexToRgb(c));
+    const labs = colors.map(rgbToLab);
+    const cache = new Map();
+    return rgb => {
+      if (!rgb) return dark;
+      const key = rgb.slice(0, 3).join(",");
+      if (cache.has(key)) return cache.get(key);
+      const lab = rgbToLab(rgb), c = Math.hypot(lab[1], lab[2]);
+      let best = dark, score = Infinity;
+      labs.forEach((p, i) => {
+        const pc = Math.hypot(p[1], p[2]);
+        // The lamp palette has uneven brightness across hues. A dark brown must
+        // not become red simply because the red lamp is darker. Pale warm fills
+        // also need hue matching; their chroma is too low for the old cutoff.
+        const hue = c > 4 && pc > 4 ? Math.max(0, 1 - (lab[1] * p[1] + lab[2] * p[2]) / (c * pc)) : 0;
+        const d = (lab[0] - p[0]) ** 2 + 0.6 * ((lab[1] - p[1]) ** 2 + (lab[2] - p[2]) ** 2)
+          + hue * 3000 * Math.min(1, c / 18) + (c > 8 && pc < 5 ? c * c * 4 : 0);
+        if (d < score) { best = i; score = d; }
+      });
+      cache.set(key, best);
+      return best;
     };
-    const lr = linear(r);
-    const lg = linear(g);
-    const lb = linear(b);
-    const x = (lr * 0.4124 + lg * 0.3576 + lb * 0.1805) / 0.95047;
-    const y = lr * 0.2126 + lg * 0.7152 + lb * 0.0722;
-    const z = (lr * 0.0193 + lg * 0.1192 + lb * 0.9505) / 1.08883;
-    const curve = (value) => (value > 0.008856 ? Math.cbrt(value) : 7.787 * value + 16 / 116);
-    const fx = curve(x);
-    const fy = curve(y);
-    const fz = curve(z);
-    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
   }
 
-  function labDist(a, b) {
-    const dl = a[0] - b[0];
-    const da = a[1] - b[1];
-    const db = a[2] - b[2];
-    return dl * dl + da * da + db * db;
+  function nearestFrame(rgb, palette, dark = DARK) {
+    return colorMatcher(palette, dark)(rgb);
   }
 
-  function collectSamples(source, points) {
-    const samples = [];
-    points.forEach((point) => {
-      const rgb = pixel(source, point[0], point[1]);
-      if (rgb[3] < 18) return;
-      samples.push(rgb);
-    });
-    return samples;
-  }
-
-  function bucketRgb(samples) {
-    const buckets = new Map();
-    samples.forEach((rgb) => {
-      const key = `${Math.round(rgb[0] / 12)},${Math.round(rgb[1] / 12)},${Math.round(rgb[2] / 12)}`;
-      let bucket = buckets.get(key);
-      if (!bucket) {
-        bucket = { sum: [0, 0, 0], count: 0 };
-        buckets.set(key, bucket);
+  function paletteFromSprite(source, count = 50, cell = 18, columns = 5) {
+    const colors = [];
+    for (let frame = 0; frame < count; frame++) {
+      const channels = [[], [], []];
+      for (let y = Math.ceil(cell * 0.44); y < cell * 0.72; y++) {
+        for (let x = Math.ceil(cell * 0.27); x < cell * 0.72; x++) {
+          const rgb = pixel(source, frame % columns * cell + x, Math.floor(frame / columns) * cell + y);
+          for (let c = 0; c < 3; c++) channels[c].push(rgb[c]);
+        }
       }
-      bucket.count += 1;
-      bucket.sum[0] += rgb[0];
-      bucket.sum[1] += rgb[1];
-      bucket.sum[2] += rgb[2];
-    });
-    return [...buckets.values()].map((bucket) => {
-      const rgb = bucket.sum.map((value) => Math.round(value / bucket.count));
-      return { rgb, count: bucket.count, sat: sat(...rgb), luma: lumaRgb(...rgb) };
-    }).sort((a, b) => b.count - a.count);
+      colors.push(channels.map(values => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]));
+    }
+    return colors;
   }
 
-  function pickRgb(samples, paper) {
+  function dominant(samples) {
     if (!samples.length) return null;
-    const ranked = bucketRgb(samples);
-    const chroma = ranked.filter((row) => row.sat >= 16 && !isPaper(row.rgb, paper) && !isInk(row.rgb));
-    if (chroma.length) {
-      return chroma.slice().sort((a, b) => (b.count * (1 + b.sat / 40)) - (a.count * (1 + a.sat / 40)))[0].rgb;
-    }
-    const fill = ranked.filter((row) => !isPaper(row.rgb, paper) && !isInk(row.rgb) && row.luma < 222);
-    if (fill.length) return fill[0].rgb;
-    const dark = ranked.filter((row) => row.sat >= 12 && row.luma < 140);
-    if (dark.length) return dark[0].rgb;
-    const paperish = ranked.filter((row) => isPaper(row.rgb, paper));
-    if (paperish.length) return paperish[0].rgb;
-    return ranked[0].rgb;
-  }
-
-  function dominantSample(source, bounds) {
-    const x0 = clamp(Math.min(bounds.x0, bounds.x1), 0, source.width - 1);
-    const x1 = clamp(Math.max(bounds.x0, bounds.x1), 0, source.width - 1);
-    const y0 = clamp(Math.min(bounds.y0, bounds.y1), 0, source.height - 1);
-    const y1 = clamp(Math.max(bounds.y0, bounds.y1), 0, source.height - 1);
-    const points = [];
-    const cols = 7;
-    const rows = 7;
-    for (let row = 0; row < rows; row += 1) {
-      const y = y0 + ((row + 0.5) / rows) * Math.max(0, y1 - y0);
-      for (let col = 0; col < cols; col += 1) {
-        const x = x0 + ((col + 0.5) / cols) * Math.max(0, x1 - x0);
-        points.push([x, y]);
-      }
-    }
-    return pickRgb(collectSamples(source, points));
-  }
-
-  function luminanceAt(source, x, y) {
-    const rgb = pixel(source, x, y);
-    return lumaRgb(rgb[0], rgb[1], rgb[2]);
-  }
-
-  function lineProjection(source, axis, box) {
-    const x0 = box?.x0 ?? 0;
-    const y0 = box?.y0 ?? 0;
-    const x1 = box?.x1 ?? source.width;
-    const y1 = box?.y1 ?? source.height;
-    const along0 = axis === "x" ? x0 : y0;
-    const along1 = axis === "x" ? x1 : y1;
-    const cross0 = axis === "x" ? y0 : x0;
-    const cross1 = axis === "x" ? y1 : x1;
-    const length = axis === "x" ? source.width : source.height;
-    const stride = Math.max(1, Math.floor(Math.max(1, cross1 - cross0) / 420));
-    const result = new Array(length).fill(0);
-    for (let position = Math.max(2, along0); position < Math.min(length - 2, along1); position += 1) {
-      let sum = 0;
-      let count = 0;
-      for (let other = cross0; other < cross1; other += stride) {
-        const center = axis === "x" ? luminanceAt(source, position, other) : luminanceAt(source, other, position);
-        const before = axis === "x" ? luminanceAt(source, position - 2, other) : luminanceAt(source, other, position - 2);
-        const after = axis === "x" ? luminanceAt(source, position + 2, other) : luminanceAt(source, other, position + 2);
-        sum += Math.abs(center - before) + Math.abs(center - after);
-        count += 1;
-      }
-      result[position] = count ? sum / count : 0;
-    }
-    return result;
-  }
-
-  function autocorrPeriod(scores, minP, maxP, start, end) {
-    const a0 = Math.max(0, start | 0);
-    const a1 = Math.min(scores.length, end | 0);
-    if (a1 - a0 < minP * 8) return 0;
-    const slice = scores.slice(a0, a1);
-    const mean = slice.reduce((sum, value) => sum + value, 0) / slice.length;
-    const centered = slice.map((value) => value - mean);
-    let bestP = 0;
-    let best = -1;
-    const maxPeriod = Math.min(maxP, Math.floor(slice.length / 8));
-    for (let period = minP; period <= maxPeriod; period += 1) {
-      let sum = 0;
-      let count = 0;
-      for (let i = 0; i + period < centered.length; i += 1) {
-        sum += centered[i] * centered[i + period];
-        count += 1;
-      }
-      const score = count ? sum / count : 0;
-      if (score > best) {
-        best = score;
-        bestP = period;
-      }
-    }
-    return bestP;
-  }
-
-  function linesFromPeriod(scores, period, start, end) {
-    if (period < 5) return null;
-    const a0 = Math.max(0, start | 0);
-    const a1 = Math.min(scores.length, end | 0);
-    const peaks = peakPositions(scores).filter((peak) => peak >= a0 && peak < a1);
-    if (!peaks.length) return null;
-    const origin = peaks.reduce((best, index) => (scores[index] > scores[best] ? index : best), peaks[0]);
-    const nearest = (pos) => {
-      let best = null;
-      let dist = 99;
-      peaks.forEach((peak) => {
-        const next = Math.abs(peak - pos);
-        if (next < dist) {
-          dist = next;
-          best = peak;
-        }
-      });
-      return dist <= Math.max(3, period * 0.38) ? best : null;
-    };
-    const mean = scores.reduce((sum, value) => sum + value, 0) / Math.max(1, scores.length);
-    const lines = [origin];
-    let pos = origin + period;
-    while (pos < a1 - 2) {
-      const hit = nearest(Math.round(pos));
-      if (hit != null) {
-        if (!lines.includes(hit)) lines.push(hit);
-        pos = hit + period;
-      } else {
-        const index = clamp(Math.round(pos), a0, a1 - 1);
-        if (scores[index] > mean * 0.88) {
-          lines.push(index);
-          pos = index + period;
-        } else pos += period;
-      }
-    }
-    pos = origin - period;
-    while (pos > a0 + 2) {
-      const hit = nearest(Math.round(pos));
-      if (hit != null) {
-        if (!lines.includes(hit)) lines.push(hit);
-        pos = hit - period;
-      } else {
-        const index = clamp(Math.round(pos), a0, a1 - 1);
-        if (scores[index] > mean * 0.88) {
-          lines.push(index);
-          pos = index - period;
-        } else pos -= period;
-      }
-    }
-    const unique = [...new Set(lines)].sort((a, b) => a - b);
-    if (unique.length < 11) return null;
-    return { lines: unique, period, start: unique[0], end: unique[unique.length - 1], intervals: unique.length - 1 };
-  }
-
-  function peakPositions(scores) {
-    const mean = scores.reduce((sum, value) => sum + value, 0) / Math.max(1, scores.length);
-    const threshold = mean * 1.22;
-    const groups = [];
-    scores.forEach((value, index) => {
-      if (value <= threshold) return;
-      if (!groups.length || index - groups[groups.length - 1][groups[groups.length - 1].length - 1] > 2) {
-        groups.push([index]);
-      } else {
-        groups[groups.length - 1].push(index);
-      }
-    });
-    return groups.map((group) => group.reduce((best, index) => (scores[index] > scores[best] ? index : best), group[0]));
-  }
-
-  function dominantGap(gaps) {
     const buckets = new Map();
-    gaps.forEach((gap) => {
-      buckets.set(gap, (buckets.get(gap) || 0) + 1);
-      buckets.set(gap - 1, (buckets.get(gap - 1) || 0) + 0.45);
-      buckets.set(gap + 1, (buckets.get(gap + 1) || 0) + 0.45);
-    });
-    let best = 0;
-    let bestN = -1;
-    buckets.forEach((count, gap) => {
-      if (gap >= 5 && gap <= 90 && count > bestN) {
-        bestN = count;
-        best = gap;
-      }
-    });
-    return best;
+    for (const rgb of samples) {
+      const key = rgb.slice(0, 3).map(v => Math.round(v / 16)).join(",");
+      const b = buckets.get(key) || { count: 0, rgb: [0, 0, 0] };
+      b.count++;
+      for (let i = 0; i < 3; i++) b.rgb[i] += rgb[i];
+      buckets.set(key, b);
+    }
+    const best = [...buckets.values()].sort((a, b) => b.count - a.count)[0];
+    return best.rgb.map(v => Math.round(v / best.count));
   }
 
-  function snapLines(scores, boxStart, boxEnd) {
-    const start = boxStart ?? 0;
-    const end = boxEnd ?? scores.length;
-    const peaks = peakPositions(scores);
-    const gaps = [];
-    for (let i = 0; i < peaks.length - 1; i += 1) {
-      const gap = peaks[i + 1] - peaks[i];
-      if (gap >= 5 && gap <= 90) gaps.push(gap);
-    }
-    let period = gaps.length >= 8 ? dominantGap(gaps) : 0;
-    const auto = autocorrPeriod(scores, 5, 90, start, end);
-    if (auto && period && Math.abs(auto - period) <= 4) period = Math.round((auto + period) / 2);
-    else if (auto && gaps.length < 12) period = auto;
-    if (period >= 40 && period <= 90) {
-      const tenth = Math.round(period / 10);
-      if (tenth >= 6 && tenth <= 24) {
-        const fine = linesFromPeriod(scores, tenth, start, end);
-        if (fine && fine.intervals >= 12) return fine;
-      }
-    }
-    const fromPeriod = linesFromPeriod(scores, period, start, end);
-    if (fromPeriod && fromPeriod.intervals >= 10 && fromPeriod.intervals <= 72) return fromPeriod;
-    if (peaks.length < 10 || period < 5) return null;
-    const origin = peaks.reduce((best, index) => (scores[index] > scores[best] ? index : best), peaks[0]);
-    const nearest = (pos) => {
-      let best = null;
-      let dist = 99;
-      peaks.forEach((peak) => {
-        const next = Math.abs(peak - pos);
-        if (next < dist) {
-          dist = next;
-          best = peak;
+  function lineProjection(source, axis) {
+    const length = axis === "x" ? source.width : source.height;
+    const cross = axis === "x" ? source.height : source.width;
+    const scores = new Float64Array(length);
+    const stride = Math.max(1, Math.floor(cross / 600));
+    const offset = (p, q) => (axis === "x" ? q * source.width + p : p * source.width + q) * 4;
+    for (let p = 1; p < length - 1; p++) {
+      const radius = Math.min(2, p, length - 1 - p);
+      let sum = 0, count = 0;
+      for (let q = 0; q < cross; q += stride) {
+        // Lines can be darker OR lighter than the fill. RGB also catches equal-luminance lines.
+        const at = offset(p, q), before = offset(p - radius, q), after = offset(p + radius, q);
+        let contrast = 0;
+        for (let c = 0; c < 3; c++) {
+          const value = i => source.data[i + 3] < 24 ? 255 : source.data[i + c];
+          const left = value(before) - value(at), right = value(after) - value(at);
+          contrast += Math.max(0, Math.min(left, right) - 6, Math.min(-left, -right) - 6);
         }
-      });
-      return dist <= Math.max(3, period * 0.36) ? best : null;
-    };
-    const mean = scores.reduce((sum, value) => sum + value, 0) / Math.max(1, scores.length);
-    const lines = [origin];
-    let pos = origin + period;
-    while (pos < scores.length - 2) {
-      const hit = nearest(Math.round(pos));
-      if (hit != null) {
-        if (!lines.includes(hit)) lines.push(hit);
-        pos = hit + period;
-      } else {
-        const index = clamp(Math.round(pos), 0, scores.length - 1);
-        if (scores[index] > mean * 0.88) {
-          lines.push(index);
-          pos = index + period;
-        } else pos += period;
+        // Broad, faint lines must outweigh small high-contrast glyphs repeated in each cell.
+        sum += Math.min(40, contrast / 3);
+        count++;
+      }
+      scores[p] = sum / count;
+    }
+    return scores;
+  }
+
+  function fitAxis(scores, expectedStep = null) {
+    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const peaks = [];
+    for (let i = 1; i < scores.length - 1; i++) {
+      if (scores[i] < Math.max(3, mean * 1.25) || scores[i] < scores[i - 1] || scores[i] <= scores[i + 1]) continue;
+      if (peaks.length && i - peaks[peaks.length - 1] <= 2) {
+        if (scores[i] > scores[peaks[peaks.length - 1]]) peaks[peaks.length - 1] = i;
+      } else peaks.push(i);
+    }
+    if (peaks.length < 6) return null;
+    const candidates = new Map();
+    for (let i = 0; i < peaks.length; i++) {
+      for (let j = i + 1; j < Math.min(peaks.length, i + 5); j++) {
+        const gap = peaks[j] - peaks[i];
+        if (gap < 5 || gap > Math.min(180, scores.length / 5)) continue;
+        candidates.set(gap, (candidates.get(gap) || 0) + 1);
       }
     }
-    pos = origin - period;
-    while (pos > 2) {
-      const hit = nearest(Math.round(pos));
-      if (hit != null) {
-        if (!lines.includes(hit)) lines.push(hit);
-        pos = hit - period;
-      } else {
-        const index = clamp(Math.round(pos), 0, scores.length - 1);
-        if (scores[index] > mean * 0.88) {
-          lines.push(index);
-          pos = index - period;
-        } else pos -= period;
+    const periods = expectedStep ? [expectedStep] : [...new Set([...candidates].sort((a, b) => b[1] - a[1]).slice(0, 12)
+      .flatMap(([p]) => [-0.5, -0.25, 0, 0.25, 0.5].map(delta => p + delta)))];
+    let best = null;
+    for (const initial of periods) {
+      for (const origin of peaks.slice().sort((a, b) => scores[b] - scores[a]).slice(0, 10)) {
+        let start = origin, step = initial, matches = [];
+        for (let pass = 0; pass < 3; pass++) {
+          matches = peaks.map(p => ({ p, n: Math.round((p - start) / step) }))
+            .filter(v => Math.abs(v.p - start - v.n * step) <= Math.min(2, step * 0.12));
+          const unique = new Map();
+          for (const hit of matches) {
+            const prior = unique.get(hit.n);
+            if (!prior || Math.abs(hit.p - start - hit.n * step) < Math.abs(prior.p - start - prior.n * step)) unique.set(hit.n, hit);
+          }
+          matches = [...unique.values()];
+          if (matches.length < 6) break;
+          const mn = matches.reduce((s, v) => s + v.n, 0) / matches.length;
+          const mp = matches.reduce((s, v) => s + v.p, 0) / matches.length;
+          const den = matches.reduce((s, v) => s + (v.n - mn) ** 2, 0);
+          step = matches.reduce((s, v) => s + (v.n - mn) * (v.p - mp), 0) / den;
+          start = mp - mn * step;
+        }
+        if (matches.length < 6 || step < 5) continue;
+        const first = matches[0].n, last = matches[matches.length - 1].n;
+        const coverage = matches.length / (last - first + 1);
+        if (coverage < 0.7 || (last - first) * step < scores.length * 0.35) continue;
+        const strength = matches.reduce((s, v) => s + scores[v.p], 0);
+        const score = strength * coverage;
+        if (!best || score > best.score) best = { start, step, matches, score, coverage };
       }
     }
-    const unique = [...new Set(lines)].sort((a, b) => a - b);
-    if (unique.length < 10) return null;
-    return { lines: unique, period, start: unique[0], end: unique[unique.length - 1], intervals: unique.length - 1 };
-  }
-
-  function preferChartCount(intervals) {
-    // 画像素等色号表常见 54；线数多算成 55/56 时收成 54。
-    if (intervals >= 52 && intervals <= 56) return 54;
-    const known = [48, 42, 36, 32, 28, 24, 60, 64, 50, 40];
-    let best = intervals;
-    let bestScore = Infinity;
-    known.forEach((n, index) => {
-      const dist = Math.abs(n - intervals);
-      if (dist > 2) return;
-      const score = dist * 20 + index;
-      if (score < bestScore) {
-        bestScore = score;
-        best = n;
-      }
-    });
-    return best;
-  }
-
-  function gridFromAxes(x, y) {
-    if (!x || !y) return null;
-    const ratio = Math.max(x.period, y.period) / Math.max(1, Math.min(x.period, y.period));
-    if (ratio > 1.55 || x.intervals < 10 || y.intervals < 10 || x.intervals > 72 || y.intervals > 72) return null;
-    const cols = preferChartCount(x.intervals);
-    const rows = preferChartCount(y.intervals);
-    // Average step from the detected lines (fractional), then only keep the chart cell count.
-    const stepX = (x.end - x.start) / Math.max(1, x.intervals);
-    const stepY = (y.end - y.start) / Math.max(1, y.intervals);
-    return {
-      x0: x.start,
-      y0: y.start,
-      cols,
-      rows,
-      stepX,
-      stepY,
-      period: (stepX + stepY) / 2,
-    };
-  }
-
-  function detectGridBox(source, box) {
-    const x = snapLines(lineProjection(source, "x", box), box.x0, box.x1);
-    const y = snapLines(lineProjection(source, "y", box), box.y0, box.y1);
-    return gridFromAxes(x, y);
+    if (!best) return null;
+    const strengths = best.matches.map(v => scores[v.p]).sort((a, b) => a - b);
+    const edgeThreshold = strengths[Math.floor(strengths.length / 2)] * 0.28;
+    while (best.matches.length > 6 && scores[best.matches[0].p] < edgeThreshold) best.matches.shift();
+    while (best.matches.length > 6 && scores[best.matches[best.matches.length - 1].p] < edgeThreshold) best.matches.pop();
+    let lo = best.matches[0].n, hi = best.matches[best.matches.length - 1].n;
+    if (best.start + (lo - 1) * best.step >= -1 && best.start + (lo - 1) * best.step <= 2) lo--;
+    if (Math.abs(best.start + (hi + 1) * best.step - (scores.length - 1)) <= 2) hi++;
+    return { start: best.start + lo * best.step, step: best.step, count: hi - lo, confidence: best.coverage };
   }
 
   function detectGrid(source) {
-    if (!source?.data || source.width < 80 || source.height < 80) return null;
-    const boxes = [
-      { x0: 0, y0: 0, x1: source.width, y1: source.height },
-      {
-        x0: Math.round(source.width * 0.02),
-        y0: Math.round(source.height * 0.05),
-        x1: Math.round(source.width * 0.995),
-        y1: Math.round(source.height * 0.88),
-      },
-    ];
-    let best = null;
-    boxes.forEach((box) => {
-      const grid = detectGridBox(source, box);
-      if (!grid) return;
-      if (!best || grid.cols * grid.rows > best.cols * best.rows) best = grid;
-    });
-    return best;
-  }
-
-  function nearColor(rgb, colors, dist) {
-    if (!rgb || !colors || !colors.length) return false;
-    return colors.some((color) => rgbDist(rgb, color) <= dist);
-  }
-
-  function lineColors(source, grid) {
-    const points = [];
-    for (let col = 0; col <= grid.cols; col += 1) {
-      const x = grid.x0 + col * grid.stepX;
-      for (let i = 0; i < 6; i += 1) {
-        points.push([x, grid.y0 + ((i + 0.5) / 6) * grid.rows * grid.stepY]);
+    if (source.width < 40 || source.height < 40) return null;
+    const xs = lineProjection(source, "x"), ys = lineProjection(source, "y");
+    let x = fitAxis(xs), y = fitAxis(ys);
+    if (x && (!y || y.step > x.step * 1.3)) y = fitAxis(ys, x.step);
+    if (y && (!x || x.step > y.step * 1.3)) x = fitAxis(xs, y.step);
+    if (!x || !y || x.count < 5 || y.count < 5 || Math.max(x.step, y.step) / Math.min(x.step, y.step) > 1.3) return null;
+    const grid = { x0: x.start, y0: y.start, stepX: x.step, stepY: y.step, cols: x.count, rows: y.count,
+      confidence: Math.min(x.confidence, y.confidence) };
+    const interiorDiffers = (axis, index, color) => {
+      const count = axis === "x" ? grid.rows : grid.cols;
+      let different = 0;
+      for (let i = 0; i < count; i++) {
+        const cell = sampleCell(source, grid, axis === "x" ? index : i, axis === "y" ? index : i).rgb;
+        if (cell && distance(cell, color) > 40 ** 2) different++;
+      }
+      return different > count * 0.2;
+    };
+    const ruler = (axis, n) => {
+      const coordinate = (axis === "x" ? grid.x0 : grid.y0) + n * (axis === "x" ? grid.stepX : grid.stepY);
+      const size = axis === "x" ? source.width : source.height;
+      if (coordinate < 0 || coordinate + (axis === "x" ? grid.stepX : grid.stepY) > size + 1) return null;
+      const samples = Array.from({ length: axis === "x" ? grid.rows : grid.cols }, (_, i) =>
+        sampleCell(source, grid, axis === "x" ? n : i, axis === "y" ? n : i));
+      const values = samples.map(c => c.rgb).filter(Boolean), color = dominant(values);
+      return color && chroma(color) > 24 && samples.filter(c => c.rulerLabel && c.purity > 0.65).length > samples.length * 0.35
+        && values.filter(c => distance(c, color) < 24 ** 2).length > samples.length * 0.88 ? color : null;
+    };
+    for (const axis of ["x", "y"]) {
+      const n = axis === "x" ? grid.cols : grid.rows;
+      const origin = grid[`${axis}0`], step = axis === "x" ? grid.stepX : grid.stepY;
+      // Repeated labels can win at half a cell's phase; opposite rulers disambiguate it.
+      for (const phase of [0, -0.5, 0.5]) {
+        grid[`${axis}0`] = origin + phase * step;
+        const starts = [-3, -2, -1, 0, 1, 2, 3].map(index => ({ index, color: ruler(axis, index) })).filter(c => c.color);
+        const ends = [-3, -2, -1, 0, 1, 2, 3].map(delta => ({ index: n + delta, color: ruler(axis, n + delta) })).filter(c => c.color);
+        const pairs = starts.filter(a => interiorDiffers(axis, a.index + 1, a.color))
+          .flatMap(a => ends.filter(b => distance(a.color, b.color) < 24 ** 2 && interiorDiffers(axis, b.index - 1, b.color))
+          .map(b => ({ first: a.index + 1, count: b.index - a.index - 1, cost: Math.abs(a.index + 1) + Math.abs(b.index - n) })));
+        const pair = pairs.filter(p => p.count >= 5).sort((a, b) => a.cost - b.cost)[0];
+        if (pair) {
+          if (axis === "x") { grid.x0 += pair.first * grid.stepX; grid.cols = pair.count; }
+          else { grid.y0 += pair.first * grid.stepY; grid.rows = pair.count; }
+          break;
+        }
+        grid[`${axis}0`] = origin;
       }
     }
-    for (let row = 0; row <= grid.rows; row += 1) {
-      const y = grid.y0 + row * grid.stepY;
-      for (let i = 0; i < 6; i += 1) {
-        points.push([grid.x0 + ((i + 0.5) / 6) * grid.cols * grid.stepX, y]);
-      }
+    return grid;
+  }
+
+  function sampleCell(source, grid, col, row) {
+    const ring = [], center = [];
+    const steps = Math.max(5, Math.min(17, Math.ceil(Math.min(grid.stepX, grid.stepY))));
+    for (let y = 0; y < steps; y++) for (let x = 0; x < steps; x++) {
+      const fx = 0.16 + (x + 0.5) / steps * 0.68, fy = 0.16 + (y + 0.5) / steps * 0.68;
+      const rgb = pixel(source, grid.x0 + (col + fx) * grid.stepX, grid.y0 + (row + fy) * grid.stepY);
+      if (rgb[3] < 32) continue;
+      // Labels are centered; upper/lower strips retain the bead fill.
+      if (fy < 0.34 || fy > 0.66) ring.push(rgb);
+      else if (fx > 0.25 && fx < 0.75) center.push(rgb);
     }
-    return bucketRgb(collectSamples(source, points))
-      .filter((row) => {
-        if (row.count < 8) return false;
-        const [r, g, b] = row.rgb;
-        const chroma = row.sat;
-        const luma = row.luma;
-        if (r > 140 && r > g + 20 && r > b + 20) return true;
-        if (chroma <= 28 && luma >= 80 && luma <= 210) return true;
-        if (b >= r + 6 && luma >= 160) return true;
-        return false;
-      })
-      .slice(0, 4)
-      .map((row) => row.rgb);
+    const rgb = dominant(ring);
+    if (!rgb) return { rgb: null, label: false };
+    const inkThreshold = Math.min(130, luma(rgb) - 65);
+    const ink = center.filter(c => luma(c) < inkThreshold).length;
+    const ringInk = ring.filter(c => luma(c) < inkThreshold).length;
+    const label = ink >= Math.max(2, center.length * 0.045) && ink / Math.max(1, center.length) > ringInk / ring.length * 1.7;
+    const faintInk = center.filter(c => luma(c) < luma(rgb) - 20).length;
+    const outerInk = ring.filter(c => luma(c) < luma(rgb) - 20).length;
+    const rulerLabel = faintInk >= Math.max(2, center.length * 0.045)
+      && faintInk / Math.max(1, center.length) > outerInk / ring.length * 1.7;
+    const purity = ring.filter(c => distance(c, rgb) < 24 ** 2).length / ring.length;
+    return { rgb, label, rulerLabel, purity };
   }
 
-  function cellPoints(grid, col, row, fractions) {
-    const x0 = grid.x0 + col * grid.stepX;
-    const y0 = grid.y0 + row * grid.stepY;
-    const points = [];
-    fractions.forEach((fy) => {
-      fractions.forEach((fx) => points.push([x0 + fx * grid.stepX, y0 + fy * grid.stepY]));
-    });
-    return points;
+  function floodBackground(cells, cols, rows, candidate) {
+    const seen = new Uint8Array(cells.length), queue = [];
+    const visit = i => {
+      if (seen[i] || !candidate(cells[i], i)) return;
+      seen[i] = 1; queue.push(i);
+    };
+    for (let x = 0; x < cols; x++) { visit(x); visit((rows - 1) * cols + x); }
+    for (let y = 0; y < rows; y++) { visit(y * cols); visit(y * cols + cols - 1); }
+    for (let q = 0; q < queue.length; q++) {
+      const i = queue[q], x = i % cols, y = Math.floor(i / cols);
+      if (x > 0) visit(i - 1);
+      if (x + 1 < cols) visit(i + 1);
+      if (y > 0) visit(i - cols);
+      if (y + 1 < rows) visit(i + cols);
+    }
+    return cells.map((c, i) => seen[i] ? null : c);
   }
 
-  function guessPaper(source, grid) {
+  function sampleGrid(source, grid, background = "auto") {
     const samples = [];
-    [[1, 1], [2, 2], [3, 1], [1, 3], [2, 1]].forEach((pair) => {
-      const col = pair[0];
-      const row = pair[1];
-      if (col >= grid.cols || row >= grid.rows) return;
-      samples.push(...collectSamples(source, cellPoints(grid, col, row, [0.28, 0.5, 0.72])));
+    for (let y = 0; y < grid.rows; y++) for (let x = 0; x < grid.cols; x++) samples.push(sampleCell(source, grid, x, y));
+    const cells = samples.map(c => c.rgb);
+    if (background === "keep" || cells.some(c => !c)) return cells;
+    const edge = samples.filter((sample, i) => i < grid.cols || i >= cells.length - grid.cols
+      || i % grid.cols === 0 || i % grid.cols === grid.cols - 1);
+    // A coded background is part of the picture, even when tiny blurred codes look like blank paper.
+    if (edge.filter(sample => sample.rulerLabel).length > edge.length * 0.8) return cells;
+    const labelledPaper = samples.filter(c => c.rgb && isPaper(c.rgb) && c.label).length;
+    const cleaned = floodBackground(cells, grid.cols, grid.rows, (c, i) => !c || (isPaper(c) && !samples[i].label));
+    // A white region with repeated codes is artwork, including blurred or watermarked labels.
+    if (labelledPaper > 12) {
+      const seen = new Uint8Array(cells.length);
+      for (let i = 0; i < cells.length; i++) {
+        if (seen[i] || !isPaper(cleaned[i])) continue;
+        const region = [i]; seen[i] = 1;
+        let labels = 0;
+        for (let q = 0; q < region.length; q++) {
+          const at = region[q], x = at % grid.cols, y = Math.floor(at / grid.cols);
+          if (samples[at].label) labels++;
+          const neighbors = [];
+          if (x > 0) neighbors.push(at - 1);
+          if (x + 1 < grid.cols) neighbors.push(at + 1);
+          if (y > 0) neighbors.push(at - grid.cols);
+          if (y + 1 < grid.rows) neighbors.push(at + grid.cols);
+          for (const next of neighbors) if (!seen[next] && isPaper(cleaned[next])) { seen[next] = 1; region.push(next); }
+        }
+        if (!labels) region.forEach(at => { cleaned[at] = null; });
+      }
+    }
+    return cleaned;
+  }
+
+  function cropOccupied(cells, cols, rows, crop = true) {
+    let x0 = cols, y0 = rows, x1 = -1, y1 = -1;
+    cells.forEach((c, i) => {
+      if (!c) return;
+      x0 = Math.min(x0, i % cols); x1 = Math.max(x1, i % cols);
+      y0 = Math.min(y0, Math.floor(i / cols)); y1 = Math.max(y1, Math.floor(i / cols));
     });
-    const light = samples.filter((rgb) => lumaRgb(rgb[0], rgb[1], rgb[2]) >= 210 && sat(rgb[0], rgb[1], rgb[2]) <= 36);
-    if (light.length >= 4) return pickRgb(light) || [248, 248, 248];
-    return dominantSample(source, { x0: 0, x1: Math.min(24, source.width), y0: 0, y1: Math.min(24, source.height) })
-      || [248, 248, 248];
+    if (!crop || x1 < 0) return { cells, cols, rows, bounds: [0, 0, cols, rows] };
+    const width = x1 - x0 + 1, height = y1 - y0 + 1, next = [];
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) next.push(cells[y * cols + x]);
+    return { cells: next, cols: width, rows: height, bounds: [x0, y0, width, height] };
   }
 
-  function cellPoint(grid, col, row, fx, fy) {
-    return [grid.x0 + (col + fx) * grid.stepX, grid.y0 + (row + fy) * grid.stepY];
-  }
-
-  function meanRgb(samples) {
-    if (!samples.length) return null;
-    const n = samples.length;
-    return [0, 1, 2].map((i) => Math.round(samples.reduce((sum, rgb) => sum + rgb[i], 0) / n));
-  }
-
-  function majorityRgb(samples) {
-    if (!samples.length) return null;
-    const ranked = bucketRgb(samples);
-    return ranked[0] ? ranked[0].rgb : null;
-  }
-
-  function isAxisBlue(rgb) {
-    const [r, g, b] = rgb;
-    const luma = lumaRgb(r, g, b);
-    return b >= r + 18 && b >= g + 8 && luma >= 90 && luma <= 210;
-  }
-
-  function isGridRed(rgb) {
-    const [r, g, b] = rgb;
-    const chroma = sat(r, g, b);
-    const luma = lumaRgb(r, g, b);
-    return r > g + 36 && r > b + 28 && chroma >= 48 && luma >= 85 && luma <= 210;
-  }
-
-  function isDarkBrown(rgb) {
-    const [r, g, b] = rgb;
-    const luma = lumaRgb(r, g, b);
-    return luma < 115 && r > g + 6 && r > b + 10 && g >= b - 10 && sat(r, g, b) >= 14;
-  }
-
-  function isDarkGreen(rgb) {
-    const [r, g, b] = rgb;
-    const luma = lumaRgb(r, g, b);
-    return luma < 120 && g > r + 4 && g >= b - 4 && sat(r, g, b) >= 12;
-  }
-
-  function isMagentaPink(rgb) {
-    // 画像素粉豆经 JPEG 会发紫。按紫灯珠最近，脸会变成一圈紫。
-    const [r, g, b] = rgb;
-    const luma = lumaRgb(r, g, b);
-    const chroma = sat(r, g, b);
-    return chroma >= 20 && luma >= 90 && luma <= 220 && r > g + 6 && b > g + 6;
-  }
-
-  function isMutedRose(rgb) {
-    const [r, g, b] = rgb;
-    const luma = lumaRgb(r, g, b);
-    const chroma = sat(r, g, b);
-    return luma >= 115 && luma <= 200 && r > g + 8 && Math.abs(r - b) <= 50 && chroma >= 18;
-  }
-
-  function sampleBeadCell(source, grid, col, row, paper, lines) {
-    // 画像素 / 拼豆色号表：格子底色才是豆子，中间字母不是颜色。
-    const ring = [];
-    const steps = 11;
-    for (let j = 0; j < steps; j += 1) {
-      for (let i = 0; i < steps; i += 1) {
-        const fx = 0.22 + (i / (steps - 1)) * 0.56;
-        const fy = 0.22 + (j / (steps - 1)) * 0.56;
-        if (fx >= 0.36 && fx <= 0.64 && fy >= 0.36 && fy <= 0.64) continue;
-        const rgb = pixel(source, ...cellPoint(grid, col, row, fx, fy));
-        if (rgb[3] < 18) continue;
-        if (isAxisBlue(rgb) || isGridRed(rgb)) continue;
-        ring.push(rgb);
-      }
-    }
-    if (ring.length < 12) return null;
-    const chroma = [];
-    const paperN = [];
-    ring.forEach((rgb) => {
-      if (isPaper(rgb, paper)) paperN.push(rgb);
-      else if (sat(rgb[0], rgb[1], rgb[2]) >= 22 && lumaRgb(rgb[0], rgb[1], rgb[2]) < 210) chroma.push(rgb);
-    });
-    if (chroma.length >= Math.max(8, ring.length * 0.26)) {
-      const darkChroma = chroma.filter((rgb) => lumaRgb(rgb[0], rgb[1], rgb[2]) < 130);
-      if (darkChroma.length >= Math.max(6, chroma.length * 0.34)) {
-        return majorityRgb(darkChroma) || meanRgb(darkChroma);
-      }
-      return majorityRgb(chroma) || meanRgb(chroma);
-    }
-
-    let ink = 0;
-    for (let j = 0; j < 7; j += 1) {
-      for (let i = 0; i < 7; i += 1) {
-        const fx = 0.32 + (i / 6) * 0.36;
-        const fy = 0.32 + (j / 6) * 0.36;
-        const rgb = pixel(source, ...cellPoint(grid, col, row, fx, fy));
-        if (rgb[3] < 18) continue;
-        if (lumaRgb(rgb[0], rgb[1], rgb[2]) <= 150 && sat(rgb[0], rgb[1], rgb[2]) <= 55) ink += 1;
-      }
-    }
-    // 白豆 H2：白底 + 中间色号字母。空格没有字母。
-    if (ink >= 3 && paperN.length >= ring.length * 0.4) return [255, 255, 255];
-    return null;
-  }
-
-  function sampleGrid(source, grid) {
-    const paper = guessPaper(source, grid);
-    const lines = lineColors(source, grid);
-    const cells = [];
-    for (let row = 0; row < grid.rows; row += 1) {
-      for (let col = 0; col < grid.cols; col += 1) {
-        cells.push(sampleBeadCell(source, grid, col, row, paper, lines));
-      }
-    }
-    return cells;
-  }
-
-  function isGutterCell(rgb, paper) {
-    if (!rgb || isPaper(rgb, paper)) return true;
-    const [r, g, b] = rgb;
-    const luma = lumaRgb(r, g, b);
-    if (b >= r + 18 && b >= g + 8 && luma >= 110 && luma <= 210) return true;
-    return false;
-  }
-
-  function trimGutters(cells, cols, rows) {
-    const at = (col, row) => cells[row * cols + col];
-    const paper = [248, 248, 248];
-    const colEmpty = (col) => {
-      let empty = 0;
-      for (let row = 0; row < rows; row += 1) {
-        const rgb = at(col, row);
-        if (cellOff(rgb) || isGutterCell(rgb, paper)) empty += 1;
-      }
-      return empty / rows > 0.86;
-    };
-    const rowEmpty = (row) => {
-      let empty = 0;
-      for (let col = 0; col < cols; col += 1) {
-        const rgb = at(col, row);
-        if (cellOff(rgb) || isGutterCell(rgb, paper)) empty += 1;
-      }
-      return empty / cols > 0.86;
-    };
-    let x0 = 0;
-    let x1 = cols - 1;
-    let y0 = 0;
-    let y1 = rows - 1;
-    const rowIndex = (row) => {
-      let ink = 0;
-      let chroma = 0;
-      let paperN = 0;
-      for (let col = x0; col <= x1; col += 1) {
-        const rgb = at(col, row);
-        if (cellOff(rgb) || isGutterCell(rgb, paper)) paperN += 1;
-        else if (sat(rgb[0], rgb[1], rgb[2]) >= 16) chroma += 1;
-        else ink += 1;
-      }
-      const n = x1 - x0 + 1;
-      return chroma <= n * 0.08 && ink >= n * 0.18 && paperN + ink >= n * 0.9;
-    };
-    const colIndex = (col) => {
-      let ink = 0;
-      let chroma = 0;
-      let paperN = 0;
-      for (let row = y0; row <= y1; row += 1) {
-        const cell = at(col, row);
-        if (cellOff(cell) || isGutterCell(cell, paper)) paperN += 1;
-        else if (sat(cell[0], cell[1], cell[2]) >= 16) chroma += 1;
-        else ink += 1;
-      }
-      const n = y1 - y0 + 1;
-      return chroma <= n * 0.08 && ink >= n * 0.18 && paperN + ink >= n * 0.9;
-    };
-    while (x1 - x0 + 1 > 12 && colEmpty(x0)) x0 += 1;
-    while (x1 - x0 + 1 > 12 && colEmpty(x1)) x1 -= 1;
-    while (y1 - y0 + 1 > 12 && rowEmpty(y0)) y0 += 1;
-    while (y1 - y0 + 1 > 12 && rowEmpty(y1)) y1 -= 1;
-    while (x1 - x0 + 1 > 12 && colIndex(x0)) x0 += 1;
-    while (x1 - x0 + 1 > 12 && colIndex(x1)) x1 -= 1;
-    while (y1 - y0 + 1 > 12 && rowIndex(y0)) y0 += 1;
-    while (y1 - y0 + 1 > 12 && rowIndex(y1)) y1 -= 1;
-    if (cols >= 54 && cols <= 64 && x0 === 0 && x1 === cols - 1) {
-      x0 = 1;
-      x1 = cols - 2;
-    }
-    if (rows >= 54 && rows <= 64 && y0 === 0 && y1 === rows - 1) {
-      y0 = 1;
-      y1 = rows - 2;
-    }
-    const nextCols = x1 - x0 + 1;
-    const nextRows = y1 - y0 + 1;
-    const next = [];
-    for (let row = y0; row <= y1; row += 1) {
-      for (let col = x0; col <= x1; col += 1) next.push(at(col, row));
-    }
-    return { cells: next, cols: nextCols, rows: nextRows, paper };
-  }
-
-  function clusterColors(rgbs, maxColors) {
+  function consolidateColors(cells) {
     const counts = new Map();
-    rgbs.forEach((rgb) => {
-      if (!rgb) return;
-      const key = rgb.map((value) => Math.round(value / 10) * 10).join(",");
-      const row = counts.get(key) || { rgb: [0, 0, 0], count: 0 };
-      row.count += 1;
-      row.rgb[0] += rgb[0];
-      row.rgb[1] += rgb[1];
-      row.rgb[2] += rgb[2];
-      counts.set(key, row);
-    });
-    const samples = [...counts.values()].map((row) => {
-      const rgb = row.rgb.map((value) => Math.round(value / row.count));
-      return { rgb, lab: rgbToLab(...rgb), count: row.count };
-    }).sort((a, b) => b.count - a.count);
-    const want = Math.max(1, Math.min(maxColors, samples.length));
-    const centers = samples.slice(0, 1);
-    while (centers.length < want) {
-      let pick = null;
-      let score = -1;
-      samples.forEach((sample) => {
-        const distance = Math.min(...centers.map((center) => labDist(sample.lab, center.lab)));
-        const next = distance * Math.sqrt(sample.count);
-        if (next > score) {
-          score = next;
-          pick = sample;
-        }
-      });
-      if (!pick) break;
-      centers.push(pick);
+    for (const rgb of cells) {
+      if (!rgb) continue;
+      const key = rgb.join(",");
+      const sample = counts.get(key) || { key, rgb, count: 0 };
+      sample.count++;
+      counts.set(key, sample);
     }
-    return centers.map((center) => ({ rgb: center.rgb.slice(), lab: center.lab.slice(), count: center.count }));
-  }
-
-  function nearestFrame(rgb, palette, dark) {
-    // Each source cell → one lamp. null / paper → off.
-    // Palette has no true brown: dark brown outline uses dusty rose (0).
-    // JPEG pinks go bluish; keep them on the pink row, not purple.
-    if (!rgb) return dark;
-    const luma = lumaRgb(rgb[0], rgb[1], rgb[2]);
-    const chroma = sat(rgb[0], rgb[1], rgb[2]);
-    const explicitWhite = rgb[0] >= 250 && rgb[1] >= 250 && rgb[2] >= 250;
-    if (!explicitWhite && isPaper(rgb)) return dark;
-    if (luma < 38 && chroma < 18) return dark;
-    if (isDarkBrown(rgb) && palette.length) return 0;
-    if (isMagentaPink(rgb) && palette.length > 42) return 42;
-    if (isMutedRose(rgb) && palette.length > 42) return luma >= 175 ? 3 : 42;
-    const [r, g, b] = rgb;
-    if (g > 160 && g > r + 20 && g > b + 20 && palette.length > 17) return 17;
-    const pick = (allowGray, allowed) => {
-      let best = -1;
-      let dist = Infinity;
-      palette.forEach((hex, index) => {
-        if (allowed && !allowed.has(index)) return;
-        const prgb = hexToRgb(hex);
-        const pSat = sat(...prgb);
-        if (!allowGray && chroma >= 14 && pSat < 14) return;
-        const next = rgbDist(rgb, prgb);
-        if (next < dist) {
-          dist = next;
-          best = index;
-        }
-      });
-      return best;
-    };
-    if (isDarkGreen(rgb) && palette.length > 24) {
-      const greens = new Set();
-      for (let i = 15; i <= 24; i += 1) greens.add(i);
-      let green = pick(false, greens);
-      if (green < 0) green = pick(true, greens);
-      if (green >= 0) return green;
-    }
-    let best = pick(false);
-    if (best < 0) best = pick(true);
-    return best < 0 ? dark : best;
-  }
-
-  function cellOff(rgb) {
-    return !rgb;
-  }
-
-  function denoiseCells(cells, cols, rows) {
-    const next = cells.slice();
-    const at = (col, row) => next[row * cols + col];
-    for (let row = 0; row < rows; row += 1) {
-      for (let col = 0; col < cols; col += 1) {
-        if (cellOff(at(col, row))) continue;
-        let n = 0;
-        for (let dy = -1; dy <= 1; dy += 1) {
-          for (let dx = -1; dx <= 1; dx += 1) {
-            if (!dx && !dy) continue;
-            const x = col + dx;
-            const y = row + dy;
-            if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
-            if (!cellOff(cells[y * cols + x])) n += 1;
-          }
-        }
-        if (n < 2) next[row * cols + col] = null;
+    const groups = [], assignments = new Map();
+    for (const sample of [...counts.values()].sort((a, b) => b.count - a.count)) {
+      const lab = rgbToLab(sample.rgb);
+      let group = null, best = 3.5 ** 2;
+      for (const candidate of groups) {
+        const d = distance(lab, candidate.lab);
+        if (d < best) { group = candidate; best = d; }
       }
+      if (!group) {
+        group = { lab, sum: [0, 0, 0], count: 0 };
+        groups.push(group);
+      }
+      // Fixed color anchors avoid merging a chain of distinct neighboring shades.
+      group.count += sample.count;
+      for (let i = 0; i < 3; i++) group.sum[i] += sample.rgb[i] * sample.count;
+      assignments.set(sample.key, group);
     }
-    return next;
+    for (const group of groups) group.rgb = group.sum.map(value => Math.round(value / group.count));
+    return cells.map(rgb => rgb ? assignments.get(rgb.join(",")).rgb : null);
   }
 
-  function cropOccupied(cells, cols, rows, paper) {
-    let x0 = cols;
-    let y0 = rows;
-    let x1 = -1;
-    let y1 = -1;
-    cells.forEach((rgb, index) => {
-      if (cellOff(rgb)) return;
-      const col = index % cols;
-      const row = Math.floor(index / cols);
-      x0 = Math.min(x0, col);
-      y0 = Math.min(y0, row);
-      x1 = Math.max(x1, col);
-      y1 = Math.max(y1, row);
-    });
-    if (x1 < 0) return { cells, cols, rows };
-    const pad = 1;
-    x0 = Math.max(0, x0 - pad);
-    y0 = Math.max(0, y0 - pad);
-    x1 = Math.min(cols - 1, x1 + pad);
-    y1 = Math.min(rows - 1, y1 + pad);
-    const nextCols = x1 - x0 + 1;
-    const nextRows = y1 - y0 + 1;
-    const next = [];
-    for (let row = y0; row <= y1; row += 1) {
-      for (let col = x0; col <= x1; col += 1) next.push(cells[row * cols + col]);
-    }
-    return { cells: next, cols: nextCols, rows: nextRows };
-  }
-
-  function fitCells(cells, cols, rows, outCols, outRows, palette, dark, paper) {
-    // Nearest-neighbor scale: one source cell → one lamp color, no blending.
+  function fitCells(cells, cols, rows, outCols, outRows, match, dark, sampling = "balanced") {
     const page = new Array(outCols * outRows).fill(dark);
-    const scale = Math.min(1, outCols / cols, outRows / rows);
-    const usedW = Math.max(1, Math.round(cols * scale));
-    const usedH = Math.max(1, Math.round(rows * scale));
-    const ox = Math.floor((outCols - usedW) / 2);
-    const oy = Math.floor((outRows - usedH) / 2);
-    for (let y = 0; y < usedH; y += 1) {
-      for (let x = 0; x < usedW; x += 1) {
-        const sx = Math.min(cols - 1, Math.floor(((x + 0.5) * cols) / usedW));
-        const sy = Math.min(rows - 1, Math.floor(((y + 0.5) * rows) / usedH));
-        page[(oy + y) * outCols + (ox + x)] = nearestFrame(cells[sy * cols + sx], palette, dark);
+    const scale = Math.min(outCols / cols, outRows / rows);
+    const width = Math.max(1, Math.round(cols * scale)), height = Math.max(1, Math.round(rows * scale));
+    const ox = Math.floor((outCols - width) / 2), oy = Math.floor((outRows - height) / 2);
+    const mapped = cells.map(match);
+    const importance = mapped.map((frame, i) => {
+      if (!cells[i]) return 1;
+      const x = i % cols, y = Math.floor(i / cols);
+      let contrasting = 0, different = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if ((!dx && !dy) || x + dx < 0 || x + dx >= cols || y + dy < 0 || y + dy >= rows) continue;
+        const other = (y + dy) * cols + x + dx;
+        if (mapped[other] === frame) continue;
+        different++;
+        if (!cells[other] || Math.abs(luma(cells[i]) - luma(cells[other])) > 48) contrasting++;
       }
+      // Strong edge boosting merges neighboring marks at severe reductions.
+      // Balanced mode limits it; explicit detail mode remains available for
+      // sparse drawings whose isolated strokes matter more than area fidelity.
+      const stroke = different >= 5 && contrasting >= 4;
+      if (sampling === "detail") return stroke ? clamp(1 / scale, 1, 3) : different && luma(cells[i]) < 125 ? 1.55 : 1;
+      const straight = (x > 0 && x + 1 < cols && mapped[i - 1] === frame && mapped[i + 1] === frame)
+        || (y > 0 && y + 1 < rows && mapped[i - cols] === frame && mapped[i + cols] === frame);
+      return stroke ? clamp(1 / scale, 1, straight ? 2.4 : 1.8) : different && luma(cells[i]) < 125 ? 1.15 : 1;
+    });
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const cx = clamp(Math.floor((x + 0.5) * cols / width), 0, cols - 1);
+      const cy = clamp(Math.floor((y + 0.5) * rows / height), 0, rows - 1);
+      let frame = mapped[cy * cols + cx];
+      if (scale < 1 && sampling !== "nearest") {
+        const weights = new Map();
+        const x0 = x * cols / width, x1 = (x + 1) * cols / width;
+        const y0 = y * rows / height, y1 = (y + 1) * rows / height;
+        for (let sy = Math.floor(y0); sy < Math.ceil(y1); sy++) for (let sx = Math.floor(x0); sx < Math.ceil(x1); sx++) {
+          const i = Math.min(rows - 1, sy) * cols + Math.min(cols - 1, sx);
+          const area = (Math.min(sx + 1, x1) - Math.max(sx, x0)) * (Math.min(sy + 1, y1) - Math.max(sy, y0));
+          weights.set(mapped[i], (weights.get(mapped[i]) || 0) + area * importance[i]);
+        }
+        frame = [...weights].sort((a, b) => b[1] - a[1]
+          || Number(b[0] === frame) - Number(a[0] === frame) || a[0] - b[0])[0][0];
+      }
+      page[(y + oy) * outCols + x + ox] = frame;
     }
-    return { page, usedW, usedH };
+    return { page, used: [width, height] };
   }
 
-  function samplePhoto(source, outCols, outRows, palette, dark) {
-    const page = new Array(outCols * outRows).fill(dark);
-    const paper = dominantSample(source, { x0: 0, x1: source.width * 0.08, y0: 0, y1: source.height * 0.08 })
-      || [255, 255, 255];
-    for (let y = 0; y < outRows; y += 1) {
-      for (let x = 0; x < outCols; x += 1) {
-        const rgb = dominantSample(source, {
-          x0: (x / outCols) * source.width,
-          x1: ((x + 1) / outCols) * source.width,
-          y0: (y / outRows) * source.height,
-          y1: ((y + 1) / outRows) * source.height,
-        });
-        const luma = rgb ? lumaRgb(rgb[0], rgb[1], rgb[2]) : 255;
-        const chroma = rgb ? sat(rgb[0], rgb[1], rgb[2]) : 0;
-        const off = !rgb || isPaper(rgb, paper) || (luma >= 198 && chroma <= 30);
-        page[y * outCols + x] = off ? dark : nearestFrame(rgb, palette, dark);
+  function sampleRaster(source, background, outCols, outRows) {
+    const scale = Math.min(1, Math.max(outCols, outRows) * 6 / Math.max(source.width, source.height));
+    const cols = Math.max(1, Math.round(source.width * scale)), rows = Math.max(1, Math.round(source.height * scale));
+    const cells = [];
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const samples = [];
+      const n = scale === 1 ? 1 : 3;
+      for (let sy = 0; sy < n; sy++) for (let sx = 0; sx < n; sx++) {
+        const rgb = pixel(source, (x + (sx + 0.5) / n) * source.width / cols - 0.5,
+          (y + (sy + 0.5) / n) * source.height / rows - 0.5);
+        if (rgb[3] >= 32) samples.push(rgb);
       }
+      cells.push(samples.length < n * n * 0.5 ? null : dominant(samples));
     }
-    return page;
+    const explicitBackground = cells.some(c => !c);
+    return { cols, rows, cells: background === "keep" || explicitBackground ? cells : floodBackground(cells, cols, rows, c => !c || isPaper(c)) };
   }
 
   function analyze(source, palette, options = {}) {
-    const outCols = Number(options.cols) || COLS;
-    const outRows = Number(options.rows) || ROWS;
-    const dark = Number.isFinite(options.dark) ? Number(options.dark) : DARK;
-    const colors = Array.isArray(palette) ? palette : [];
-    const grid = detectGrid(source);
-    if (grid) {
-      const sampled = sampleGrid(source, grid);
-      const trimmed = trimGutters(sampled, grid.cols, grid.rows);
-      const cleaned = denoiseCells(trimmed.cells, trimmed.cols, trimmed.rows);
-      const occupied = cropOccupied(cleaned, trimmed.cols, trimmed.rows, trimmed.paper);
-      const lit = occupied.cells.filter((rgb) => !cellOff(rgb));
-      const clusters = clusterColors(lit.filter((rgb) => !(rgb[0] >= 250 && rgb[1] >= 250 && rgb[2] >= 250)), 8);
-      const fitted = fitCells(occupied.cells, occupied.cols, occupied.rows, outCols, outRows, colors, dark, trimmed.paper);
-      return {
-        page: fitted.page,
-        mode: "grid",
-        grid: { cols: occupied.cols, rows: occupied.rows, detected: [grid.cols, grid.rows], used: [fitted.usedW, fitted.usedH] },
-        colors: clusters.map((row) => row.rgb),
-        sourceLit: lit.length,
-        message: `识别到 ${occupied.cols}×${occupied.rows} 拼豆色号格，已等比放进 ${fitted.usedW}×${fitted.usedH} 灯珠，白底关灯。`,
-      };
+    if (!source || !Number.isInteger(source.width) || !Number.isInteger(source.height)
+      || source.width < 1 || source.height < 1 || !source.data || source.data.length !== source.width * source.height * 4) {
+      throw new Error("图片像素数据无效");
     }
-    return {
-      page: samplePhoto(source, outCols, outRows, colors, dark),
-      mode: "photo",
-      grid: null,
-      colors: [],
-      message: `没认出色号格，按 ${outCols}×${outRows} 灯珠取样；浅底已关灯。`,
-    };
+    const cols = clamp(Math.round(Number(options.cols) || COLS), 1, 512);
+    const rows = clamp(Math.round(Number(options.rows) || ROWS), 1, 512);
+    const dark = Number.isInteger(options.dark) ? options.dark : DARK;
+    const match = colorMatcher(palette || [], dark);
+    const grid = options.mode === "photo" ? null : detectGrid(source);
+    if (options.mode === "grid" && !grid) throw new Error("未识别到规则网格，请选择自动识别或普通图片。");
+    const sampled = grid ? { cells: sampleGrid(source, grid, options.background), cols: grid.cols, rows: grid.rows }
+      : sampleRaster(source, options.background, cols, rows);
+    if (grid) sampled.cells = consolidateColors(sampled.cells);
+    const occupied = cropOccupied(sampled.cells, sampled.cols, sampled.rows, options.crop !== false);
+    const fitted = fitCells(occupied.cells, occupied.cols, occupied.rows, cols, rows, match, dark, options.sampling);
+    const usedFrames = [...new Set(fitted.page)].filter(frame => frame !== dark);
+    const colors = usedFrames.map(frame => Array.isArray(palette[frame]) ? palette[frame].slice() : hexToRgb(palette[frame]));
+    const reduced = occupied.cols > fitted.used[0] || occupied.rows > fitted.used[1];
+    const reductionNote = reduced ? " 已缩小，细字和单格细节会丢失；可切换缩放方式对比。" : "";
+    return { page: fitted.page, mode: grid ? "grid" : "photo",
+      grid: grid ? { ...grid, detected: [grid.cols, grid.rows], used: fitted.used, bounds: occupied.bounds } : null,
+      colors, sourceLit: occupied.cells.filter(Boolean).length,
+      message: (grid ? `已识别 ${grid.cols}×${grid.rows} 格，主体 ${occupied.cols}×${occupied.rows}，灯牌 ${fitted.used[0]}×${fitted.used[1]}。`
+        : `图片 ${source.width}×${source.height}，灯牌 ${fitted.used[0]}×${fitted.used[1]}。`) + reductionNote };
   }
 
   function sourceFromCanvas(canvas) {
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const image = canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
     return { width: image.width, height: image.height, data: image.data };
   }
 
-  return {
-    COLS,
-    ROWS,
-    DARK,
-    analyze,
-    detectGrid,
-    sampleGrid,
-    isPaper,
-    nearestFrame,
-    sourceFromCanvas,
-  };
+  return { COLS, ROWS, DARK, analyze, detectGrid, sampleGrid, isPaper, nearestFrame, paletteFromSprite, sourceFromCanvas };
 });

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import base64
 import json
 from pathlib import Path
 
@@ -264,6 +265,34 @@ def _pages_from_gif(data: bytes) -> list[list[int]]:
         except EOFError:
             break
     return pages or [[DARK] * (COLS * ROWS)]
+
+
+def decode_gif_frames(data: bytes) -> dict:
+    """Return composited, unquantized frames for the desk's full mosaic sampler.
+
+    Pillow's sequential seek applies partial-frame offsets, transparency and
+    disposal before conversion. Never resize each frame's changing ink bounds.
+    """
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as image:
+        if image.format != "GIF":
+            raise ValueError("请选择 GIF 动图")
+        width, height = image.size
+        total = image.n_frames
+        frames = []
+        for index in range(min(total, MAX_PAGES)):
+            image.seek(index)
+            rgba = image.convert("RGBA")
+            rgba.thumbnail((1800, 1800), Image.Resampling.NEAREST)
+            output = io.BytesIO()
+            rgba.save(output, format="PNG")
+            frames.append({
+                "png": "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii"),
+                "duration": max(10, int(image.info.get("duration") or 100)),
+            })
+        interval = max(50, min(99999, round(sum(frame["duration"] for frame in frames) / len(frames))))
+        return {"frames": frames, "frameCount": total, "width": width, "height": height, "interval": interval}
 
 
 def decode_board_ani(data: bytes) -> dict:

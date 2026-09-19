@@ -1448,8 +1448,8 @@ test("paper library building thumbs render sprites instead of a green label", ()
   assert.match(buildingJs, /thumbLooksLikePlaceholder\(img\)/);
   assert.match(paperCore, /b > r \+ 8 && b >= g/);
   assert.match(terrainHtml, /paper-library-core\.js\?v=22/);
-  assert.match(terrainHtml, /image-terrain-core\.js\?v=8/);
-  assert.match(terrainHtml, /app\.js\?v=293/);
+  assert.match(terrainHtml, /image-terrain-core\.js\?v=11/);
+  assert.match(terrainHtml, /app\.js\?v=300/);
   assert.match(terrainHtml, /building-preview\.js\?v=10/);
   assert.match(buildingHtml, /paper-library-core\.js\?v=22/);
   assert.match(buildingHtml, /building\.js\?v=280/);
@@ -1652,7 +1652,7 @@ test("paper library can batch-assign groups on both desks", () => {
     assert.match(html, /id="btnPaperLibrarySelectVisible"/);
     assert.match(html, /id="btnPaperLibraryBatchClear"/);
     assert.match(html, /paper-library\.css\?v=15/);
-    assert.match(html, /mobile-workspace\.css\?v=111/);
+    assert.match(html, html === terrainHtml ? /mobile-workspace\.css\?v=112/ : /mobile-workspace\.css\?v=111/);
     assert.match(html, /id="btnPaperLibraryArchive"/);
     assert.match(html, /id="btnPaperLibraryBatchArchive"/);
     assert.match(html, /id="btnPaperLibraryRenameGroup"/);

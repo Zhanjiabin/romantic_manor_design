@@ -31,7 +31,7 @@ from codec.building import dumps_gbk as dumps_building
 from codec.building import loads_gbk as loads_building
 from codec.building import public_document as public_building_document
 from codec.ale import AleError, dumps_png
-from codec.board_ani import decode_board_ani, encode_board_ani, safe_ani_filename
+from codec.board_ani import decode_board_ani, decode_gif_frames, encode_board_ani, safe_ani_filename
 from codec.terrain import dumps_document as dumps_terrain_document
 from codec.terrain import dumps_gbk as dumps_terrain
 from codec.terrain import loads_gbk as loads_terrain
@@ -957,7 +957,7 @@ class Handler(SimpleHTTPRequestHandler):
                 blob = base64.b64decode(str(obj.get("data") or ""), validate=False)
                 if not blob:
                     return self._send(400, b'{"error":"missing data"}', "application/json; charset=utf-8")
-                doc = decode_board_ani(blob)
+                doc = decode_gif_frames(blob) if obj.get("sourceFrames") is True else decode_board_ani(blob)
                 body = json.dumps(doc, ensure_ascii=False).encode("utf-8")
                 return self._send(200, body, "application/json; charset=utf-8")
             except Exception as exc:

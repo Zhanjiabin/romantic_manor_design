@@ -12,11 +12,11 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/favicon.ico" sizes="32x32" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/web/app.css?v=107" />
+  <link rel="stylesheet" href="/web/app.css?v=110" />
   <link rel="stylesheet" href="/web/desk-chrome.css?v=13" />
   <link rel="stylesheet" href="/web/paper-library.css?v=15" />
   <link rel="stylesheet" href="/web/material-ledger.css?v=4" />
-  <link rel="stylesheet" href="/web/mobile-workspace.css?v=111" />
+  <link rel="stylesheet" href="/web/mobile-workspace.css?v=112" />
 </head>
 <body>
   <div class="app" id="desk">
@@ -158,6 +158,18 @@
 
       <main class="map-host" id="mapHost">
         <div class="map-stage">
+          <div class="image-region-toolbar" id="imageRegionToolbar" hidden role="group" aria-label="划定图片生成区域">
+            <label class="image-region-shape"><span>选区</span><select class="input" id="imageRegionShape" aria-label="选区形状"><option value="image">图片比例</option><option value="square">正方形 1:1</option><option value="free">自由矩形</option><option value="polygon">多边形</option></select></label>
+            <div class="image-region-dimensions" id="imageRegionDimensions">
+              <label>宽<input class="input" id="imageRegionWidth" type="number" min="32" step="1" inputmode="numeric" aria-label="选区宽度" title="地图像素" /></label>
+              <label>高<input class="input" id="imageRegionHeight" type="number" min="32" step="1" inputmode="numeric" aria-label="选区高度" title="地图像素" /></label>
+            </div>
+            <span id="imageRegionHelp" role="status"></span>
+            <label class="check"><input type="checkbox" id="imageRegionGhost" checked /><span>图片预览</span></label>
+            <button type="button" class="btn" id="btnImageRegionUndo" title="撤回最后一个顶点">撤回一点</button>
+            <button type="button" class="btn btn-primary" id="btnImageRegionFinish" title="完成选区（Enter）">完成选区</button>
+            <button type="button" class="btn" id="btnImageRegionCancel" title="取消划定（Esc）">取消</button>
+          </div>
           <canvas id="view" width="581" height="551"></canvas>
           <div class="map-overlay">
             <div class="map-coord" id="coord">0, 0</div>
@@ -462,10 +474,22 @@
         <p class="dlg-desc">可切换原始、智能增强或网格图识别；先在预览里修正，再一次铺到地图。</p>
         <div class="image-terrain-preview-wrap">
           <div class="image-preview-mode" role="group" aria-label="预览内容">
-            <button type="button" class="btn on" data-image-preview-mode="source" aria-pressed="true">识别分色</button>
-            <button type="button" class="btn" data-image-preview-mode="terrain" aria-pressed="false">地块结果</button>
+            <button type="button" class="btn" data-image-preview-mode="original" aria-pressed="false">原图裁剪</button>
+            <button type="button" class="btn" data-image-preview-mode="source" aria-pressed="false">识别分色</button>
+            <button type="button" class="btn on" data-image-preview-mode="terrain" aria-pressed="true">真实地形</button>
           </div>
           <canvas id="imageTerrainPreview" width="256" height="256" aria-label="颜色预览"></canvas>
+          <div id="imageTerrainCropTools" hidden>
+            <div class="field-row">
+              <label class="field"><span>取图范围</span><select class="input" id="imageTerrainCropPreset"><option value="custom">自定义</option><option value="full">整张图片</option><option value="bottom">下半部分</option><option value="top">上半部分</option><option value="left">左半部分</option><option value="right">右半部分</option></select></label>
+              <label class="field"><span>裁剪比例</span><select class="input" id="imageTerrainCropAspect"><option value="free">自由</option><option value="square">正方形 1:1</option><option value="image">原图比例</option></select></label>
+            </div>
+            <p class="image-terrain-status" id="imageTerrainCropStatus" role="status"></p>
+            <div class="image-edit-actions">
+              <button type="button" class="btn" id="btnImageTerrainCropApply" disabled>使用裁剪</button>
+              <button type="button" class="btn" id="btnImageTerrainCropReset">恢复整图</button>
+            </div>
+          </div>
           <p class="image-terrain-status" id="imageTerrainStatus">导入图片后可预览颜色分区。</p>
           <div class="image-terrain-editor" id="imageTerrainEditor" aria-label="预览修改工具">
             <div class="image-edit-tools" role="group" aria-label="修改方式">
@@ -486,8 +510,10 @@
           </div>
         </div>
         <div class="image-terrain-options">
+          <label class="field"><span>地形配色</span><select class="input" id="imageTerrainMappingMode"><option value="distinct" selected>保留色块区别（推荐）</option><option value="nearest">接近原图颜色</option></select></label>
+          <p class="image-terrain-status" id="imageTerrainMappingStatus" role="status"></p>
           <div class="field-row">
-            <label class="field"><span>识别算法</span><select class="input" id="imageTerrainAlgorithm"><option value="enhanced" selected>智能增强（推荐）</option><option value="point">原始单点采样</option><option value="grid">网格图增强</option></select></label>
+            <label class="field"><span>识别算法</span><select class="input" id="imageTerrainAlgorithm"><option value="enhanced" selected>自动识别（推荐）</option><option value="region">区域增强</option><option value="point">原始单点采样</option><option value="grid">网格图增强</option></select></label>
             <label class="field"><span>近色处理</span><select class="input" id="imageTerrainDetail"><option value="merge">合并相近色</option><option value="split" selected>拆分近色（推荐）</option><option value="fine">精细拆分</option></select></label>
           </div>
           <div class="field-row">
@@ -496,10 +522,20 @@
           </div>
           <div class="field-row">
             <label class="field"><span>落图方式</span><select class="input" id="imageTerrainProjection"><option value="front" selected>正面（屏幕横平竖直）</option><option value="iso">地形轴（斜向铺格）</option></select></label>
-            <label class="field"><span>图片适配</span><select class="input" id="imageTerrainFit"><option value="stretch" selected>拉伸铺满</option><option value="cover">铺满裁切</option><option value="contain">完整显示</option></select></label>
+            <label class="field"><span>图片适配</span><select class="input" id="imageTerrainFit"><option value="contain" selected>保持比例 · 完整显示</option><option value="cover">保持比例 · 铺满裁切</option><option value="stretch">拉伸铺满</option></select></label>
           </div>
           <label class="field"><span>透明阈值</span><input class="input" id="imageTerrainAlpha" type="number" min="0" max="255" value="16" inputmode="numeric" /></label>
-          <label class="check"><input type="checkbox" id="imageTerrainSkipBg" /><span>跳过背景色（四角取样，那些格子不铺）</span></label>
+          <label class="check"><input type="checkbox" id="imageTerrainSkipBg" /><span>跳过背景色（网格图按空白格判断）</span></label>
+          <div class="image-terrain-region-tools">
+            <div class="field-row">
+              <label class="field"><span>生成范围</span><select class="input" id="imageTerrainScope"><option value="full" selected>整张地图</option><option value="rectangle">矩形选区</option><option value="polygon">多边形选区</option></select></label>
+              <div class="image-terrain-region-actions">
+                <button type="button" class="btn" id="btnImageTerrainPickRegion" title="矩形：拖拽框选；多边形：单击添加顶点">在地图上划定</button>
+                <button type="button" class="btn" id="btnImageTerrainClearRegion" hidden>清除选区</button>
+              </div>
+            </div>
+            <p class="image-terrain-region-status" id="imageTerrainRegionStatus">整张地图</p>
+          </div>
           <label class="check"><input type="checkbox" id="imageTerrainReplace" checked /><span>生成前清空现有地形笔触</span></label>
           <div class="image-color-map" id="imageColorMap" role="list" aria-label="颜色对应地形"></div>
           <button type="button" class="btn btn-primary btn-block" id="btnApplyImageTerrain">铺满当前地图</button>
@@ -590,7 +626,7 @@
   <script src="/web/mobile-workspace.js?v=14"></script>
   <script src="/web/building-preview.js?v=10"></script>
   <script src="/web/material-ledger.js?v=3"></script>
-  <script src="/web/image-terrain-core.js?v=8"></script>
-  <script src="/web/app.js?v=293"></script>
+  <script src="/web/image-terrain-core.js?v=11"></script>
+  <script src="/web/app.js?v=300"></script>
 </body>
 </html>

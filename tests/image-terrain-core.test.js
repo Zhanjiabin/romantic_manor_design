@@ -3,6 +3,40 @@ const assert = require("node:assert/strict");
 
 const core = require("../web/image-terrain-core.js");
 
+test("material mapping preserves distinct pastel regions without inventing colors", () => {
+  const palette = [
+    { rgb: [248, 248, 248], count: 1000 }, { rgb: [68, 36, 20], count: 300 },
+    { rgb: [233, 195, 234], count: 250 }, { rgb: [249, 190, 192], count: 120 },
+  ];
+  const materials = [[226, 239, 250], [133, 99, 48], [188, 189, 195], [237, 192, 130], [37, 105, 12]].map(rgb => ({ rgb }));
+  const nearest = core.mapPaletteToMaterials(palette, materials, "nearest");
+  const distinct = core.mapPaletteToMaterials(palette, materials, "distinct");
+  assert.equal(nearest[2], nearest[3]);
+  assert.equal(new Set(distinct).size, 4);
+  assert.equal(distinct[0], 0);
+  assert.equal(distinct[1], 1);
+  assert.ok(distinct.every(i => i >= 0 && i < materials.length));
+});
+
+test("near shades can share a material and zero-count colors stay unused", () => {
+  const assignments = core.mapPaletteToMaterials([
+    { rgb: [245, 245, 245], count: 100 }, { rgb: [240, 241, 242], count: 50 },
+    { rgb: [0, 0, 0], count: 0 },
+  ], [{ rgb: [226, 239, 250] }, { rgb: [133, 99, 48] }]);
+  assert.deepEqual(assignments, [0, 0, -1]);
+});
+
+test("source crop excludes screenshot chrome and preserves pixel alpha", () => {
+  const source = image(20, 10, [10, 20, 30]);
+  setPixel(source, 7, 4, [200, 100, 50]);
+  source.pixels[(4 * 20 + 7) * 4 + 3] = 80;
+  const result = core.cropSource(source, { x: 0.25, y: 0.2, w: 0.5, h: 0.6 });
+  assert.equal(result.width, 10);
+  assert.equal(result.height, 6);
+  assert.deepEqual([...result.pixels.slice((2 * 10 + 2) * 4, (2 * 10 + 2) * 4 + 4)], [200, 100, 50, 80]);
+  assert.equal(core.cropSource(source, null), source);
+});
+
 function image(width, height, rgb = [245, 245, 245]) {
   const pixels = new Uint8ClampedArray(width * height * 4);
   for (let offset = 0; offset < pixels.length; offset += 4) {
@@ -189,4 +223,128 @@ test("no-cleanup mode is an exact copy", () => {
   assert.deepEqual(result.indices, original);
   assert.notEqual(result.indices, original);
   assert.equal(result.changed, 0);
+});
+
+function chart(cols, rows, stepX, stepY = stepX, options = {}) {
+  const x0 = options.x0 ?? 17, y0 = options.y0 ?? 29;
+  const source = image(Math.ceil(x0 + cols * stepX + 24), Math.ceil(y0 + rows * stepY + 37));
+  for (let y = Math.floor(y0); y <= Math.ceil(y0 + rows * stepY); y++) {
+    for (let x = Math.floor(x0); x <= Math.ceil(x0 + cols * stepX); x++) {
+      const gx = (x - x0) / stepX, gy = (y - y0) / stepY;
+      const col = Math.floor(gx), row = Math.floor(gy);
+      const edge = Math.abs(gx - Math.round(gx)) * stepX < 0.65
+        || Math.abs(gy - Math.round(gy)) * stepY < 0.65;
+      let rgb = options.fill?.(col, row) || [240, 240, 240];
+      if (edge) rgb = options.line || [80, 80, 80];
+      else if (options.labels?.(col, row)) {
+        const fx = gx - col, fy = gy - row;
+        if (fy > 0.39 && fy < 0.61 && fx > 0.3 && fx < 0.7) {
+          rgb = rgb[0] + rgb[1] + rgb[2] > 400 ? [20, 20, 20] : [250, 250, 250];
+        }
+      }
+      setPixel(source, x, y, rgb);
+    }
+  }
+  return source;
+}
+
+test("grid dimensions and fractional pitch are measured independently", () => {
+  for (const [cols, rows, sx, sy] of [[31, 27, 12, 12], [17, 19, 21, 21], [12, 9, 70, 70], [47, 35, 9.45, 9.45], [24, 16, 20, 14]]) {
+    const source = chart(cols, rows, sx, sy, { labels: () => true });
+    const grid = core.detectGrid(source);
+    assert.ok(grid, `${cols} x ${rows}`);
+    assert.deepEqual([grid.cols, grid.rows], [cols, rows]);
+    assert.ok(Math.abs(grid.stepX - sx) < 0.15 && Math.abs(grid.stepY - sy) < 0.15);
+    assert.equal(grid.autoSuitable, true);
+  }
+});
+
+test("colored numbered borders are excluded without a fixed border color or grid size", () => {
+  for (const color of [[190, 60, 65], [40, 155, 100], [100, 90, 200]]) {
+    const cols = 25, rows = 18;
+    const source = chart(cols + 2, rows + 2, 18, 18, {
+      fill: (x, y) => x === 0 || y === 0 || x === cols + 1 || y === rows + 1 ? color : [250, 250, 250],
+      labels: (x, y) => x === 0 || y === 0 || x === cols + 1 || y === rows + 1,
+    });
+    const grid = core.detectGrid(source);
+    assert.deepEqual([grid.cols, grid.rows], [cols, rows]);
+    assert.equal(grid.rulers, 2);
+    assert.equal(grid.autoSuitable, true);
+  }
+});
+
+test("unlabeled colored borders are artwork and regular unlabeled textures stay out of auto mode", () => {
+  const source = chart(22, 16, 18, 18, {
+    fill: (x, y) => x === 0 || y === 0 || x === 21 || y === 15 ? [175, 50, 60] : [210, 220, 230],
+  });
+  const grid = core.detectGrid(source);
+  assert.deepEqual([grid.cols, grid.rows], [22, 16]);
+  assert.equal(grid.autoSuitable, false);
+  assert.deepEqual(core.sampleGrid(source, grid)[0].rgb, [175, 50, 60]);
+});
+
+test("light lines on dark fills and white labels retain the cell fill", () => {
+  const source = chart(23, 15, 18, 18, {
+    fill: (x) => x < 12 ? [25, 40, 65] : [50, 90, 35],
+    line: [200, 210, 230], labels: () => true,
+  });
+  const grid = core.detectGrid(source);
+  assert.deepEqual([grid.cols, grid.rows], [23, 15]);
+  assert.equal(grid.autoSuitable, true);
+  const samples = core.sampleGrid(source, grid);
+  assert.deepEqual(samples[8 * 23 + 4].rgb, [25, 40, 65]);
+  assert.deepEqual(samples[8 * 23 + 16].rgb, [50, 90, 35]);
+});
+
+test("white artwork survives labels and enclosed regions while external paper is blank", () => {
+  for (const labeled of [false, true]) {
+    const source = chart(20, 16, 18, 18, {
+      fill: (x, y) => x >= 5 && x <= 14 && y >= 3 && y <= 12
+        && (x === 5 || x === 14 || y === 3 || y === 12) ? [35, 40, 55] : [250, 250, 250],
+      labels: (x, y) => labeled && x > 5 && x < 14 && y > 3 && y < 12 && !(x === 9 && y === 7),
+    });
+    const grid = core.detectGrid(source), samples = core.sampleGrid(source, grid);
+    assert.equal(samples[0].rgb, null);
+    assert.deepEqual(samples[7 * 20 + 9].rgb, [250, 250, 250]);
+    assert.deepEqual(samples[3 * 20 + 8].rgb, [35, 40, 55]);
+    assert.deepEqual(core.sampleGrid(source, grid, 0, { background: "keep" })[0].rgb, [250, 250, 250]);
+  }
+});
+
+test("gradients, stripes, continuous textures, and pixel blocks do not trigger automatic chart recognition", () => {
+  const painters = [
+    (x, y) => [x * 255 / 360, y * 255 / 240, (x + y) * 255 / 600],
+    x => x % 20 < 3 ? [20, 20, 20] : [230, 230, 230],
+    (x, y) => [100 + 50 * Math.sin(x / 11) * Math.sin(y / 17), 120, 140],
+    (x, y) => (Math.floor(x / 18) + Math.floor(y / 18)) % 2 ? [20, 60, 120] : [245, 245, 245],
+  ];
+  for (const paint of painters) {
+    const source = image(360, 240);
+    for (let y = 0; y < source.height; y++) for (let x = 0; x < source.width; x++) setPixel(source, x, y, paint(x, y));
+    assert.ok(!core.detectGrid(source)?.autoSuitable);
+  }
+});
+
+test("light cleanup protects certain single-cell details and grid cells", () => {
+  const cells = Array.from({ length: 49 }, (_, i) => ({ u: i % 7, v: Math.floor(i / 7), confidence: 0.95 }));
+  const indices = new Array(49).fill(0);
+  indices[24] = 1;
+  assert.deepEqual(core.cleanTerrainIndices(cells, indices, "light").indices, indices);
+  cells[24].confidence = 0.3;
+  assert.equal(core.cleanTerrainIndices(cells, indices, "light").indices[24], 0);
+  cells[24].gridCell = true;
+  assert.equal(core.cleanTerrainIndices(cells, indices, "light").indices[24], 1);
+  assert.equal(core.cleanTerrainIndices(cells, indices, "strong").indices[24], 0);
+});
+
+test("transparent holes stay blank at every cleanup strength and zero-alpha pixels never become color", () => {
+  const cells = Array.from({ length: 25 }, (_, i) => ({ u: i % 5, v: Math.floor(i / 5) }));
+  const indices = new Array(25).fill(0);
+  indices[12] = -1;
+  for (const strength of ["none", "light", "strong"]) {
+    assert.equal(core.cleanTerrainIndices(cells, indices, strength).indices[12], -1);
+  }
+  const source = image(30, 30, [200, 80, 120]);
+  for (let i = 3; i < source.pixels.length; i += 4) source.pixels[i] = 0;
+  assert.equal(core.enhancedSample(source, 15, 15, 8, 8, 0).rgb, null);
 });

@@ -99,6 +99,32 @@ def test_board_generate_uses_led_size(monkeypatch):
     assert any("/images/generations" in url for url in calls)
 
 
+def test_mosaic_layout_survives_rename_and_can_be_replaced(monkeypatch, tmp_path):
+    monkeypatch.setenv("MANOR_SAVES", str(tmp_path))
+    set_save_user("")
+    layout = {"cols": 2, "rows": 2, "mask": [True, False, True, True]}
+    pages = [[i % 51 for i in range(72 * 48)]]
+    save_board_bundle({"designs": {"items": [{
+        "id": "mosaic", "name": "拼接", "savedAt": 1,
+        "layout": layout, "pages": pages, "interval": 250, "pageCount": 1, "kind": 3,
+    }]}})
+    save_board_bundle({"designs": {"items": [{"id": "mosaic", "name": "改名", "savedAt": 2}]}})
+    renamed = load_board_bundle()["designs"]["items"][0]
+    assert renamed["name"] == "改名"
+    assert renamed["layout"] == layout
+    assert renamed["pages"] == pages
+    assert renamed["interval"] == 250
+    assert renamed["pageCount"] == 1
+    assert renamed["kind"] == 3
+    single = {"cols": 1, "rows": 1, "mask": [True]}
+    save_board_bundle({"designs": {"items": [{
+        "id": "mosaic", "savedAt": 3, "layout": single, "pages": [[50] * 864],
+    }]}})
+    replaced = load_board_bundle()["designs"]["items"][0]
+    assert replaced["layout"] == single
+    assert len(replaced["pages"][0]) == 864
+
+
 def test_board_generate_with_reference_uses_edits(monkeypatch):
     import base64
     import io

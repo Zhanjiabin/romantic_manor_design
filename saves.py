@@ -926,6 +926,9 @@ def _merge_cloth_items(existing_items, incoming_items) -> list:
             merged["png"] = prev["png"]
         if not merged.get("pages") and prev and prev.get("pages"):
             merged["pages"] = prev["pages"]
+        for key in ("layout", "interval", "pageCount", "kind"):
+            if key not in merged and prev and key in prev:
+                merged[key] = prev[key]
         by_id[ident] = merged
     items = list(by_id.values())
     items.sort(key=lambda row: int(row.get("savedAt") or 0), reverse=True)
